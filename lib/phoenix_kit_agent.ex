@@ -125,7 +125,9 @@ defmodule PhoenixKitAgent do
         gettext_backend: PhoenixKitAgent.Gettext,
         icon: "hero-sparkles",
         path: "agent",
-        priority: 650,
+        # After AI (640) and core's Sync (642), before Notifications (645):
+        # 650 is phoenix_kit_dashboards' (core's `AdminTabs.module_tab_order/0`).
+        priority: 643,
         level: :admin,
         permission: "agent.manage",
         match: :prefix,
@@ -140,7 +142,7 @@ defmodule PhoenixKitAgent do
         gettext_backend: PhoenixKitAgent.Gettext,
         icon: "hero-users",
         path: "agent/users",
-        priority: 651,
+        priority: 644,
         level: :admin,
         permission: "agent.manage",
         parent: :admin_agent,
@@ -153,7 +155,7 @@ defmodule PhoenixKitAgent do
         gettext_backend: PhoenixKitAgent.Gettext,
         icon: "hero-banknotes",
         path: "agent/spending",
-        priority: 652,
+        priority: 645,
         level: :admin,
         permission: "agent.manage",
         parent: :admin_agent,

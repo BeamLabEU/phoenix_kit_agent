@@ -1,6 +1,7 @@
 defmodule PhoenixKitAgentTest do
   use ExUnit.Case, async: true
 
+  alias PhoenixKit.Dashboard.AdminTabs
   alias PhoenixKit.Notifications.Types
 
   # `function_exported?/3` answers false for a module that is merely not
@@ -90,6 +91,28 @@ defmodule PhoenixKitAgentTest do
       assert spending.level == :admin
       assert spending.permission == "agent.manage"
       assert spending.live_view == {PhoenixKitAgent.Web.SpendingLive, :index}
+    end
+
+    # Core sorts the top-level admin tabs by priority alone: two tabs with one
+    # priority come out in no fixed order (650 was phoenix_kit_dashboards').
+    test "the top-level tab has a priority of its own among core's, ai's and core's module order" do
+      taken =
+        (AdminTabs.core_tabs() ++ AdminTabs.apply_module_tab_order(PhoenixKitAI.admin_tabs()))
+        |> Enum.filter(&is_nil(&1.parent))
+        |> Enum.map(& &1.priority)
+        |> Kernel.++(AdminTabs.module_tab_order() |> Map.values() |> Enum.map(& &1.priority))
+
+      assert [agent] =
+               PhoenixKitAgent.admin_tabs()
+               |> AdminTabs.apply_module_tab_order()
+               |> Enum.filter(&is_nil(&1.parent))
+
+      refute agent.priority in taken, "priority #{agent.priority} is taken"
+
+      subtabs = Enum.reject(PhoenixKitAgent.admin_tabs(), &is_nil(&1.parent))
+      priorities = Enum.map(subtabs, & &1.priority)
+      assert priorities == Enum.uniq(priorities)
+      assert Enum.all?(priorities, &(&1 > agent.priority))
     end
 
     test "notification_types/0 declares agent_limit, so a watcher can switch it off" do
