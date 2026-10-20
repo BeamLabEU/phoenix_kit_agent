@@ -78,6 +78,7 @@ defmodule PhoenixKitAgent.Conversations do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Users.Auth.SessionRef
+  alias PhoenixKitAgent.Config
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
   alias PhoenixKitAgent.UserConfig
 
@@ -260,7 +261,8 @@ defmodule PhoenixKitAgent.Conversations do
 
   @doc """
   Adds the user's text to their chat, as a `user` message: only `content`
-  (`:content` or `"content"`, not blank) is taken from `attrs`, never a role,
+  (`:content` or `"content"`, not blank, and no longer than
+  `agent_history_chars`, as a turn takes it) is taken from `attrs`, never a role,
   tool fields, tokens or cost (see "Writing" in the moduledoc). The chat is
   updated in the same transaction: the message count, `last_message_at` and —
   when the chat has no title yet — the title, the first 60 characters of the
@@ -276,7 +278,9 @@ defmodule PhoenixKitAgent.Conversations do
       store(
         user_uuid,
         conversation_uuid,
-        &Message.user_changeset(&1, %{content: content}),
+        &(&1
+          |> Message.user_changeset(%{content: content})
+          |> Ecto.Changeset.validate_length(:content, max: Config.history_chars())),
         [],
         []
       )

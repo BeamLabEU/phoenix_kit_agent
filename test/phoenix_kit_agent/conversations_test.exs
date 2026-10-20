@@ -502,6 +502,31 @@ defmodule PhoenixKitAgent.ConversationsTest do
       assert message_count() == 0
     end
 
+    test "a text longer than the history window is refused, as a turn refuses it" do
+      %{ref: ref} = member()
+      chat = new_chat!(ref)
+      {:ok, _} = PhoenixKit.Settings.update_setting("agent_history_chars", "1000")
+
+      assert {:error, %Ecto.Changeset{} = changeset} =
+               Conversations.add_message(
+                 ref,
+                 chat.uuid,
+                 %{content: String.duplicate("a", 1_001)},
+                 @me
+               )
+
+      assert %{content: [_]} = errors_on(changeset)
+      assert message_count() == 0
+
+      assert {:ok, _} =
+               Conversations.add_message(
+                 ref,
+                 chat.uuid,
+                 %{content: String.duplicate("a", 1_000)},
+                 @me
+               )
+    end
+
     test "the conversation is not taken from the attributes" do
       %{ref: ref} = member()
       mine = new_chat!(ref)

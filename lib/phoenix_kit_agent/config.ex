@@ -44,6 +44,7 @@ defmodule PhoenixKitAgent.Config do
   alias PhoenixKit.Settings
   alias PhoenixKit.Settings.History
   alias PhoenixKit.Utils.Number
+  alias PhoenixKitAgent.Schemas.Message
 
   @module "agent"
   @micro_per_usd 1_000_000
@@ -73,6 +74,9 @@ defmodule PhoenixKitAgent.Config do
 
   @watchers_key "agent_limit_watchers"
   @prompt_key "agent_system_prompt"
+
+  # The longest module prompt, in characters.
+  @prompt_max 16_000
 
   # ── Readers ───────────────────────────────────────────────────────────
 
@@ -133,18 +137,29 @@ defmodule PhoenixKitAgent.Config do
 
   @doc """
   Sets the module's system prompt (`agent_system_prompt`); a blank one means
-  none. `opts` go to `PhoenixKit.Settings` (`actor_uuid:`, `source:`). The
-  caller checks `agent.manage`.
+  none. NUL characters are cut (the database refuses them); a prompt over
+  #{@prompt_max} characters is `{:error, changeset}` and nothing is written —
+  it goes into every request. `opts` go to `PhoenixKit.Settings`
+  (`actor_uuid:`, `source:`). The caller checks `agent.manage`.
   """
   @spec put_system_prompt(String.t() | nil, keyword()) ::
           {:ok, term()} | {:error, Ecto.Changeset.t()}
   def put_system_prompt(prompt, opts) when is_binary(prompt) or is_nil(prompt) do
-    Settings.update_json_setting_with_module(
-      @prompt_key,
-      %{"text" => prompt || ""},
-      @module,
-      opts
-    )
+    changeset =
+      {%{}, %{text: :string}}
+      |> cast(%{text: Message.strip_nul(prompt || "")}, [:text], empty_values: [])
+      |> validate_length(:text, max: @prompt_max)
+
+    if changeset.valid? do
+      Settings.update_json_setting_with_module(
+        @prompt_key,
+        %{"text" => get_field(changeset, :text) || ""},
+        @module,
+        opts
+      )
+    else
+      {:error, %{changeset | action: :update}}
+    end
   end
 
   @doc """

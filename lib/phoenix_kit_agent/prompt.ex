@@ -15,9 +15,11 @@ defmodule PhoenixKitAgent.Prompt do
     4. the user's personal instructions (`personal_instructions`), under a line
        that says they rank below the parts above and never override them;
     5. the context of the session: the user's name (never the e-mail), the
-       role the session acts as, the locale, the date and time in the site time
-       zone and — when the host passed them to `PhoenixKitAgent.Turns.start/6`
-       — the page's path and the order number.
+       role the session acts as, the locale, the date in the site time zone
+       (not the time of day: the system message opens every request, and a
+       prefix that changes by the minute defeats the providers' prompt
+       caching) and — when the host passed them to
+       `PhoenixKitAgent.Turns.start/6` — the page's path and the order number.
 
   The page, the order number and the locale come from a browser, so they are
   not trusted: a value with a control or line-separator character, or one that
@@ -126,7 +128,7 @@ defmodule PhoenixKitAgent.Prompt do
         line("User", one_line(Scope.user_full_name(scope), @name_max)),
         line("Role", role(scope)),
         line("Locale", locale),
-        line("Now", now(now)),
+        line("Date", today(now)),
         line("Page", page |> page_field(:path) |> path()),
         line("Order", page |> page_field(:order_number) |> one_line(@order_max))
       ]
@@ -155,13 +157,13 @@ defmodule PhoenixKitAgent.Prompt do
     end
   end
 
-  defp now(now) do
+  defp today(now) do
     zone = Settings.get_setting("time_zone", "0")
     local = TimeZone.shift(now, zone)
     offset = "UTC" <> offset(TimeZone.offset_seconds(zone, now))
     place = if TimeZone.identifier?(zone), do: "#{zone}, #{offset}", else: offset
 
-    Calendar.strftime(local, "%A %Y-%m-%d %H:%M") <> " (#{place})"
+    Calendar.strftime(local, "%A %Y-%m-%d") <> " (#{place})"
   end
 
   defp offset(seconds) do

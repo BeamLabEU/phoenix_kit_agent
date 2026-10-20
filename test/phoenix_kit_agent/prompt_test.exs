@@ -89,7 +89,7 @@ defmodule PhoenixKitAgent.PromptTest do
 
       refute prompt =~ "rank below"
       assert prompt =~ "Locale: et"
-      assert prompt =~ "Now:"
+      assert prompt =~ "Date:"
     end
   end
 
@@ -107,9 +107,17 @@ defmodule PhoenixKitAgent.PromptTest do
       assert prompt =~ "User: Tim Fotkin"
       assert prompt =~ ~r/^Role: .*AgentTest/m
       assert prompt =~ "Locale: et"
-      assert prompt =~ "Wednesday 2026-07-15 15:00"
-      assert prompt =~ "Europe/Tallinn"
-      assert prompt =~ "UTC+03:00"
+      assert prompt =~ "Date: Wednesday 2026-07-15 (Europe/Tallinn, UTC+03:00)"
+    end
+
+    test "the date without the time of day: the prompt stays the same all day", %{user: user} do
+      {:ok, _} = Settings.update_setting("time_zone", "Europe/Tallinn")
+
+      morning = build(user, %{now: ~U[2026-07-15 05:01:00Z]})
+      evening = build(user, %{now: ~U[2026-07-15 20:59:00Z]})
+
+      assert morning == evening
+      refute morning =~ "08:01"
     end
 
     test "an unnamed user gives no name, never the e-mail address", %{user: user} do

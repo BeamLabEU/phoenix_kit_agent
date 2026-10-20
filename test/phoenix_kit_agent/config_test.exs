@@ -104,6 +104,20 @@ defmodule PhoenixKitAgent.ConfigTest do
       assert Config.system_prompt() == nil
     end
 
+    test "the module prompt loses its NUL characters and has a length cap" do
+      assert {:ok, _} =
+               Config.put_system_prompt("Be <<0>>brief." |> String.replace("<<0>>", <<0>>), [])
+
+      assert Config.system_prompt() == "Be brief."
+
+      too_long = String.duplicate("x", 16_001)
+      assert {:error, %Ecto.Changeset{} = changeset} = Config.put_system_prompt(too_long, [])
+      assert %{text: [_]} = errors_on(changeset)
+      assert Config.system_prompt() == "Be brief."
+
+      assert {:ok, _} = Config.put_system_prompt(String.duplicate("x", 16_000), [])
+    end
+
     test "more watchers than a string setting holds are saved and read back" do
       uuids = for _ <- 1..60, do: Ecto.UUID.generate()
 
