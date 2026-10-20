@@ -55,10 +55,11 @@ defmodule PhoenixKitAgent.Test.Files do
 
   @doc """
   The upload map `PhoenixKitAgent.Attachments.add/4` takes, for `binary` sent as
-  `name`.
+  `name`; the file on disk is called by a neutral name, as a LiveView upload is.
   """
   def upload!(binary, name, content_type \\ nil) do
-    %{path: tmp!(binary, name), filename: name, content_type: content_type}
+    # The temporary file of a LiveView upload has a name of its own, not the user's.
+    %{path: tmp!(binary, "live_view_upload"), filename: name, content_type: content_type}
   end
 
   @doc "Whether the executable is installed (tests that need one are tagged)."
@@ -80,6 +81,45 @@ defmodule PhoenixKitAgent.Test.Files do
 
   defp chunk(type, data) do
     <<byte_size(data)::32, type::binary, data::binary, :erlang.crc32(type <> data)::32>>
+  end
+
+  @doc """
+  A JPEG of the given size made by ImageMagick (the tests that use it are tagged
+  `:imagemagick`).
+  """
+  def jpeg(width, height) do
+    dir = Path.join(System.tmp_dir!(), "pk_agent_jpeg_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    out = Path.join(dir, "out.jpg")
+
+    {_, 0} =
+      System.cmd("convert", ["-size", "#{width}x#{height}", "xc:#4080c0", "jpeg:" <> out],
+        stderr_to_stdout: true
+      )
+
+    binary = File.read!(out)
+    File.rm_rf!(dir)
+    binary
+  end
+
+  @doc """
+  `jpeg` with an EXIF segment (the camera's make is `make`) and a comment
+  segment, as a camera and an editor would leave them, right after the start of
+  the image.
+  """
+  def with_metadata(<<0xFF, 0xD8, rest::binary>>, make, comment) do
+    value = make <> <<0>>
+
+    tiff =
+      <<"II", 42::16-little, 8::32-little, 1::16-little>> <>
+        <<0x010F::16-little, 2::16-little, byte_size(value)::32-little, 26::32-little>> <>
+        <<0::32-little>> <> value
+
+    exif = "Exif" <> <<0, 0>> <> tiff
+    comment_segment = <<0xFF, 0xFE, byte_size(comment) + 2::16>> <> comment
+
+    <<0xFF, 0xD8>> <>
+      <<0xFF, 0xE1, byte_size(exif) + 2::16>> <> exif <> comment_segment <> rest
   end
 
   @doc "A PDF with one page per string, each holding that text."
@@ -171,6 +211,20 @@ defmodule PhoenixKitAgent.Test.Files do
         end)
 
     zip(files)
+  end
+
+  @doc """
+  `zip` with the uncompressed size of every entry in its central directory
+  replaced by `size`: what a zip made to get past a check on declared sizes
+  looks like.
+  """
+  def forge_sizes(zip, size) do
+    zip
+    |> :binary.matches(<<0x50, 0x4B, 0x01, 0x02>>)
+    |> Enum.reduce(zip, fn {at, _length}, acc ->
+      <<before::binary-size(at + 24), _declared::32, rest::binary>> = acc
+      before <> <<size::32-little>> <> rest
+    end)
   end
 
   @doc "A zip of `[{path, binary}]`."

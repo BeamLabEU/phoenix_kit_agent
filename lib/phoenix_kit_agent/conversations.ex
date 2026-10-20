@@ -78,7 +78,7 @@ defmodule PhoenixKitAgent.Conversations do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Users.Auth.SessionRef
-  alias PhoenixKitAgent.Schemas.{Conversation, Message}
+  alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
   alias PhoenixKitAgent.UserConfig
 
   @page_size 20
@@ -264,7 +264,13 @@ defmodule PhoenixKitAgent.Conversations do
     content = Map.get(attrs, :content, Map.get(attrs, "content"))
 
     with_user(session_ref, opts, fn user_uuid ->
-      store(user_uuid, conversation_uuid, &Message.user_changeset(&1, %{content: content}), [])
+      store(
+        user_uuid,
+        conversation_uuid,
+        &Message.user_changeset(&1, %{content: content}),
+        [],
+        []
+      )
     end)
   end
 
@@ -281,14 +287,27 @@ defmodule PhoenixKitAgent.Conversations do
   @spec add_turn_message(String.t(), term(), map(), keyword()) ::
           {:ok, Message.t()} | {:error, :not_found | Ecto.Changeset.t()}
   def add_turn_message(user_uuid, conversation_uuid, attrs, fields \\ []) when is_map(attrs) do
-    store(user_uuid, conversation_uuid, &Message.changeset(&1, attrs), fields)
+    store(user_uuid, conversation_uuid, &Message.changeset(&1, attrs), fields, [])
   end
 
-  defp store(user_uuid, conversation_uuid, changeset_fun, fields) do
+  @doc false
+  # `add_turn_message/4` for the user's message of a turn, which takes the
+  # attachments `attachment_uuids` (the user's own, not yet part of a message)
+  # in the same transaction: a turn stopped between the two cannot leave the
+  # message without its files.
+  @spec add_user_turn_message(String.t(), term(), map(), [String.t()]) ::
+          {:ok, Message.t()} | {:error, :not_found | Ecto.Changeset.t()}
+  def add_user_turn_message(user_uuid, conversation_uuid, attrs, attachment_uuids)
+      when is_map(attrs) and is_list(attachment_uuids) do
+    store(user_uuid, conversation_uuid, &Message.changeset(&1, attrs), [], attachment_uuids)
+  end
+
+  defp store(user_uuid, conversation_uuid, changeset_fun, fields, attachment_uuids) do
     result =
       repo().transaction(fn ->
         with {:ok, conversation} <- fetch_owned(user_uuid, conversation_uuid, lock: true),
              {:ok, message} <- insert_message(conversation, changeset_fun, fields) do
+          link_attachments(attachment_uuids, message)
           message
         else
           {:error, reason} -> repo().rollback(reason)
@@ -303,6 +322,17 @@ defmodule PhoenixKitAgent.Conversations do
     end
 
     result
+  end
+
+  defp link_attachments([], _message), do: :ok
+
+  defp link_attachments(uuids, %Message{} = message) do
+    repo().update_all(
+      from(a in Attachment, where: a.uuid in ^uuids and is_nil(a.message_uuid)),
+      set: [message_uuid: message.uuid]
+    )
+
+    :ok
   end
 
   @doc """

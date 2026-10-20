@@ -357,8 +357,9 @@ defmodule PhoenixKitAgent.Turns do
         )
       )
 
-    current = %{role: "user", content: History.user_content(text, attachments)}
-    History.build(messages, earlier, current, Config.history_chars())
+    limit = Config.history_chars()
+    current = %{role: "user", content: History.user_content(text, attachments, limit)}
+    History.build(messages, earlier, current, limit)
   end
 
   defp deadline_ms(opts) do

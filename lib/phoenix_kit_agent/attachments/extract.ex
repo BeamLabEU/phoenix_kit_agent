@@ -13,7 +13,7 @@ defmodule PhoenixKitAgent.Attachments.Extract do
   """
 
   alias PhoenixKit.Modules.Storage.ImageProcessor
-  alias PhoenixKitAgent.Attachments.{Bounds, Cmd}
+  alias PhoenixKitAgent.Attachments.{Bounds, Cmd, Jpeg, Unzip, Work}
   alias PhoenixKitAgent.Schemas.Message
 
   @typedoc "Text for the model, cut to the limit; `truncated` when the file had more."
@@ -26,7 +26,10 @@ defmodule PhoenixKitAgent.Attachments.Extract do
 
   # ── text and CSV ────────────────────────────────────────────────────
 
-  @doc "The start of a text file as text (a byte order mark and NUL bytes dropped)."
+  @doc """
+  The start of a text file as text (a byte order mark and NUL bytes dropped).
+  A byte that is not UTF-8 shows as U+FFFD, it is not silently left out.
+  """
   @spec text(Path.t()) :: {:ok, text()} | {:error, :unreadable}
   def text(path) do
     with {:ok, text, cut?} <- read_text(path) do
@@ -41,8 +44,7 @@ defmodule PhoenixKitAgent.Attachments.Extract do
     with {:ok, text, cut?} <- read_text(path) do
       lines =
         text
-        |> String.split("\n")
-        |> Enum.map(&String.trim_trailing(&1, "\r"))
+        |> String.split(~r/\r\n|\n|\r/)
         |> drop_blank_tail()
 
       rows = Bounds.get(:sheet_rows)
@@ -65,9 +67,9 @@ defmodule PhoenixKitAgent.Attachments.Extract do
       text =
         data
         |> whole_characters()
-        |> String.replace_invalid("")
+        |> String.replace_invalid("\uFFFD")
         |> Message.strip_nul()
-        |> String.replace_prefix("﻿", "")
+        |> String.replace_prefix("\uFEFF", "")
 
       {:ok, text, cut?}
     else
@@ -105,13 +107,15 @@ defmodule PhoenixKitAgent.Attachments.Extract do
 
   @doc """
   A workbook as CSV: for each sheet (hidden ones left out) a `## Name` line and
-  its first rows, blank rows skipped. A workbook that unpacks to more than the
-  limit is `:too_large` and is not opened.
+  its first rows, blank rows skipped. The parts of the workbook are inflated
+  by `PhoenixKitAgent.Attachments.Unzip`, which counts the bytes it produces
+  and does not believe the sizes the file declares: one that unpacks to more
+  than the limit is `:too_large`, however it was forged, and is not opened.
   """
   @spec xlsx(Path.t()) :: {:ok, text()} | {:error, :unreadable | :too_large}
   def xlsx(path) do
-    with :ok <- unpacked_size(path),
-         {:ok, package} <- open_workbook(path),
+    with {:ok, workbook} <- Unzip.workbook(path, Bounds.get(:sheet_unzipped_bytes)),
+         {:ok, package} <- open_workbook(workbook),
          {:ok, sheets} <- read_sheets(package) do
       rows = Bounds.get(:sheet_rows)
 
@@ -132,23 +136,8 @@ defmodule PhoenixKitAgent.Attachments.Extract do
     _ -> {:error, :unreadable}
   end
 
-  defp unpacked_size(path) do
-    case :zip.list_dir(String.to_charlist(path)) do
-      {:ok, entries} ->
-        total =
-          Enum.sum(
-            for {:zip_file, _name, info, _comment, _offset, _size} <- entries, do: elem(info, 1)
-          )
-
-        if total > Bounds.get(:sheet_unzipped_bytes), do: {:error, :too_large}, else: :ok
-
-      {:error, _reason} ->
-        {:error, :unreadable}
-    end
-  end
-
-  defp open_workbook(path) do
-    case XlsxReader.open(path, exclude_hidden_sheets?: true) do
+  defp open_workbook(workbook) do
+    case XlsxReader.open(workbook, source: :binary, exclude_hidden_sheets?: true) do
       {:ok, package} -> {:ok, package}
       {:error, _message} -> {:error, :unreadable}
     end
@@ -256,7 +245,7 @@ defmodule PhoenixKitAgent.Attachments.Extract do
   end
 
   defp pdf_text(path, last_page) do
-    with_tmp_dir(fn dir ->
+    Work.with_dir(fn dir ->
       out = Path.join(dir, "text.txt")
 
       with {:ok, _output} <-
@@ -286,7 +275,7 @@ defmodule PhoenixKitAgent.Attachments.Extract do
     do: String.length(String.replace(text, ~r/\s/u, "")) >= Bounds.get(:min_pdf_text_chars)
 
   defp render_pages(path, last_page) do
-    with_tmp_dir(fn dir ->
+    Work.with_dir(fn dir ->
       args = [
         "-png",
         "-scale-to",
@@ -300,7 +289,7 @@ defmodule PhoenixKitAgent.Attachments.Extract do
       ]
 
       with {:ok, _output} <- Cmd.run("pdftoppm", args),
-           [_ | _] = files <- dir |> Path.join("page*.png") |> Path.wildcard() |> Enum.sort() do
+           [_ | _] = files <- rendered_pages(dir, last_page) do
         {:ok, Enum.map(files, &File.read!/1)}
       else
         _ -> {:error, :unreadable}
@@ -308,42 +297,48 @@ defmodule PhoenixKitAgent.Attachments.Extract do
     end)
   end
 
+  # `page-1.png` … (poppler pads the number to the width of the last page's);
+  # nothing else in the directory is a page.
+  defp rendered_pages(dir, last_page) do
+    dir
+    |> File.ls!()
+    |> Enum.flat_map(fn name ->
+      with [_, digits] <- Regex.run(~r/\Apage-(\d+)\.png\z/, name),
+           {number, ""} when number in 1..last_page//1 <- Integer.parse(digits) do
+        [{number, Path.join(dir, name)}]
+      else
+        _ -> []
+      end
+    end)
+    |> Enum.sort()
+    |> Enum.map(&elem(&1, 1))
+  end
+
   # ── pictures ────────────────────────────────────────────────────────
 
   @doc """
   A picture as a JPEG whose long side is at most 1600 px (never enlarged),
-  upright, on white where it was transparent, without its camera metadata.
+  upright, on white where it was transparent, without its camera metadata
+  (EXIF with the place and time of a photo, XMP, IPTC, comments:
+  `PhoenixKitAgent.Attachments.Jpeg.strip_metadata/1`) — what goes to a model
+  provider is the picture, not where it was taken.
   """
   @spec picture(Path.t()) :: {:ok, binary()} | {:error, :unreadable | :image_tools_missing}
   def picture(path) do
     if Enum.all?(~w(convert identify), &Cmd.available?/1) do
-      with_tmp_dir(fn dir ->
+      Work.with_dir(fn dir ->
         out = Path.join(dir, "picture.jpg")
 
         with {:ok, ^out} <- ImageProcessor.preview_jpeg(path, out, Bounds.image_px()),
-             {:ok, jpeg} <- File.read(out) do
-          {:ok, jpeg}
+             {:ok, jpeg} <- File.read(out),
+             {:ok, bare} <- Jpeg.strip_metadata(jpeg) do
+          {:ok, bare}
         else
           _ -> {:error, :unreadable}
         end
       end)
     else
       {:error, :image_tools_missing}
-    end
-  end
-
-  # ── internals ───────────────────────────────────────────────────────
-
-  @doc false
-  # Runs `fun` with an empty temporary directory that is removed afterwards.
-  def with_tmp_dir(fun) do
-    dir = Path.join(System.tmp_dir!(), "pk_agent_att_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
-
-    try do
-      fun.(dir)
-    after
-      File.rm_rf(dir)
     end
   end
 end

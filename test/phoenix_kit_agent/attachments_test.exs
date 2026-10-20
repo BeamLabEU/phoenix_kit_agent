@@ -21,7 +21,8 @@ defmodule PhoenixKitAgent.AttachmentsTest do
   alias PhoenixKit.Modules.Storage.{ImageProcessor, Libraries, URLSigner}
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.{Auth, Permissions, Roles}
-  alias PhoenixKitAgent.{Attachments, Conversations, Library, Turns}
+  alias PhoenixKitAgent.{Attachments, Conversations, Library, Models, Turns}
+  alias PhoenixKitAgent.Attachments.{Bounds, Processor, Work}
   alias PhoenixKitAgent.Schemas.{Attachment, Message, UserSettings}
   alias PhoenixKitAgent.Test.{Files, LogProbe}
   alias PhoenixKitAI.Request
@@ -34,7 +35,8 @@ defmodule PhoenixKitAgent.AttachmentsTest do
   setup do
     {:ok, _} = PhoenixKitAgent.enable_system()
     {:ok, _} = PhoenixKitAI.enable_system()
-    Files.local_bucket!()
+    bucket = Files.local_bucket!()
+    Models.clear_cache()
 
     Application.put_env(:phoenix_kit_ai, :req_options, plug: {Req.Test, @stub}, retry: false)
     on_exit(fn -> Application.delete_env(:phoenix_kit_ai, :req_options) end)
@@ -52,7 +54,15 @@ defmodule PhoenixKitAgent.AttachmentsTest do
     chat = conversation_fixture(user)
     :ok = Conversations.subscribe(ref, chat.uuid, @me)
 
-    %{user: user, role: role, ref: ref, token: token, chat: chat, chat_endpoint: chat_endpoint}
+    %{
+      user: user,
+      role: role,
+      ref: ref,
+      token: token,
+      chat: chat,
+      chat_endpoint: chat_endpoint,
+      bucket: bucket
+    }
   end
 
   # ── helpers ─────────────────────────────────────────────────────────
@@ -638,6 +648,9 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       assert {:error, :too_many} = add(ctx, "one more", "more.txt")
     end
 
+    # The sandbox runs every process of a test on one connection, so these
+    # uploads are in fact taken one after the other: this checks the outcome of
+    # six calls at once, not the lock (see "the lock on the chat" for that).
     test "parallel uploads cannot get past the count", ctx do
       limits!(ctx.user, %{max_attachments_per_message: 2})
       uploads = for n <- 1..6, do: Files.upload!("file #{n}", "f#{n}.txt")
@@ -1030,6 +1043,476 @@ defmodule PhoenixKitAgent.AttachmentsTest do
                :count
              ) == 0
     end
+  end
+
+  # ── review round 1 ──────────────────────────────────────────────────
+
+  describe "a workbook with forged sizes" do
+    test "is too large however its central directory reads, and is not opened", ctx do
+      forged =
+        Files.zip([
+          {"[Content_Types].xml", "x"},
+          {"xl/workbook.xml", "x"},
+          {"xl/worksheets/sheet1.xml", :binary.copy(<<0>>, 5_000_000)},
+          {"xl/worksheets/sheet2.xml", :binary.copy(<<0>>, 5_000_000)}
+        ])
+        |> Files.forge_sizes(1)
+
+      with_limits(sheet_unzipped_bytes: 1_000)
+
+      attachment = add_done!(ctx, forged, "forged.xlsx")
+
+      assert attachment.status == "failed"
+      assert attachment.error == "too_large"
+    end
+  end
+
+  describe "the scratch space" do
+    test "a copy of the file is private to the server's user and gone when the work is done",
+         ctx do
+      stored = add_done!(ctx, "private", "p.txt")
+
+      seen =
+        Work.with_file(stored.file_uuid, fn path ->
+          {path, File.read!(path), Bitwise.band(File.stat!(path).mode, 0o777),
+           Bitwise.band(File.stat!(Path.dirname(path)).mode, 0o777)}
+        end)
+
+      assert {path, "private", 0o600, 0o700} = seen
+      assert Path.dirname(Path.dirname(path)) == Work.root()
+      refute File.exists?(path)
+      refute File.exists?(Path.dirname(path))
+    end
+
+    test "a worker killed by the deadline leaves nothing behind", ctx do
+      before = File.ls!(Work.root())
+      with_limits(process_deadline_ms: 0)
+
+      assert %{error: "timeout"} = add_done!(ctx, "#{@secret} text", "a.txt")
+      wait_for_children_to_end()
+
+      assert File.ls!(Work.root()) -- before == []
+    end
+
+    test "a worker killed for its heap leaves nothing behind, and the file is too large", ctx do
+      before = File.ls!(Work.root())
+      with_limits(worker_heap_words: 2_000)
+
+      attachment = add_done!(ctx, "text", "a.txt")
+      wait_for_children_to_end()
+
+      assert attachment.status == "failed"
+      assert attachment.error == "too_large"
+      assert File.ls!(Work.root()) -- before == []
+    end
+
+    @tag :poppler
+    test "a finished scan leaves nothing behind either", ctx do
+      serve_ai(main_sees: true)
+      before = File.ls!(Work.root())
+
+      assert %{status: "ready"} = add_done!(ctx, Files.scan_pdf(2), "scan.pdf")
+      wait_for_children_to_end()
+
+      assert File.ls!(Work.root()) -- before == []
+    end
+  end
+
+  describe "what Storage is told of the file" do
+    test "its name reaches neither Storage's rows and job arguments nor any log line", ctx do
+      name = "#{@secret}-passport.txt"
+
+      {attachment, logs} = LogProbe.capture(fn -> add_done!(ctx, "plain text", name) end)
+
+      assert attachment.filename == name
+      refute storage_file(attachment).original_file_name =~ @secret
+      refute inspect(Repo.all(Oban.Job)) =~ @secret
+      refute Enum.any?(logs, &(&1 =~ @secret))
+    end
+
+    test "a name made to read backwards loses its direction marks", ctx do
+      assert {:ok, attachment} = add(ctx, "x", "report\u202Etxt.txt")
+      assert attachment.filename == "reporttxt.txt"
+      await_done(attachment)
+    end
+  end
+
+  describe "a row nothing works on any more" do
+    test "pending past the deadline is settled as failed when the user's rows are read", ctx do
+      old = add_done!(ctx, "one", "1.txt")
+      recent = add_done!(ctx, "two", "2.txt")
+
+      for {row, age} <- [{old, -600}, {recent, 0}] do
+        Repo.update_all(from(a in Attachment, where: a.uuid == ^row.uuid),
+          set: [
+            status: "pending",
+            error: nil,
+            extracted_text: nil,
+            inserted_at: DateTime.add(DateTime.utc_now(), age, :second)
+          ]
+        )
+      end
+
+      assert {:ok, %{status: "failed", error: "timeout"}} =
+               Attachments.get(ctx.ref, old.uuid, @me)
+
+      assert {:ok, %{status: "pending"}} = Attachments.get(ctx.ref, recent.uuid, @me)
+      assert {:ok, listed} = Attachments.list_unsent(ctx.ref, ctx.chat.uuid, @me)
+      assert Enum.map(listed, & &1.status) |> Enum.sort() == ["failed", "pending"]
+    end
+
+    test "it holds no place when a new file is added", ctx do
+      limits!(ctx.user, %{max_attachments_per_message: 1})
+      lost = add_done!(ctx, "one", "1.txt")
+
+      Repo.update_all(from(a in Attachment, where: a.uuid == ^lost.uuid),
+        set: [status: "pending", inserted_at: DateTime.add(DateTime.utc_now(), -600, :second)]
+      )
+
+      assert {:ok, next} = add(ctx, "two", "2.txt")
+      await_done(next)
+    end
+  end
+
+  describe "the bytes of a file that is not sent" do
+    test "discarding removes them unless another attachment still uses them", ctx do
+      one = add_done!(ctx, "same bytes", "one.txt")
+      two = add_done!(ctx, "same bytes", "two.txt")
+      assert one.file_uuid == two.file_uuid
+
+      assert :ok = Attachments.discard(ctx.ref, one.uuid, @me)
+      assert Repo.get(Storage.File, two.file_uuid)
+
+      assert :ok = Attachments.discard(ctx.ref, two.uuid, @me)
+      assert Repo.get(Storage.File, two.file_uuid) == nil
+    end
+
+    test "a file already sent cannot be discarded and keeps its bytes", ctx do
+      serve_ai()
+      sent = add_done!(ctx, "sent", "sent.txt")
+      {:ok, turn_ref} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi", [sent.uuid])
+      await_turn(ctx, turn_ref)
+
+      assert {:error, :already_sent} = Attachments.discard(ctx.ref, sent.uuid, @me)
+      assert Repo.get(Attachment, sent.uuid)
+      assert Repo.get(Storage.File, sent.file_uuid)
+    end
+
+    test "when Storage cannot keep the file the row goes and the place is free", ctx do
+      limits!(ctx.user, %{max_attachments_per_message: 1})
+      Repo.update_all(Storage.Bucket, set: [enabled: false])
+      :persistent_term.erase(:phoenix_kit_buckets_cache)
+
+      assert {:error, :storage_unavailable} = add(ctx, "x", "a.txt")
+      assert Repo.aggregate(Attachment, :count) == 0
+
+      Repo.update_all(from(b in Storage.Bucket, where: b.uuid == ^ctx.bucket.uuid),
+        set: [enabled: true]
+      )
+
+      :persistent_term.erase(:phoenix_kit_buckets_cache)
+      assert {:ok, attachment} = add(ctx, "x", "a.txt")
+      await_done(attachment)
+    end
+
+    test "a user cannot pile up failed files: they count until discarded", ctx do
+      with_limits(unsent_files: 2)
+      broken = Files.zip([{"[Content_Types].xml", "<Types>"}, {"xl/workbook.xml", "<workbook>"}])
+
+      first = add_done!(ctx, broken, "1.xlsx")
+      assert first.status == "failed"
+
+      assert %{status: "failed"} =
+               add_done!(ctx, String.replace(broken, "<Types>", "<Type2>"), "2.xlsx")
+
+      assert {:error, :too_many} = add(ctx, "text", "3.txt")
+
+      assert :ok = Attachments.discard(ctx.ref, first.uuid, @me)
+      assert {:ok, third} = add(ctx, "text", "3.txt")
+      await_done(third)
+    end
+  end
+
+  describe "the processing is bounded" do
+    test "files beyond what the node processes at once are 'unavailable', not queued", ctx do
+      wait_for_children_to_end()
+      supervisor = PhoenixKitAgent.Attachments.TaskSupervisor
+
+      blockers =
+        for _ <- 1..Bounds.get(:concurrent_jobs) do
+          {:ok, pid} =
+            Task.Supervisor.start_child(supervisor, fn ->
+              receive do
+                :stop -> :ok
+              end
+            end)
+
+          pid
+        end
+
+      refused = add_done!(ctx, "text", "a.txt")
+      assert refused.status == "failed"
+      assert refused.error == "unavailable"
+
+      for pid <- blockers, do: send(pid, :stop)
+      wait_for_children_to_end()
+
+      assert %{status: "ready"} = add_done!(ctx, "again", "b.txt")
+    end
+
+    @tag :imagemagick
+    test "a user over the AI budget gets a code, not a description", ctx do
+      serve_ai(main_sees: false)
+      vision_endpoint!()
+      {:ok, _} = PhoenixKitAI.Budget.set_limit(:user_calls, 1)
+      ai_request_fixture(ctx.user, ctx.chat_endpoint)
+
+      attachment = add_done!(ctx, Files.png(40, 30), "sofa.png")
+
+      assert attachment.status == "failed"
+      assert attachment.error == "budget_exceeded"
+      refute_received {:model_request, _}
+    end
+
+    @tag :imagemagick
+    test "a description is never answered from, or put into, a cache the users share", ctx do
+      start_supervised!(PhoenixKitAI.RequestCache)
+      Application.put_env(:phoenix_kit_ai, :request_cache, default: true)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_ai, :request_cache) end)
+
+      serve_ai(main_sees: false, description: "A grey square.")
+      vision_endpoint!()
+      png = Files.png(40, 30)
+
+      assert %{extracted_text: "A grey square."} = add_done!(ctx, png, "one.png")
+      assert %{extracted_text: "A grey square."} = add_done!(ctx, png, "two.png")
+
+      assert_received {:model_request, _first}
+      assert_received {:model_request, _second}
+    end
+  end
+
+  describe "text in another encoding, and a text that is damaged" do
+    test "a file in an 8-bit code page or in UTF-16 is refused with its own reason", ctx do
+      windows_1251 = <<0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2, ?;, ?1>>
+      utf16 = <<0xFF, 0xFE>> <> :unicode.characters_to_binary("a;b", :utf8, {:utf16, :little})
+
+      assert {:error, :unsupported_encoding} = add(ctx, windows_1251, "orders.csv")
+      assert {:error, :unsupported_encoding} = add(ctx, windows_1251, "notes.txt")
+      assert {:error, :unsupported_encoding} = add(ctx, utf16, "excel.csv")
+
+      # Not text at all is still of a kind that is not accepted.
+      assert {:error, :unsupported_type} = add(ctx, <<0, 1, 2, 3>>, "x.txt")
+      assert Repo.aggregate(Attachment, :count) == 0
+    end
+
+    test "bad bytes after the first screen show as U+FFFD, they are not dropped", ctx do
+      text = String.duplicate("a", 9_000) <> <<0xFF>> <> "tail"
+
+      attachment = add_done!(ctx, text, "long.txt")
+
+      assert attachment.status == "ready"
+      assert attachment.extracted_text == String.duplicate("a", 9_000) <> "�tail"
+    end
+
+    test "a CSV with old Mac line endings has rows", ctx do
+      with_limits(sheet_rows: 2)
+
+      attachment = add_done!(ctx, "a,b\rc,d\re,f\r", "mac.csv")
+
+      assert attachment.extracted_text == "a,b\nc,d"
+      assert attachment.truncated
+    end
+  end
+
+  describe "pictures: more cases" do
+    @describetag :imagemagick
+
+    test "a JPEG is a picture, and the model is not given where it was taken", ctx do
+      serve_ai(main_sees: true)
+      photo = Files.with_metadata(Files.jpeg(300, 200), "SECRETCAM", "SECRET-COMMENT")
+
+      attachment = add_done!(ctx, photo, "photo.jpg")
+      assert attachment.kind == "image"
+      assert attachment.content_type == "image/jpeg"
+
+      assert {:ok, ["data:image/jpeg;base64," <> jpeg]} = Attachments.pictures(attachment)
+      bytes = Base.decode64!(jpeg)
+      assert :binary.match(bytes, "SECRETCAM") == :nomatch
+      assert :binary.match(bytes, "SECRET-COMMENT") == :nomatch
+    end
+
+    test "the description sent to a vision model is made of the picture without metadata",
+         ctx do
+      serve_ai(main_sees: false)
+      vision_endpoint!()
+      photo = Files.with_metadata(Files.jpeg(300, 200), "SECRETCAM", "SECRET-COMMENT")
+
+      add_done!(ctx, photo, "photo.jpg")
+
+      assert_received {:model_request, request}
+      refute inspect(request) =~ "SECRETCAM"
+
+      [%{"content" => parts}] = chat_messages(request)
+
+      %{"image_url" => %{"url" => "data:image/jpeg;base64," <> sent}} =
+        Enum.find(parts, &(&1["type"] == "image_url"))
+
+      assert :binary.match(Base.decode64!(sent), "SECRETCAM") == :nomatch
+    end
+
+    test "a model that declares nothing of its input is not taken for a blind one", ctx do
+      test = self()
+
+      Req.Test.stub(@stub, fn conn ->
+        case conn.request_path do
+          "/api/v1/models" ->
+            Req.Test.json(conn, %{"data" => [%{"id" => "a/chat", "architecture" => %{}}]})
+
+          _ ->
+            {:ok, raw, conn} = Plug.Conn.read_body(conn)
+            send(test, {:model_request, Jason.decode!(raw)})
+            Req.Test.json(conn, %{"choices" => [%{"message" => %{"content" => "ok"}}]})
+        end
+      end)
+
+      attachment = add_done!(ctx, Files.png(40, 30), "sofa.png")
+
+      assert attachment.status == "ready"
+      assert attachment.extracted_text == nil
+    end
+  end
+
+  describe "the lock on the chat" do
+    # The sandbox gives every process one connection, so two uploads cannot
+    # race in a test; what is checked is that the count and the new row are made
+    # in one step that begins by locking the chat's row, as a parallel pair of
+    # uploads in production needs.
+    test "the count of waiting files and the new row are made under FOR UPDATE", ctx do
+      test = self()
+      handler = "lock-probe-#{System.unique_integer([:positive])}"
+      event = Repo.config()[:telemetry_prefix] ++ [:query]
+
+      :telemetry.attach(
+        handler,
+        event,
+        fn _event, _measurements, metadata, _config -> send(test, {:query, metadata.query}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      assert {:ok, attachment} = add(ctx, "locked", "a.txt")
+      await_done(attachment)
+      :telemetry.detach(handler)
+
+      queries = collect_queries([])
+      conversations = ~s(FROM "phoenix_kit_agent_conversations")
+      attachments = ~s(FROM "phoenix_kit_agent_attachments")
+      insert = ~s(INSERT INTO "phoenix_kit_agent_attachments")
+
+      lock = Enum.find_index(queries, &(&1 =~ conversations and &1 =~ "FOR UPDATE"))
+      count = Enum.find_index(queries, &(&1 =~ attachments and &1 =~ "count("))
+      row = Enum.find_index(queries, &(&1 =~ insert))
+
+      assert lock && count && row
+      assert lock < count and count < row
+    end
+  end
+
+  defp collect_queries(acc) do
+    receive do
+      {:query, query} -> collect_queries([query | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  describe "in a turn: the message and its files" do
+    test "the message and the link to its files are one write", ctx do
+      attachment = add_done!(ctx, "kept", "a.txt")
+
+      assert {:error, %Ecto.Changeset{}} =
+               Conversations.add_user_turn_message(
+                 ctx.user.uuid,
+                 ctx.chat.uuid,
+                 %{role: "no-such-role", content: "x"},
+                 [attachment.uuid]
+               )
+
+      assert Repo.get!(Attachment, attachment.uuid).message_uuid == nil
+
+      assert {:ok, message} =
+               Conversations.add_user_turn_message(
+                 ctx.user.uuid,
+                 ctx.chat.uuid,
+                 %{role: "user", content: "x"},
+                 [attachment.uuid]
+               )
+
+      assert Repo.get!(Attachment, attachment.uuid).message_uuid == message.uuid
+    end
+
+    test "the files of one message share the history window between them", ctx do
+      serve_ai()
+      {:ok, _} = Settings.update_setting("agent_history_chars", "3000")
+      limits!(ctx.user, %{max_attachments_per_message: 3})
+      files = for n <- 1..3, do: add_done!(ctx, String.duplicate("#{n}", 5_000), "f#{n}.txt")
+
+      {:ok, turn_ref} =
+        Turns.start(ctx.ref, false, ctx.chat.uuid, "Read these", Enum.map(files, & &1.uuid))
+
+      await_turn(ctx, turn_ref)
+
+      assert_received {:model_request, body}
+      assert [%{"role" => "user", "content" => content}] = chat_messages(body)
+      assert String.length(content) < 3_000 + 400
+      assert length(String.split(content, "[... cut]")) == 4
+      for n <- 1..3, do: assert(content =~ "[Attachment: f#{n}.txt]")
+    end
+
+    @tag :imagemagick
+    test "a turn with only a note about a picture it could not show is still captured", ctx do
+      {:ok, _} = PhoenixKitAgent.Config.put_capture_ai_content(true, [])
+      serve_ai(main_sees: true)
+      picture = add_done!(ctx, Files.png(40, 30), "sofa.png")
+
+      # The model is changed to a blind one before the send: the picture gets a note.
+      blind = endpoint_fixture(%{name: "Blind", model: "a/blind"})
+      limits!(ctx.user, %{endpoint_uuid: blind.uuid})
+      Models.clear_cache()
+      serve_models_blind()
+
+      {:ok, turn_ref} = Turns.start(ctx.ref, false, ctx.chat.uuid, "What?", [picture.uuid])
+      await_turn(ctx, turn_ref)
+
+      assert journal_row_of_last_answer(ctx).metadata["content_redacted"] != true
+    end
+  end
+
+  defp serve_models_blind do
+    test = self()
+
+    Req.Test.stub(@stub, fn conn ->
+      case conn.request_path do
+        "/api/v1/models" ->
+          Req.Test.json(conn, %{
+            "data" => [
+              %{"id" => "a/blind", "architecture" => %{"modality" => "text->text"}}
+            ]
+          })
+
+        _ ->
+          {:ok, raw, conn} = Plug.Conn.read_body(conn)
+          send(test, {:model_request, Jason.decode!(raw)})
+
+          Req.Test.json(conn, %{
+            "model" => "a/blind",
+            "choices" => [%{"message" => %{"role" => "assistant", "content" => "ok"}}],
+            "usage" => %{"prompt_tokens" => 3, "completion_tokens" => 1, "total_tokens" => 4}
+          })
+      end
+    end)
   end
 
   defp journal_row_of_last_answer(ctx) do

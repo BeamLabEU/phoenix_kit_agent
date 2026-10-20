@@ -70,6 +70,24 @@ defmodule PhoenixKitAgent.UserDeletion do
     end
   end
 
+  @doc false
+  # Deletes the Storage file `file_uuid` of a discarded (or never completed)
+  # attachment — if it lies in the module's hidden library and no row of any
+  # table, an attachment of anyone included, refers to it any more. Failures are
+  # logged, never raised: the caller's own work is done.
+  @spec release_file(String.t()) :: :ok
+  def release_file(file_uuid) when is_binary(file_uuid) do
+    library = step("library lookup", nil, &AgentLibrary.library/0)
+    refs = step("file references", nil, &file_references/0)
+    ctx = %{user_uuid: nil, library: library, refs: refs}
+
+    step("an attachment file", :ok, fn ->
+      if deletable?(file_uuid, ctx), do: delete_file(file_uuid)
+    end)
+
+    :ok
+  end
+
   # Each step runs on its own: one that fails is logged and the others still
   # run (the user row is deleted either way).
   defp do_run(user_uuid) do
@@ -212,12 +230,16 @@ defmodule PhoenixKitAgent.UserDeletion do
 
   defp referenced_elsewhere?(file_uuid, %{user_uuid: user_uuid, refs: refs}) do
     {:ok, file} = Ecto.UUID.dump(file_uuid)
-    {:ok, user} = Ecto.UUID.dump(user_uuid)
+    user = user_uuid && elem(Ecto.UUID.dump(user_uuid), 1)
 
     Enum.any?(refs, fn {_schema, table, column} = ref ->
       cond do
         {table, column} in @storage_internal ->
           false
+
+        # Nobody is being removed: any attachment row is a use.
+        table == @attachments_table and is_nil(user) ->
+          exists?(ref, "", [file])
 
         # The user's own attachments are what is being removed; another user's
         # attachment of the same file is a use.

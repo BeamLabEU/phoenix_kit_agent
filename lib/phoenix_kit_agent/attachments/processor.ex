@@ -29,10 +29,17 @@ defmodule PhoenixKitAgent.Attachments.Processor do
   ## Failing safely
 
   A task never lives for ever (`process_deadline_ms`, then `timeout`), is kept
-  to a heap size (`crashed`), and turns every exception into a code; the codes
-  are `unreadable`, `too_large`, `pdf_tools_missing`, `image_tools_missing`,
-  `no_vision_model`, `limit_reached`, `budget_exceeded`, `model_error`,
-  `timeout`, `crashed`, `unavailable`. The file's content, what a parser said
+  to a heap size (a file that needs more is `too_large`), and turns every
+  exception into a code; the codes are `unreadable`, `too_large`,
+  `pdf_tools_missing`, `image_tools_missing`, `no_vision_model`,
+  `limit_reached`, `budget_exceeded`, `model_error`, `timeout`, `crashed`,
+  `unavailable` (more files at once than `Bounds` `concurrent_jobs`, or no
+  scratch space).
+
+  The work is two processes: a *job* under `TaskSupervisor` (at most
+  `concurrent_jobs`), which makes the scratch directory (`Attachments.Work`),
+  and the *worker* under `WorkerSupervisor`, which reads the file in it. The
+  job removes the directory when the worker is done or killed. The file's content, what a parser said
   about it and what the model answered never reach the log — not as a message,
   nor in a crash report.
   """
@@ -41,18 +48,15 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   require Logger
 
-  alias PhoenixKit.Modules.Storage
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.Attachments.{Bounds, Extract}
+  alias PhoenixKitAgent.Attachments.{Bounds, Extract, Work}
   alias PhoenixKitAgent.{Config, Conversations, Models, UserConfig}
   alias PhoenixKitAgent.Limits, as: SpendLimits
   alias PhoenixKitAgent.Schemas.{Attachment, Message}
 
   @task_supervisor PhoenixKitAgent.Attachments.TaskSupervisor
-
-  # In words (8 bytes each): 256 MB for the heap of one worker.
-  @max_heap_words 32_000_000
+  @worker_supervisor PhoenixKitAgent.Attachments.WorkerSupervisor
 
   @describe_picture "Describe this picture for someone who cannot see it. Transcribe every " <>
                       "piece of text, number and table in it exactly, then say what else it shows."
@@ -74,35 +78,55 @@ defmodule PhoenixKitAgent.Attachments.Processor do
     :exit, _supervisor_gone -> finish(uuid, {:error, :unavailable})
   end
 
+  # The scratch directory is made, and removed, here and not in the worker:
+  # a worker that is killed (the deadline, the heap) cannot clean up after itself.
   defp supervise(uuid) do
-    worker = Task.Supervisor.async_nolink(@task_supervisor, fn -> work(uuid) end)
+    case Work.create() do
+      {:ok, dir} ->
+        outcome =
+          try do
+            run_worker(uuid, dir)
+          after
+            Work.remove(dir)
+          end
 
-    outcome =
-      case Task.yield(worker, Bounds.get(:process_deadline_ms)) ||
-             Task.shutdown(worker, :brutal_kill) do
-        {:ok, result} -> result
-        # The reason of a kill can hold the heap; it is not looked at.
-        {:exit, _reason} -> {:error, :crashed}
-        nil -> {:error, :timeout}
-      end
+        finish(uuid, outcome)
 
-    finish(uuid, outcome)
+      {:error, _reason} ->
+        finish(uuid, {:error, :unavailable})
+    end
+  end
+
+  defp run_worker(uuid, dir) do
+    worker = Task.Supervisor.async_nolink(@worker_supervisor, fn -> work(uuid, dir) end)
+
+    case Task.yield(worker, Bounds.get(:process_deadline_ms)) ||
+           Task.shutdown(worker, :brutal_kill) do
+      {:ok, result} -> result
+      # Killed for its heap (`max_heap_size`): the file was too much to read.
+      {:exit, :killed} -> {:error, :too_large}
+      # The reason of any other exit can hold the heap; it is not looked at.
+      {:exit, _reason} -> {:error, :crashed}
+      nil -> {:error, :timeout}
+    end
   end
 
   # ── the worker ──────────────────────────────────────────────────────
 
-  defp work(uuid) do
-    Process.flag(:max_heap_size, %{size: @max_heap_words, kill: true, error_logger: false})
+  defp work(uuid, dir) do
+    Process.flag(:max_heap_size, %{
+      size: Bounds.get(:worker_heap_words),
+      kill: true,
+      error_logger: false
+    })
+
+    Work.adopt(dir)
 
     with %Attachment{status: "pending", file_uuid: file_uuid} = attachment
          when is_binary(file_uuid) <-
            RepoHelper.repo().get(Attachment, uuid),
-         {:ok, path, _file} <- Storage.retrieve_file(file_uuid) do
-      try do
-        process(attachment, path)
-      after
-        File.rm(path)
-      end
+         {:ok, path} <- Work.fetch(file_uuid, dir) do
+      process(attachment, path)
     else
       _gone_or_not_stored -> {:error, :unreadable}
     end
@@ -201,7 +225,9 @@ defmodule PhoenixKitAgent.Attachments.Processor do
         prompt: prompt,
         user_uuid: settings.user_uuid,
         source: "agent",
-        capture_request_content: false
+        capture_request_content: false,
+        # Never answered from, nor put into, a cache the other users share.
+        cache: false
       )
 
     case result do

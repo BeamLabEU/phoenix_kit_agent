@@ -112,6 +112,58 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert Models.image_input_support([deepseek]) == %{deepseek.uuid => :unknown}
     end
 
+    test "a model that declares neither input modalities nor a modality is unknown, not blind" do
+      bare = endpoint_fixture(%{model: "a/bare"})
+      no_architecture = endpoint_fixture(%{model: "a/no-architecture"})
+
+      Req.Test.expect(@stub, fn conn ->
+        Req.Test.json(conn, %{
+          "data" => [
+            %{"id" => "a/bare", "architecture" => %{}},
+            %{"id" => "a/no-architecture"}
+          ]
+        })
+      end)
+
+      assert Models.image_input_support([bare, no_architecture]) == %{
+               bare.uuid => :unknown,
+               no_architecture.uuid => :unknown
+             }
+    end
+
+    test "image_input/1 keeps its answer for a few minutes instead of asking the provider again" do
+      Models.clear_cache()
+      sees = endpoint_fixture(%{model: "a/sees"})
+      serve_models([{"a/sees", [], %{"modality" => "text+image->text"}}], 2)
+
+      assert Models.image_input(sees.uuid) == :supported
+      assert Models.image_input(sees.uuid) == :supported
+      assert_received {:models_requested, "/api/v1/models"}
+      refute_received {:models_requested, _}
+
+      # Forgotten, it is asked again; the same model on another key is another answer.
+      Models.clear_cache()
+      assert Models.image_input(sees.uuid) == :supported
+      assert_received {:models_requested, "/api/v1/models"}
+    end
+
+    test "image_input/1 does not keep an answer across a change of the endpoint's model" do
+      Models.clear_cache()
+      endpoint = endpoint_fixture(%{model: "a/blind"})
+
+      serve_models(
+        [
+          {"a/blind", [], %{"modality" => "text->text"}},
+          {"a/sees", [], %{"modality" => "text+image->text"}}
+        ],
+        2
+      )
+
+      assert Models.image_input(endpoint.uuid) == :unsupported
+      {:ok, _} = PhoenixKitAI.update_endpoint(endpoint, %{model: "a/sees"})
+      assert Models.image_input(endpoint.uuid) == :supported
+    end
+
     test "image_input/1 answers for one endpoint by its uuid; no endpoint is unknown" do
       sees = endpoint_fixture(%{model: "a/sees"})
       serve_models([{"a/sees", [], %{"modality" => "text+image->text"}}])

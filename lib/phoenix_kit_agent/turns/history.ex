@@ -5,7 +5,9 @@ defmodule PhoenixKitAgent.Turns.History do
   first, up to `agent_history_chars`. Tool calls and tool results of earlier
   turns are left out — after a loss of rights the model must not see old
   data — and so are notices. The extracted text of a message's attachments
-  (the user's own files) is part of that message.
+  (the user's own files) is part of that message; the attachments of one
+  message share `limit` between them, so that five files cannot by themselves
+  outgrow the window and push the earlier conversation out of it.
   """
 
   alias PhoenixKitAgent.Attachments
@@ -26,7 +28,7 @@ defmodule PhoenixKitAgent.Turns.History do
     texts = Enum.group_by(attachments, & &1.message_uuid)
 
     messages
-    |> Enum.flat_map(&entry(&1, Map.get(texts, &1.uuid, [])))
+    |> Enum.flat_map(&entry(&1, Map.get(texts, &1.uuid, []), limit))
     |> Enum.reverse()
     |> Enum.reduce_while({[], String.length(current.content)}, fn entry, {kept, used} ->
       used = used + String.length(entry.content)
@@ -38,18 +40,30 @@ defmodule PhoenixKitAgent.Turns.History do
 
   @doc """
   The content of a user message: its text, then each attachment — the text it
-  carries, or, for a picture the model is shown as pixels, a line that names it
-  (the pixels themselves go with the message of their own turn only).
+  carries (cut to its share of `limit`), or, for a picture the model is shown
+  as pixels, a line that names it (the pixels themselves go with the message of
+  their own turn only).
   """
-  @spec user_content(String.t(), [Attachment.t()]) :: String.t()
-  def user_content(text, attachments) do
-    Enum.reduce(attachments, text, fn attachment, acc -> acc <> attachment_block(attachment) end)
+  @spec user_content(String.t(), [Attachment.t()], pos_integer()) :: String.t()
+  def user_content(text, attachments, limit) do
+    share = div(limit, max(Enum.count(attachments, &is_binary(&1.extracted_text)), 1))
+
+    Enum.reduce(attachments, text, fn attachment, acc ->
+      acc <> attachment_block(attachment, share)
+    end)
   end
 
-  defp attachment_block(%{extracted_text: text, filename: filename}) when is_binary(text),
-    do: "\n\n[Attachment: " <> filename <> "]\n" <> text
+  defp attachment_block(%{extracted_text: text, filename: filename}, share)
+       when is_binary(text) do
+    shown =
+      if String.length(text) > share,
+        do: String.slice(text, 0, share) <> "\n[... cut]",
+        else: text
 
-  defp attachment_block(%{filename: filename} = attachment) do
+    "\n\n[Attachment: " <> filename <> "]\n" <> shown
+  end
+
+  defp attachment_block(%{filename: filename} = attachment, _share) do
     if Attachments.pixels?(attachment),
       do:
         "\n\n[Attachment: " <>
@@ -58,13 +72,18 @@ defmodule PhoenixKitAgent.Turns.History do
       else: ""
   end
 
-  defp entry(%Message{role: "user", content: content}, attachments) when is_binary(content),
-    do: [%{role: "user", content: user_content(content, attachments)}]
+  defp entry(%Message{role: "user", content: content}, attachments, limit)
+       when is_binary(content),
+       do: [%{role: "user", content: user_content(content, attachments, limit)}]
 
-  defp entry(%Message{role: "assistant", content: content, tool_calls: calls}, _attachments)
+  defp entry(
+         %Message{role: "assistant", content: content, tool_calls: calls},
+         _attachments,
+         _limit
+       )
        when is_binary(content) and calls in [nil, []] do
     if String.trim(content) == "", do: [], else: [%{role: "assistant", content: content}]
   end
 
-  defp entry(_tool_call_tool_result_or_notice, _attachments), do: []
+  defp entry(_tool_call_tool_result_or_notice, _attachments, _limit), do: []
 end

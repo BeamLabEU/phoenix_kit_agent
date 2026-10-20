@@ -10,6 +10,11 @@ defmodule PhoenixKitAgent.Attachments.Detect do
   UTF-8 at the start) and its extension picks `.csv`, `.txt` or `.md`. A
   file whose bytes are another known format (a GIF, an SVG, a Word document,
   an executable) or a binary named `.txt` is `{:error, :unsupported_type}`.
+
+  A file named like a text file that is text in another encoding — what Excel
+  writes as "CSV" or "Unicode text" in many locales (Windows-1251, Windows-1252,
+  UTF-16) — is `{:error, :unsupported_encoding}`, so that the user is told to
+  save it as UTF-8 and not that the file is of a kind that is not accepted.
   """
 
   alias PhoenixKit.Modules.Storage.Sniff
@@ -36,7 +41,8 @@ defmodule PhoenixKitAgent.Attachments.Detect do
   @type detected :: %{kind: String.t(), content_type: String.t(), ext: String.t()}
 
   @doc "Tells the kind of the file at `path`, called `filename` by the uploader."
-  @spec detect(Path.t(), String.t()) :: {:ok, detected()} | {:error, :unsupported_type}
+  @spec detect(Path.t(), String.t()) ::
+          {:ok, detected()} | {:error, :unsupported_type | :unsupported_encoding}
   def detect(path, filename) do
     case Sniff.sniff(path) do
       {:ok, %{format: format}} -> by_format(format, path)
@@ -77,22 +83,31 @@ defmodule PhoenixKitAgent.Attachments.Detect do
     extension = filename |> Path.extname() |> String.downcase()
 
     with {:ok, {kind, type, ext}} <- Map.fetch(@text_extensions, extension),
-         true <- text?(path) do
+         :text <- text_head(path) do
       {:ok, %{kind: kind, content_type: type, ext: ext}}
     else
+      :other_encoding -> {:error, :unsupported_encoding}
       _not_text -> {:error, :unsupported_type}
     end
   end
 
-  # No NUL byte and valid UTF-8 (a multi-byte character may be cut by the end
-  # of the head).
-  defp text?(path) do
+  # Text: no NUL byte and valid UTF-8 (a multi-byte character may be cut by the
+  # end of the head). A UTF-16 or UTF-32 byte order mark, or bytes that are not
+  # UTF-8 and no binary (an 8-bit code page), is text in another encoding.
+  defp text_head(path) do
     case File.open(path, [:read, :binary], &IO.binread(&1, @head_bytes)) do
+      {:ok, <<bom::binary-size(2), _::binary>>} when bom in [<<0xFF, 0xFE>>, <<0xFE, 0xFF>>] ->
+        :other_encoding
+
       {:ok, head} when is_binary(head) ->
-        not String.contains?(head, <<0>>) and valid_utf8?(head)
+        cond do
+          String.contains?(head, <<0>>) -> :binary
+          valid_utf8?(head) -> :text
+          true -> :other_encoding
+        end
 
       _unreadable_or_empty ->
-        false
+        :binary
     end
   end
 

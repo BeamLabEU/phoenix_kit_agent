@@ -38,7 +38,14 @@ library, in a folder named by the user's uuid: it is in no media picker or
 browser, not even for a holder of `media.view_all`, and its bytes are reached
 only through `PhoenixKitAgent.Attachments.url/3`, an expiring address minted
 for the owner's own session. The size and the number of files per message come
-from the user's settings (`max_attachment_mb`, `max_attachments_per_message`).
+from the user's settings (`max_attachment_mb`, `max_attachments_per_message`);
+a user also has no more than 20 files waiting for a message in all their chats,
+a failed one included, until they discard it. Discarding a file removes its bytes
+from Storage unless another attachment uses them, and Storage is given a
+neutral name for the file, not the user's. A text, CSV or Markdown file must be
+UTF-8: one saved by Excel in a code page or as UTF-16 is refused with its own
+reason (`unsupported_encoding`), and bytes that are not UTF-8 inside a file show
+as U+FFFD.
 
 Before the turn a task makes each file readable, and the row goes from
 `pending` to `ready` (or `failed`, with a code in `error`): a PDF gives its
@@ -49,7 +56,30 @@ describes them once and the description is kept in the history; a sheet
 becomes CSV text, the first rows of each sheet; a text file is read as it is.
 All of it is cut to a size (`config :phoenix_kit_agent, attachment_limits:
 […]`, see `PhoenixKitAgent.Attachments.Bounds`) and the row says when it was
-cut.
+cut; the attachments of one message share `agent_history_chars` between them.
+
+Two things are decided as follows, and are open to change:
+
+  * A picture shown to a model that sees is not described afterwards: later
+    turns carry a line that names the picture and the assistant's own earlier
+    answer, not a second (paid) description.
+  * For a model of unknown abilities (any provider but OpenRouter, which lists
+    them) with no vision model set, the pixels are sent: a provider that rejects
+    images fails that turn with `model_error` and the picture is not in the
+    history. Setting `agent_vision_endpoint_uuid` makes such a model get
+    descriptions instead.
+
+A JPEG for a model has its metadata removed (EXIF with the time and place of a
+photo, XMP, IPTC, comments; `Attachments.Jpeg`). A workbook is never opened by
+trusting the sizes its zip declares: its parts are inflated by the module
+(`Attachments.Unzip`) against one budget, and the file is `too_large` when the
+budget is spent. A worker that is killed for its deadline or its heap leaves
+nothing in the temporary directory: the copy of the file lives in a private
+directory (`Attachments.Work`) that the supervising process removes, and what
+is still left after a node crash is swept at start-up and when a new one is
+made. At most `concurrent_jobs` files (8) are processed at the same time on a
+node; more are refused as `unavailable`. A row that is still `pending` after
+the processing deadline (the node restarted) is read as `failed`/`timeout`.
 
 PDF processing needs poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and pictures
 need ImageMagick (`convert`, `identify`) on the host; without them such a file

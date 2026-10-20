@@ -7,7 +7,7 @@ defmodule PhoenixKitAgent.Attachments.Bounds do
 
   | Key | Default | Meaning |
   |---|---|---|
-  | `text_chars` | `16_000` | characters of one attachment's text (a PDF, a text file, a sheet, a description) |
+  | `text_chars` | `16_000` | characters of one attachment's text (a PDF, a text file, a sheet, a description); in a message the attachments share `agent_history_chars` between them, so each gets at most that divided by their number |
   | `sheet_rows` | `200` | rows of each sheet or of a CSV file |
   | `sheets` | `10` | sheets of one workbook |
   | `sheet_unzipped_bytes` | `100_000_000` | what a workbook may unpack to |
@@ -16,6 +16,9 @@ defmodule PhoenixKitAgent.Attachments.Bounds do
   | `min_pdf_text_chars` | `20` | below this a PDF has no text, it is a scan |
   | `process_deadline_ms` | `120_000` | the whole processing of one attachment |
   | `tool_timeout_s` | `60` | one run of `pdftotext`, `pdftoppm` or ImageMagick |
+  | `worker_heap_words` | `32_000_000` | the heap of one worker, in words of 8 bytes (256 MB); over it the worker is killed and the file is `too_large` |
+  | `concurrent_jobs` | `8` | files processed at the same time on the node; more are `unavailable` |
+  | `unsent_files` | `20` | files of one user that wait for a message (any status, a failed one included) |
 
   A picture is shrunk to `image_px/0` (1600) on its long side.
   """
@@ -29,7 +32,10 @@ defmodule PhoenixKitAgent.Attachments.Bounds do
     scan_pages: 3,
     min_pdf_text_chars: 20,
     process_deadline_ms: 120_000,
-    tool_timeout_s: 60
+    tool_timeout_s: 60,
+    worker_heap_words: 32_000_000,
+    concurrent_jobs: 8,
+    unsent_files: 20
   ]
 
   @image_px 1600

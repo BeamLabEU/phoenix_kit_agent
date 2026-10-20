@@ -27,12 +27,19 @@ defmodule PhoenixKitAgent.Models do
   cost — the money limits count only such calls (spec §7.3).
   """
 
+  alias PhoenixKitAgent.Models.Cache
   alias PhoenixKitAI.{Endpoint, OpenRouterClient}
 
   @typedoc "Whether a model takes tools."
   @type support :: :supported | :unsupported | :unknown
 
   @page_size 500
+
+  # How long the answer of `image_input/1` is kept: a model's abilities do not
+  # change by the minute; a listing that could not be fetched ("unknown") is
+  # asked again sooner.
+  @known_ttl_ms 300_000
+  @unknown_ttl_ms 30_000
 
   @doc """
   The endpoints a user can be given: enabled ones that chat (not speech,
@@ -63,13 +70,18 @@ defmodule PhoenixKitAgent.Models do
 
   @doc """
   `image_input_support/1` for the one endpoint with this uuid. `:unknown` for
-  no endpoint (`nil`) and for one that does not exist.
+  no endpoint (`nil`) and for one that does not exist. Asked for every picture,
+  so the answer is kept for a few minutes (`clear_cache/0` forgets it).
   """
   @spec image_input(String.t() | nil) :: support()
   def image_input(endpoint_uuid) when is_binary(endpoint_uuid) do
     case PhoenixKitAI.get_endpoint(endpoint_uuid) do
       %Endpoint{} = endpoint ->
-        endpoint |> List.wrap() |> image_input_support() |> Map.fetch!(endpoint.uuid)
+        Cache.fetch(
+          {:image_input, endpoint.uuid, endpoint.model, connection_digest(endpoint)},
+          &ttl/1,
+          fn -> endpoint |> List.wrap() |> image_input_support() |> Map.fetch!(endpoint.uuid) end
+        )
 
       _none ->
         :unknown
@@ -77,6 +89,18 @@ defmodule PhoenixKitAgent.Models do
   end
 
   def image_input(_none), do: :unknown
+
+  @doc "Forgets the answers `image_input/1` has kept."
+  @spec clear_cache() :: :ok
+  defdelegate clear_cache, to: Cache, as: :clear
+
+  defp ttl(:unknown), do: @unknown_ttl_ms
+  defp ttl(_known), do: @known_ttl_ms
+
+  # What the answer depends on besides the model: the key and the base URL of
+  # the connection, as a digest (the key itself is not kept).
+  defp connection_digest(endpoint),
+    do: :crypto.hash(:sha256, :erlang.term_to_binary(connection(endpoint)))
 
   defp capability(endpoints, check) do
     {openrouter, others} = Enum.split_with(endpoints, &openrouter?/1)
@@ -153,15 +177,20 @@ defmodule PhoenixKitAgent.Models do
 
   defp support(models, model_id, check) do
     case Map.fetch(models, model_id) do
-      {:ok, model} -> if check.(model), do: :supported, else: :unsupported
+      {:ok, model} -> verdict(check.(model))
       :error -> :unknown
     end
   end
 
+  defp verdict(true), do: :supported
+  defp verdict(false), do: :unsupported
+  defp verdict(:unknown), do: :unknown
+
   defp takes_tools?(model), do: OpenRouterClient.model_supports_parameter?(model, "tools")
 
   # OpenRouter lists `input_modalities`; the older `modality` ("text+image->text")
-  # is the fallback. Only the input side counts.
+  # is the fallback. Only the input side counts. A model that declares neither
+  # is not known not to see.
   defp takes_images?(%{architecture: architecture}) when is_map(architecture) do
     case {architecture["input_modalities"], architecture["modality"]} do
       {inputs, _modality} when is_list(inputs) ->
@@ -171,11 +200,11 @@ defmodule PhoenixKitAgent.Models do
         modality |> String.split("->") |> hd() |> String.contains?("image")
 
       _unknown_shape ->
-        false
+        :unknown
     end
   end
 
-  defp takes_images?(_model), do: false
+  defp takes_images?(_model), do: :unknown
 
   defp blank_to_nil(value) when is_binary(value),
     do: if(String.trim(value) == "", do: nil, else: value)

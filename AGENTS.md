@@ -35,7 +35,7 @@ one notice per limit and period through `phoenix_kit_agent_limit_events`;
 notification type `agent_limit` from `notification_types/0`) and Admin → AI
 Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
 (`PhoenixKitAgent.Attachments` with `Attachments.Detect`, `Extract`, `Processor`,
-`Cmd`, `Bounds`). Not built yet: the chat panel (Dock).
+`Cmd`, `Bounds`, `Unzip`, `Jpeg`, `Work`). Not built yet: the chat panel (Dock).
 
 - **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins to the
   `timujinne` forks' `integration/andi-2026-10` branches (the session-actor API,
@@ -69,7 +69,14 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
   The content, not the name, decides the kind (`Attachments.Detect`). Files are
   processed in a task under `PhoenixKitAgent.Attachments.TaskSupervisor`
   (`children/0`), with a deadline and a heap limit; a failure is a code in
-  `attachments.error`, never a parser's message. A picture reaches the model as
+  `attachments.error`, never a parser's message. A workbook is read with
+  `Attachments.Unzip` (never `:zip.extract` — declared sizes are the uploader's),
+  a JPEG for a model goes through `Attachments.Jpeg.strip_metadata/1`, and
+  every temporary file or directory is made by `Attachments.Work` (private,
+  random, removed by the supervising process, not the worker that may be
+  killed). Storage is given a neutral file name (it logs names). Concurrency is
+  `Bounds.concurrent_jobs`, enforced by `max_children` of the job supervisor;
+  workers run under their own supervisor. A picture reaches the model as
   pixels in its own turn (`Attachments.model_parts/3`, used by `Turns.Runner`)
   or, for a model that cannot see, as a description kept in the row. Writes
   that bind a file name or its text use `log: false`. Tests that need poppler

@@ -79,7 +79,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   alias PhoenixKit.API.MCP.Names
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.{Attachments, Conversations, Limits}
-  alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
+  alias PhoenixKitAgent.Schemas.{Conversation, Message}
   alias PhoenixKitAgent.Turns.{Locks, Monitor, Tools}
 
   @awaiting {__MODULE__, :awaiting_ai_request}
@@ -129,8 +129,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   @spec run(turn()) :: :ok
   def run(turn) do
     :ok = Monitor.check_stop()
-    message = store!(turn, %{turn_ref: turn.turn_ref, role: "user", content: turn.text})
-    link_attachments(turn.attachment_uuids, message)
+    store_user_message!(turn)
     {turn, transcript} = with_pictures(turn)
     round(turn, 1, transcript)
   end
@@ -138,7 +137,8 @@ defmodule PhoenixKitAgent.Turns.Runner do
   # The pictures of this message's attachments go along with its text, in this
   # turn only (spec §9): the history keeps the extracted text, not the pixels.
   # A turn that carries pictures is never captured into the AI journal, whatever
-  # the module's setting: the pixels would be written there as base64.
+  # the module's setting: the pixels would be written there as base64. One that
+  # carries only notes about pictures it could not show has no pixels to write.
   defp with_pictures(%{attachment_uuids: []} = turn), do: {turn, turn.history}
 
   defp with_pictures(turn) do
@@ -156,19 +156,9 @@ defmodule PhoenixKitAgent.Turns.Runner do
             do: text,
             else: [%{"type" => "text", "text" => text} | pictures]
 
-        {%{turn | capture?: false}, earlier ++ [%{current | content: content}]}
+        turn = if pictures == [], do: turn, else: %{turn | capture?: false}
+        {turn, earlier ++ [%{current | content: content}]}
     end
-  end
-
-  defp link_attachments([], _message), do: :ok
-
-  defp link_attachments(uuids, %Message{} = message) do
-    RepoHelper.repo().update_all(
-      from(a in Attachment, where: a.uuid in ^uuids and is_nil(a.message_uuid)),
-      set: [message_uuid: message.uuid]
-    )
-
-    :ok
   end
 
   @doc """
@@ -534,8 +524,22 @@ defmodule PhoenixKitAgent.Turns.Runner do
   # A message of the turn, or the end of the turn: a deleted chat ends it
   # quietly; a refused message ends it with only the field names and
   # validation codes in the log, never the values.
+  defp store_user_message!(turn) do
+    attrs = %{turn_ref: turn.turn_ref, role: "user", content: turn.text}
+
+    turn.user_uuid
+    |> Conversations.add_user_turn_message(turn.conversation_uuid, attrs, turn.attachment_uuids)
+    |> stored!(attrs)
+  end
+
   defp store!(turn, attrs, fields \\ []) do
-    case Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, attrs, fields) do
+    turn.user_uuid
+    |> Conversations.add_turn_message(turn.conversation_uuid, attrs, fields)
+    |> stored!(attrs)
+  end
+
+  defp stored!(result, attrs) do
+    case result do
       {:ok, message} ->
         message
 
