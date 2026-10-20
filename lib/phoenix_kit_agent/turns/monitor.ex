@@ -212,7 +212,7 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   Asks the monitor of whichever node runs `turn_ref` to stop it (see "Stopping
   a turn of another node"); the message is the turn ref only. Asynchronous: a
   turn that no node runs is not told. `{:error, :not_running}` when PubSub
-  refuses the message.
+  refuses the message or is not there (it restarts).
   """
   @spec broadcast_stop(String.t()) :: :ok | {:error, :not_running}
   def broadcast_stop(turn_ref) when is_binary(turn_ref) do
@@ -220,6 +220,10 @@ defmodule PhoenixKitAgent.Turns.Monitor do
       :ok -> :ok
       {:error, _reason} -> {:error, :not_running}
     end
+  rescue
+    _no_pubsub -> {:error, :not_running}
+  catch
+    _kind, _reason -> {:error, :not_running}
   end
 
   @doc """

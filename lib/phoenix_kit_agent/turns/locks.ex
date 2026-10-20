@@ -71,7 +71,7 @@ defmodule PhoenixKitAgent.Turns.Locks do
   """
   @spec fresh?(String.t(), String.t(), pos_integer()) :: boolean()
   def fresh?(conversation_uuid, turn_ref, ttl_s) do
-    stale = DateTime.add(db_now(), -ttl_s, :second)
+    stale = stale_before(ttl_s)
 
     repo().exists?(
       from(c in Conversation,
@@ -108,7 +108,7 @@ defmodule PhoenixKitAgent.Turns.Locks do
   """
   @spec release_stale(String.t(), String.t(), String.t(), pos_integer()) :: boolean()
   def release_stale(user_uuid, conversation_uuid, turn_ref, ttl_s) do
-    stale = DateTime.add(db_now(), -ttl_s, :second)
+    stale = stale_before(ttl_s)
 
     {count, _} =
       repo().update_all(
@@ -175,6 +175,9 @@ defmodule PhoenixKitAgent.Turns.Locks do
 
     if count == 1, do: :ok, else: {:error, :turn_in_flight}
   end
+
+  # A lock taken before this time is older than `ttl_s`.
+  defp stale_before(ttl_s), do: DateTime.add(db_now(), -ttl_s, :second)
 
   # `now()` is the transaction's start, the same for both locks.
   defp db_now do

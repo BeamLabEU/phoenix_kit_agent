@@ -1482,10 +1482,13 @@ defmodule PhoenixKitAgent.TurnsTest do
       :ok = PubSub.broadcast(turn_topic(turn_ref), {:agent_stop_turn, other})
       :ok = PubSub.broadcast(turn_topic(other), {:agent_stop_turn, other})
       :ok = PubSub.broadcast(turn_topic(turn_ref), {:agent_stop_turn, 42})
-      _ = :sys.get_state(PhoenixKitAgent.Turns.Monitor)
+      turns = :sys.get_state(PhoenixKitAgent.Turns.Monitor)
 
+      # The monitor has taken the three requests: none of them asked the turn
+      # to stop, and it is still running after a stop's grace period.
+      assert [%{stop: nil}] = for({_ref, %{turn: %{turn_ref: ^turn_ref}} = e} <- turns, do: e)
+      refute_receive {:agent_turn_finished, _, ^turn_ref}, Monitor.stop_grace_ms() + 300
       assert [{_pid, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
-      refute_received {:agent_turn_finished, _, ^turn_ref}
 
       :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref)
       await_end(ctx.chat, turn_ref)
@@ -1532,11 +1535,41 @@ defmodule PhoenixKitAgent.TurnsTest do
 
     test "a lock past its TTL is no turn anywhere: not running, nobody asked", ctx do
       turn_ref = UUIDv7.generate()
-      lock_chat(ctx.chat, turn_ref, DateTime.add(DateTime.utc_now(), -(300 + 60 + 30), :second))
+      ttl_s = Config.turn_deadline_s() + 60
+      lock_chat(ctx.chat, turn_ref, DateTime.add(DateTime.utc_now(), -(ttl_s + 30), :second))
       :ok = PubSub.subscribe(turn_topic(turn_ref))
 
       assert {:error, :not_running} = Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref)
       refute_received {:agent_stop_turn, _}
+    end
+  end
+
+  describe "stop on another node, with no PubSub" do
+    # The PubSub's registry not there, as when it is restarting: its table
+    # goes by another name for the test.
+    defp without_pubsub(fun) do
+      name = :phoenix_kit_internal_pubsub
+      away = :phoenix_kit_internal_pubsub_away
+      :ets.rename(name, away)
+
+      try do
+        fun.()
+      after
+        :ets.rename(away, name)
+      end
+    end
+
+    test "the request is refused, not raised", ctx do
+      turn_ref = UUIDv7.generate()
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: turn_ref]
+      )
+
+      assert {:error, :not_running} = without_pubsub(fn -> Monitor.broadcast_stop(turn_ref) end)
+
+      assert {:error, :not_running} =
+               without_pubsub(fn -> Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref) end)
     end
   end
 
