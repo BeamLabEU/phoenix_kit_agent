@@ -29,14 +29,16 @@ defmodule PhoenixKitAgent.UserConfig do
       It writes the switch, the model, the admin's prompt, the limits and the
       notice flags (`UserSettings.admin_changeset/2`) and records who changed
       which fields for whom in the core Activity log — field names only, never
-      a prompt text.
+      a prompt text. An Owner's settings are changed by an Owner only, and a
+      form opened before someone else's save does not overwrite it
+      (`expected:`).
   """
 
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.Activity
   alias PhoenixKit.RepoHelper
-  alias PhoenixKit.Users.Auth.Scope
+  alias PhoenixKit.Users.Auth.{Scope, User}
   alias PhoenixKit.Users.{Permissions, Roles}
   alias PhoenixKitAgent.{Config, Conversations}
   alias PhoenixKitAgent.Schemas.UserSettings
@@ -118,12 +120,12 @@ defmodule PhoenixKitAgent.UserConfig do
   (and the Owners, who hold every permission), by e-mail. The admin screen lists
   these.
   """
-  @spec agent_users() :: [PhoenixKit.Users.Auth.User.t()]
+  @spec agent_users() :: [User.t()]
   def agent_users do
     owners = "Owner" |> Roles.users_with_role() |> Enum.map(& &1.uuid)
     uuids = Enum.uniq(Permissions.users_with_permission("agent") ++ owners)
 
-    from(u in PhoenixKit.Users.Auth.User,
+    from(u in User,
       where: u.uuid in ^uuids and u.is_active == true,
       order_by: [asc: u.email, asc: u.uuid]
     )
@@ -217,31 +219,55 @@ defmodule PhoenixKitAgent.UserConfig do
   @doc """
   Saves what an admin sets for `target_user_uuid` (`attrs` as
   `UserSettings.admin_changeset/2` casts them) on behalf of `actor_scope`,
-  which must hold `agent.manage`. The row is created if the user has none, and
-  locked while it is changed.
+  which must hold `agent.manage` — and be an Owner when the target is one: an
+  Owner's assistant is not set by the people an Owner manages. The row is
+  created if the user has none, and locked while it is changed.
+
+  `expected: %{field => value}` in `opts` is what the caller's form showed
+  when it was opened: when the stored row no longer holds those values (an
+  admin saved in between), nothing is written and the answer is `{:error,
+  :stale}`, so a stale form never overwrites that change unseen. Fields not
+  named there do not count.
 
   Returns `{:ok, settings, changed_fields}`; when fields changed, the actor,
-  the target and the field names go to the core Activity log (action
-  `agent.user_settings_updated`) — no values. `{:error, :forbidden}` without
-  the permission, `{:error, :not_found}` for an unknown user, `{:error,
-  changeset}` for an invalid value (nothing is written).
+  the user (as the resource of the entry) and the field names go to the core
+  Activity log (action `agent.user_settings_updated`) — no values, and no
+  notification for the user. `{:error, :forbidden}` without the permission
+  (or for an Owner's settings, to a non-Owner), `{:error, :not_found}` for an
+  unknown user, `{:error, changeset}` for an invalid value (nothing is
+  written).
   """
-  @spec admin_update(Scope.t() | nil, term(), map()) ::
+  @spec admin_update(Scope.t() | nil, term(), map(), keyword()) ::
           {:ok, UserSettings.t(), [atom()]}
-          | {:error, :forbidden | :not_found | Ecto.Changeset.t()}
-  def admin_update(actor_scope, target_user_uuid, attrs) when is_map(attrs) do
+          | {:error, :forbidden | :not_found | :stale | Ecto.Changeset.t()}
+  def admin_update(actor_scope, target_user_uuid, attrs, opts \\ []) when is_map(attrs) do
     with :ok <- authorize_manage(actor_scope),
-         {:ok, target} <- existing_user(target_user_uuid) do
+         {:ok, target} <- existing_user(target_user_uuid),
+         :ok <- authorize_target(actor_scope, target) do
       actor_uuid = Scope.user_uuid(actor_scope)
 
-      case save_admin(target, actor_uuid, attrs) do
+      case save_admin(target.uuid, actor_uuid, attrs, Keyword.get(opts, :expected)) do
         {:ok, row, fields} ->
-          log_change(actor_uuid, target, fields)
+          log_change(actor_uuid, target.uuid, fields)
           {:ok, row, fields}
 
-        {:error, _changeset} = error ->
+        {:error, _reason} = error ->
           error
       end
+    end
+  end
+
+  @doc """
+  Whether `actor_scope` may set the assistant of `target_user_uuid` with
+  `admin_update/4`: it holds `agent.manage`, and is an Owner if the target is.
+  """
+  @spec may_configure?(Scope.t() | nil, term()) :: boolean()
+  def may_configure?(actor_scope, target_user_uuid) do
+    with :ok <- authorize_manage(actor_scope),
+         {:ok, target} <- existing_user(target_user_uuid) do
+      authorize_target(actor_scope, target) == :ok
+    else
+      _refused -> false
     end
   end
 
@@ -251,17 +277,22 @@ defmodule PhoenixKitAgent.UserConfig do
 
   defp authorize_manage(_none), do: {:error, :forbidden}
 
+  defp authorize_target(actor_scope, target) do
+    if Roles.user_has_role_owner?(target) and not Scope.owner?(actor_scope),
+      do: {:error, :forbidden},
+      else: :ok
+  end
+
   defp existing_user(user_uuid) do
     with {:ok, uuid} <- Ecto.UUID.cast(user_uuid),
-         true <-
-           repo().exists?(from(u in PhoenixKit.Users.Auth.User, where: u.uuid == ^uuid)) do
-      {:ok, uuid}
+         %User{} = user <- repo().get(User, uuid) do
+      {:ok, user}
     else
       _unknown -> {:error, :not_found}
     end
   end
 
-  defp save_admin(target, actor_uuid, attrs) do
+  defp save_admin(target, actor_uuid, attrs, expected) do
     result =
       repo().transaction(fn ->
         repo().insert!(%UserSettings{user_uuid: target},
@@ -271,6 +302,8 @@ defmodule PhoenixKitAgent.UserConfig do
 
         row =
           repo().one!(from(s in UserSettings, where: s.user_uuid == ^target, lock: "FOR UPDATE"))
+
+        unless unchanged?(row, expected), do: repo().rollback(:stale)
 
         changeset = UserSettings.admin_changeset(row, attrs)
         fields = changeset.changes |> Map.keys() |> Enum.sort()
@@ -289,15 +322,22 @@ defmodule PhoenixKitAgent.UserConfig do
     case result do
       {:ok, {row, fields}} -> {:ok, row, fields}
       {:error, %Ecto.Changeset{}} = error -> error
+      {:error, :stale} = error -> error
     end
   end
+
+  defp unchanged?(_row, nil), do: true
+
+  defp unchanged?(row, expected) when is_map(expected),
+    do: Enum.all?(expected, fn {field, value} -> Map.get(row, field) == value end)
 
   defp log_change(_actor_uuid, _target, []), do: :ok
 
   defp log_change(actor_uuid, target, fields) do
+    # No `target_uuid`: core would turn the entry into a notification for the
+    # user, who did not ask for one and could not switch it off.
     Activity.log("agent", "agent.user_settings_updated",
       actor_uuid: actor_uuid,
-      target_uuid: target,
       resource_type: "agent_user_settings",
       resource_uuid: target,
       metadata: %{"fields" => Enum.map(fields, &Atom.to_string/1)}

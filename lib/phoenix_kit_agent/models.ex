@@ -27,11 +27,20 @@ defmodule PhoenixKitAgent.Models do
   cost — the money limits count only such calls (spec §7.3).
   """
 
+  import Ecto.Query, only: [from: 2]
+
+  alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.Models.Cache
   alias PhoenixKitAI.{Endpoint, OpenRouterClient}
 
   @typedoc "Whether a model takes tools."
   @type support :: :supported | :unsupported | :unknown
+
+  @typedoc """
+  What a page shows of an endpoint: never the endpoint itself, which carries
+  its API key.
+  """
+  @type summary :: %{uuid: String.t(), name: String.t(), model: String.t(), provider: String.t()}
 
   @page_size 500
 
@@ -55,6 +64,38 @@ defmodule PhoenixKitAgent.Models do
     |> Enum.filter(&(Endpoint.kind(&1) == :chat))
     |> add_current(Keyword.get(opts, :include))
     |> Enum.sort_by(&{String.downcase(&1.name || ""), &1.uuid})
+  end
+
+  @doc "An endpoint as a page keeps it (`t:summary/0`)."
+  @spec summary(Endpoint.t()) :: summary()
+  def summary(%Endpoint{} = endpoint),
+    do: %{
+      uuid: endpoint.uuid,
+      name: endpoint.name,
+      model: endpoint.model,
+      provider: endpoint.provider
+    }
+
+  @doc "The endpoints with these uuids as `t:summary/0`: `%{uuid => summary}`."
+  @spec summaries([String.t()]) :: %{String.t() => summary()}
+  def summaries(uuids) when is_list(uuids) do
+    from(e in Endpoint,
+      where: e.uuid in ^Enum.uniq(uuids),
+      select: {e.uuid, %{uuid: e.uuid, name: e.name, model: e.model, provider: e.provider}}
+    )
+    |> RepoHelper.repo().all()
+    |> Map.new()
+  end
+
+  @doc """
+  `tools_support/1` for the endpoints with these uuids, read again from the
+  database (one that is gone is left out).
+  """
+  @spec tools_support_of([String.t()]) :: %{String.t() => support()}
+  def tools_support_of(uuids) when is_list(uuids) do
+    from(e in Endpoint, where: e.uuid in ^Enum.uniq(uuids))
+    |> RepoHelper.repo().all()
+    |> tools_support()
   end
 
   @doc "Whether each endpoint's model takes tools (see the moduledoc): `%{endpoint_uuid => support}`."

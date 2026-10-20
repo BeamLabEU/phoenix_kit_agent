@@ -9,8 +9,10 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
 
   import Ecto.Query, only: [from: 2]
 
-  alias PhoenixKit.Users.{Permissions, Roles}
+  alias PhoenixKit.Settings
+  alias PhoenixKit.Users.{Auth, Permissions, Roles}
   alias PhoenixKitAgent.Schemas.UserSettings
+  alias PhoenixKitAgent.UserConfig
 
   @path "/en/admin/agent/users"
   @stub __MODULE__
@@ -257,7 +259,7 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
 
       assert [entry] = activity()
       assert entry.actor_uuid == ctx.admin.uuid
-      assert entry.target_uuid == ctx.member.uuid
+      assert entry.resource_uuid == ctx.member.uuid
       refute inspect(entry) =~ "ADMIN-SECRET-PROMPT"
 
       assert has_element?(view, "#agent-user-#{ctx.member.uuid}-model", "Fast")
@@ -429,6 +431,191 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
       render_hook(view, "configure", %{"user" => ctx.member.uuid})
 
       refute has_element?(view, "#agent-user-form")
+    end
+  end
+
+  describe "with agent.manage: what the form is checked against" do
+    setup %{conn: conn} do
+      admin = manager()
+      member = user_with(["agent"], "member")
+      endpoint = endpoint_fixture(%{name: "Fast", model: "a/with-tools"})
+      %{conn: log_in(conn, admin), admin: admin, member: member, endpoint: endpoint}
+    end
+
+    test "a user who lost agent while the form was open is not saved", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      [role] =
+        ctx.member
+        |> Roles.get_user_roles()
+        |> Enum.reject(&(&1 in ["Owner", "Admin", "User"]))
+        |> Enum.map(&Roles.get_role_by_name/1)
+
+      :ok = Permissions.revoke_permission(role.uuid, "agent")
+
+      view |> form("#agent-user-form", user_settings: %{daily_turn_limit: "1"}) |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      refute has_element?(view, "#agent-user-form")
+      assert Repo.get(UserSettings, ctx.member.uuid) == nil
+    end
+
+    test "a save over another admin's change is refused, the change stays", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      other_admin = scope_of(manager())
+
+      {:ok, _, _} =
+        UserConfig.admin_update(other_admin, ctx.member.uuid, %{"daily_turn_limit" => "5"})
+
+      view
+      |> form("#agent-user-form", user_settings: %{system_prompt: "Stale form"})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+      assert row.daily_turn_limit == 5
+      assert row.system_prompt == nil
+
+      # Opened again, the form shows the change and saves.
+      view |> element("#agent-user-configure-#{ctx.member.uuid}") |> render_click()
+
+      view
+      |> form("#agent-user-form", user_settings: %{system_prompt: "Fresh form"})
+      |> render_submit()
+
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+      assert row.daily_turn_limit == 5
+      assert row.system_prompt == "Fresh form"
+    end
+
+    test "whole numbers are read as typed in a decimal field", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      view
+      |> form("#agent-user-form",
+        user_settings: %{daily_turn_limit: "1 000", max_attachments_per_message: "3,0"}
+      )
+      |> render_submit()
+
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+      assert row.daily_turn_limit == 1_000
+      assert row.max_attachments_per_message == 3
+    end
+
+    test "the page keeps no AI endpoint with its key", ctx do
+      view = open(ctx.conn, ctx.member)
+      _ = render_async(view)
+
+      state = inspect(:sys.get_state(view.pid), limit: :infinity, printable_limit: :infinity)
+      refute state =~ "sk-or-v1-test-key"
+      refute state =~ "PhoenixKitAI.Endpoint"
+    end
+
+    test "a user given agent after the page opened can be configured", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+      late = user_with(["agent"], "late")
+
+      render_hook(view, "configure", %{"user" => late.uuid})
+
+      assert has_element?(view, "#agent-user-form")
+    end
+  end
+
+  describe "an Owner's settings" do
+    test "a manager who is not an Owner can neither open nor save them", %{conn: conn} do
+      owner = owner_fixture()
+      admin = manager()
+      {:ok, view, _html} = live(log_in(conn, admin), @path)
+
+      assert has_element?(view, "#agent-user-#{owner.uuid}")
+      refute has_element?(view, "#agent-user-configure-#{owner.uuid}")
+
+      render_hook(view, "configure", %{"user" => owner.uuid})
+      refute has_element?(view, "#agent-user-form")
+      assert has_element?(view, "#flash-error")
+      assert Repo.get(UserSettings, owner.uuid) == nil
+    end
+
+    test "an Owner sets them", %{conn: conn} do
+      owner = owner_fixture()
+      {:ok, view, _html} = live(log_in(conn, owner), @path)
+
+      view |> element("#agent-user-configure-#{owner.uuid}") |> render_click()
+      view |> form("#agent-user-form", user_settings: %{daily_turn_limit: "4"}) |> render_submit()
+
+      assert %UserSettings{daily_turn_limit: 4} = Repo.get!(UserSettings, owner.uuid)
+    end
+  end
+
+  describe "the role the session acts as" do
+    setup do
+      {:ok, _} = Settings.update_setting("role_switcher_enabled", "true")
+      :ok
+    end
+
+    # A second custom role for `user`, granting `permissions`.
+    defp add_role(user, permissions) do
+      {:ok, role} = Roles.create_role(%{name: "AgentSecond#{System.unique_integer([:positive])}"})
+      for key <- permissions, do: {:ok, _} = Permissions.grant_permission(role.uuid, key)
+      {:ok, _} = Roles.assign_role(user, role.name)
+      role
+    end
+
+    test "acting as a role without agent.manage, the page does not open", %{conn: conn} do
+      admin = manager()
+      plain = add_role(admin, ["agent"])
+      {conn, token} = log_in_session(conn, admin)
+      act_as(token, plain)
+
+      assert {:error, {:live_redirect, _}} = live(conn, @path)
+    end
+
+    test "a switch to a role without agent.manage stops the next submit", %{conn: conn} do
+      admin = manager()
+      plain = add_role(admin, ["agent"])
+      member = user_with(["agent"], "member")
+      {conn, token} = log_in_session(conn, admin)
+
+      view = open(conn, member)
+      act_as(token, plain)
+
+      view |> form("#agent-user-form", user_settings: %{daily_turn_limit: "1"}) |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      assert Repo.get(UserSettings, member.uuid) == nil
+      assert activity() == []
+
+      view |> element("#agent-user-cancel") |> render_click()
+      render_hook(view, "configure", %{"user" => member.uuid})
+      refute has_element?(view, "#agent-user-form")
+    end
+
+    test "the session's role counts, not the user's default one", %{conn: conn} do
+      # The default role (the first one) only uses the assistant.
+      admin = user_with(["agent"], "acting")
+      managing = add_role(admin, ["agent", "agent.manage"])
+      member = user_with(["agent"], "member")
+      {conn, token} = log_in_session(conn, admin)
+      act_as(token, managing)
+
+      view = open(conn, member)
+      view |> form("#agent-user-form", user_settings: %{daily_turn_limit: "2"}) |> render_submit()
+
+      assert %UserSettings{daily_turn_limit: 2} = Repo.get!(UserSettings, member.uuid)
+    end
+
+    test "a session that was logged out stops the next submit", %{conn: conn} do
+      admin = manager()
+      member = user_with(["agent"], "member")
+      {conn, token} = log_in_session(conn, admin)
+
+      view = open(conn, member)
+      :ok = Auth.delete_user_session_token(token)
+
+      view |> form("#agent-user-form", user_settings: %{daily_turn_limit: "1"}) |> render_submit()
+
+      assert Repo.get(UserSettings, member.uuid) == nil
     end
   end
 

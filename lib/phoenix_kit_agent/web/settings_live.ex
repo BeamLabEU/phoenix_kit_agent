@@ -5,9 +5,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   one turn.
 
   Needs `agent.manage`. The tab is registered under that key; the page checks
-  it again on mount and before every save, against the session's scope and
-  against the user's current rights (a right taken away while the page is open
-  stops the next save).
+  it again on mount and before every save, against the socket's scope and
+  against the scope of the session as it is now — the role it acts as, not the
+  user's default one (`PhoenixKitAgent.Web.Access`): a right taken away, a
+  switch to another role or a logout while the page is open stops the next
+  save.
 
   When the default model does not report what a call costs
   (`PhoenixKitAgent.Models.reports_cost?/1`), the limits say that money is not
@@ -33,7 +35,9 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   alias PhoenixKitAgent.Web.Access
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
+    socket = Access.assign_session(socket, session)
+
     if Access.may_manage?(socket) do
       {:ok,
        socket
@@ -55,11 +59,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   end
 
   @impl true
-  def handle_event("validate", %{"settings" => params}, socket) do
+  def handle_event("validate", %{"settings" => params}, socket) when is_map(params) do
     {:noreply, assign_form(socket, Config.defaults_changeset(params))}
   end
 
-  def handle_event("save", %{"settings" => params}, socket) do
+  def handle_event("save", %{"settings" => params}, socket) when is_map(params) do
     if Access.may_manage?(socket) do
       save(socket, params)
     else

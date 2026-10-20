@@ -23,7 +23,9 @@ defmodule PhoenixKitAgent.Web.SpendingLive do
   alias PhoenixKitAgent.Web.Access
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
+    socket = Access.assign_session(socket, session)
+
     if Access.may_manage?(socket) do
       {:ok,
        socket

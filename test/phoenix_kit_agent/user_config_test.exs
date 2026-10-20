@@ -281,7 +281,7 @@ defmodule PhoenixKitAgent.UserConfigTest do
 
       assert [entry] = activity("agent.user_settings_updated")
       assert entry.actor_uuid == manager_uuid
-      assert entry.target_uuid == user.uuid
+      assert entry.resource_uuid == user.uuid
       assert entry.module == "agent"
 
       assert Enum.sort(entry.metadata["fields"]) ==
@@ -349,6 +349,91 @@ defmodule PhoenixKitAgent.UserConfigTest do
                UserConfig.admin_update(manager_scope(), Ecto.UUID.generate(), %{})
 
       assert {:error, :not_found} = UserConfig.admin_update(manager_scope(), "nope", %{})
+    end
+
+    test "the edited user gets no notification of it", %{user: user} do
+      {:ok, _} = Settings.update_setting("notifications_enabled", "true")
+
+      {:ok, _, [:system_prompt]} =
+        UserConfig.admin_update(manager_scope(), user.uuid, %{"system_prompt" => "SECRET"})
+
+      assert Repo.all(
+               from(n in PhoenixKit.Notifications.Notification,
+                 where: n.recipient_uuid == ^user.uuid
+               )
+             ) == []
+    end
+
+    test "a money limit above $1,000,000 is an error, not a database exception", %{user: user} do
+      scope = manager_scope()
+
+      for value <- [1_000_000_000_001, 9_223_372_036_854_775_808] do
+        assert {:error, %Ecto.Changeset{} = changeset} =
+                 UserConfig.admin_update(scope, user.uuid, %{
+                   "daily_cost_limit_micro_usd" => value,
+                   "monthly_cost_limit_micro_usd" => value
+                 })
+
+        assert %{daily_cost_limit_micro_usd: [_], monthly_cost_limit_micro_usd: [_]} =
+                 errors_on(changeset)
+      end
+
+      assert {:ok, _, _} =
+               UserConfig.admin_update(scope, user.uuid, %{
+                 "monthly_cost_limit_micro_usd" => 1_000_000_000_000
+               })
+    end
+
+    test "an Owner's settings are changed by an Owner only" do
+      owner = owner_fixture()
+      manager = manager_scope()
+
+      assert {:error, :forbidden} =
+               UserConfig.admin_update(manager, owner.uuid, %{"daily_turn_limit" => "1"})
+
+      assert Repo.get(UserSettings, owner.uuid) == nil
+      assert activity("agent.user_settings_updated") == []
+
+      assert {:ok, _, [:daily_turn_limit]} =
+               UserConfig.admin_update(scope_of(owner), owner.uuid, %{"daily_turn_limit" => "1"})
+    end
+
+    test "with expected values: a save over someone else's change is refused", %{user: user} do
+      scope = manager_scope()
+      {:ok, _, _} = UserConfig.admin_update(scope, user.uuid, %{"daily_turn_limit" => "5"})
+
+      # What the first admin's form showed when it opened: no limit of their own.
+      opened = %{daily_turn_limit: nil, system_prompt: nil}
+
+      assert {:error, :stale} =
+               UserConfig.admin_update(
+                 scope,
+                 user.uuid,
+                 %{"daily_turn_limit" => "", "system_prompt" => "Mine"},
+                 expected: opened
+               )
+
+      row = Repo.get!(UserSettings, user.uuid)
+      assert row.daily_turn_limit == 5
+      assert row.system_prompt == nil
+      assert length(activity("agent.user_settings_updated")) == 1
+
+      assert {:ok, _, [:system_prompt]} =
+               UserConfig.admin_update(scope, user.uuid, %{"system_prompt" => "Mine"},
+                 expected: %{daily_turn_limit: 5, system_prompt: nil}
+               )
+    end
+
+    test "with expected values: a field outside them does not make the save stale", %{
+      user: user,
+      ref: ref
+    } do
+      {:ok, _} = UserConfig.put_personal_instructions(ref, "Mine", @me)
+
+      assert {:ok, _, [:daily_turn_limit]} =
+               UserConfig.admin_update(manager_scope(), user.uuid, %{"daily_turn_limit" => "3"},
+                 expected: %{daily_turn_limit: nil}
+               )
     end
 
     test "blank limit fields go back to the module default", %{user: user} do

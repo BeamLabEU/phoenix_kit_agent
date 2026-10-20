@@ -144,6 +144,8 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
 
       render_hook(view, "save", %{})
       render_hook(view, "validate", %{"other" => "x"})
+      render_hook(view, "validate", %{"settings" => "x"})
+      render_hook(view, "save", %{"settings" => ["x"]})
 
       assert has_element?(view, "#agent-settings-form")
       assert Config.limit_defaults().daily_turn_limit == 200
@@ -261,6 +263,23 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       refute Config.capture_ai_content?()
     end
 
+    test "an Owner whose session acts as Admin does not switch it", %{conn: conn} do
+      {:ok, _} = Settings.update_setting("role_switcher_enabled", "true")
+      second = admin_user()
+      owner_assignment(second, :insert)
+
+      {conn, token} = log_in_session(conn, second)
+      {:ok, view, _html} = live(conn, @path)
+      assert has_element?(view, "#agent-capture-form")
+
+      act_as(token, Roles.get_role_by_name("Admin"))
+
+      view |> form("#agent-capture-form", capture: %{enabled: "true"}) |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      refute Config.capture_ai_content?()
+    end
+
     test "an event without the form's fields changes nothing and does not crash", %{conn: conn} do
       owner = owner_user()
       {:ok, view, _html} = live(log_in(conn, owner), @path)
@@ -303,6 +322,26 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert has_element?(view, "#flash-error")
       assert Config.limit_defaults().daily_turn_limit == 200
       assert Settings.get_setting("agent_daily_turn_limit", nil) in [nil, ""]
+    end
+
+    test "a save after the session switched to a role without agent.manage changes nothing",
+         %{conn: conn} do
+      {:ok, _} = Settings.update_setting("role_switcher_enabled", "true")
+      manager = user_with(["agent", "agent.manage"], "manager")
+      {:ok, plain} = Roles.create_role(%{name: "AgentPlain#{System.unique_integer([:positive])}"})
+      {:ok, _} = Permissions.grant_permission(plain.uuid, "agent")
+      {:ok, _} = Roles.assign_role(manager, plain.name)
+
+      {conn, token} = log_in_session(conn, manager)
+      {:ok, view, _html} = live(conn, @path)
+      act_as(token, plain)
+
+      view
+      |> form("#agent-settings-form", settings: %{daily_turn_limit: "1"})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      assert Config.limit_defaults().daily_turn_limit == 200
     end
 
     test "nobody signed in is sent away", %{conn: conn} do

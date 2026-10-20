@@ -8,13 +8,17 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
   Needs `agent.manage`. The tab is registered under that key; the page checks
   it again on mount and on every event that opens or saves a form, against the
-  session's scope and the user's current rights (`PhoenixKitAgent.Web.Access`),
-  and the context function checks it a third time against the fresh scope it is
-  handed. The user being edited is the one the server opened the form for — a
-  `user` in a submit is never read — and only the fields the form offers are
-  taken from it, so a forged submit cannot reach the lock columns, the user's
-  own instructions or the notice list. A model that the form did not offer
-  (one that cannot chat, or does not exist) is refused.
+  socket's scope and the scope of the session as it is now, narrowed to the
+  role the session acts as (`PhoenixKitAgent.Web.Access`), and the context
+  function checks it a third time against that session scope. An Owner's
+  settings are opened and saved by an Owner only. The user being edited is the
+  one the server opened the form for — a `user` in a submit is never read —
+  and only the fields the form offers are taken from it, so a forged submit
+  cannot reach the lock columns, the user's own instructions or the notice
+  list. A model that the form did not offer (one that cannot chat, or does not
+  exist) is refused. A save after someone else changed the same user's
+  settings since the form opened is refused (`expected:` of
+  `UserConfig.admin_update/4`), not written over their change.
 
   A user whose model does not report what a call costs
   (`PhoenixKitAgent.Models.reports_cost?/1`) is marked: money is not counted
@@ -24,7 +28,8 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   Who changed what for whom goes to the core Activity log, field names only.
   The model list marks the endpoints whose model is known not to take tools, and
   those where that is unknown (`PhoenixKitAgent.Models`); that listing is
-  fetched off the page process after the form opens.
+  fetched off the page process after the form opens. The page keeps endpoints
+  as `PhoenixKitAgent.Models.summary/1` — never the endpoint row with its key.
   """
 
   use Phoenix.LiveView
@@ -36,13 +41,11 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   import PhoenixKitWeb.Components.Core.Input, only: [translate_error: 1]
   import PhoenixKitWeb.Components.Core.Select, only: [select: 1]
   import PhoenixKitWeb.Components.Core.Textarea, only: [textarea: 1]
-  import Ecto.Query, only: [from: 2]
 
-  alias PhoenixKit.RepoHelper
-  alias PhoenixKit.Utils.Routes
+  alias PhoenixKit.Users.Roles
+  alias PhoenixKit.Utils.{Number, Routes}
   alias PhoenixKitAgent.{Config, Models, Spend, UserConfig}
   alias PhoenixKitAgent.Web.Access
-  alias PhoenixKitAI.Endpoint
 
   # The fields of the form, as they are named in its submit, and the fields of
   # `UserSettings.admin_changeset/2` they are for. Money is typed in dollars and
@@ -59,9 +62,17 @@ defmodule PhoenixKitAgent.Web.UsersLive do
     "daily_cost_limit_usd" => :daily_cost_limit_micro_usd,
     "monthly_cost_limit_usd" => :monthly_cost_limit_micro_usd
   }
+  # The plain fields that hold a whole number.
+  @whole_fields ~w(daily_turn_limit max_attachment_mb max_attachments_per_message)
+
+  # The stored fields the form shows: a save is refused when one of them
+  # changed since the form opened.
+  @shown_fields [:endpoint_uuid | Map.values(@plain_fields) ++ Map.values(@money_fields)]
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
+    socket = Access.assign_session(socket, session)
+
     if Access.may_manage?(socket) do
       {:ok,
        socket
@@ -91,6 +102,9 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
       not UserConfig.agent_user?(user_uuid) ->
         {:noreply, put_flash(socket, :error, gettext("This user does not use the assistant."))}
+
+      not UserConfig.may_configure?(Access.session_scope(socket), user_uuid) ->
+        {:noreply, owner_only(socket)}
 
       true ->
         {:noreply, open_form(socket, user_uuid)}
@@ -136,7 +150,12 @@ defmodule PhoenixKitAgent.Web.UsersLive do
     uuids = Enum.map(users, & &1.uuid)
     effective = UserConfig.effective_many(uuids)
     spend = Spend.for_users(uuids)
-    endpoints = endpoint_names(effective)
+
+    endpoints =
+      effective |> Map.values() |> Enum.map(& &1.endpoint_uuid) |> Enum.reject(&is_nil/1)
+
+    endpoints = Models.summaries(endpoints)
+    owners = "Owner" |> Roles.users_with_role() |> MapSet.new(& &1.uuid)
 
     rows =
       Enum.map(users, fn user ->
@@ -145,6 +164,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
         %{
           user: user,
+          owner?: MapSet.member?(owners, user.uuid),
           settings: settings,
           spend: Map.fetch!(spend, user.uuid),
           endpoint: endpoint,
@@ -153,57 +173,58 @@ defmodule PhoenixKitAgent.Web.UsersLive do
         }
       end)
 
-    assign(socket, rows: rows)
-  end
-
-  defp endpoint_names(effective) do
-    uuids =
-      effective
-      |> Map.values()
-      |> Enum.map(& &1.endpoint_uuid)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
-
-    from(e in Endpoint,
-      where: e.uuid in ^uuids,
-      select: {e.uuid, %{name: e.name, model: e.model, provider: e.provider}}
-    )
-    |> RepoHelper.repo().all()
-    |> Map.new()
+    assign(socket, rows: rows, owner?: Access.owner?(socket))
   end
 
   # ── the form ──────────────────────────────────────────────────────────
 
   defp open_form(socket, user_uuid) do
     row = UserConfig.get(user_uuid)
-    user = Enum.find(socket.assigns.rows, &(&1.user.uuid == row.user_uuid))
-    endpoints = Models.list_endpoints(include: row.endpoint_uuid)
 
-    socket
-    |> assign(
-      editing: %{
-        user: user.user,
-        params: form_params(row),
-        errors: %{},
-        endpoints: endpoints,
-        tools: %{},
-        tools_loading?: endpoints != [],
-        default_endpoint: default_endpoint()
-      }
-    )
-    |> start_tools(user.user.uuid, endpoints)
+    # A user given `agent` after the list was loaded is not in it yet.
+    socket =
+      if listed(socket, row.user_uuid), do: socket, else: load_rows(socket)
+
+    case listed(socket, row.user_uuid) do
+      nil ->
+        put_flash(socket, :error, gettext("This user does not use the assistant."))
+
+      listed ->
+        endpoints = [include: row.endpoint_uuid] |> Models.list_endpoints() |> summaries()
+
+        socket
+        |> assign(
+          editing: %{
+            user: listed.user,
+            params: form_params(row),
+            shown: Map.take(row, @shown_fields),
+            errors: %{},
+            endpoints: endpoints,
+            tools: %{},
+            tools_loading?: endpoints != [],
+            default_endpoint: default_endpoint()
+          }
+        )
+        |> start_tools(listed.user.uuid, Enum.map(endpoints, & &1.uuid))
+    end
   end
+
+  defp listed(socket, user_uuid), do: Enum.find(socket.assigns.rows, &(&1.user.uuid == user_uuid))
+
+  defp summaries(endpoints), do: Enum.map(endpoints, &Models.summary/1)
 
   defp start_tools(socket, _user_uuid, []), do: socket
 
-  defp start_tools(socket, user_uuid, endpoints) do
-    start_async(socket, :tools, fn -> {user_uuid, Models.tools_support(endpoints)} end)
+  # The endpoints are read again off the page process, so neither the page
+  # nor the closure holds their keys.
+  defp start_tools(socket, user_uuid, endpoint_uuids) do
+    start_async(socket, :tools, fn -> {user_uuid, Models.tools_support_of(endpoint_uuids)} end)
   end
 
   defp default_endpoint do
     with uuid when is_binary(uuid) <- Config.default_endpoint_uuid(),
-         %Endpoint{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
-      endpoint
+         %{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
+      Models.summary(endpoint)
     else
       _ -> nil
     end
@@ -268,7 +289,9 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   end
 
   defp update_user(socket, editing, submitted, attrs) do
-    case UserConfig.admin_update(Access.fresh_scope(socket), editing.user.uuid, attrs) do
+    case UserConfig.admin_update(Access.session_scope(socket), editing.user.uuid, attrs,
+           expected: editing.shown
+         ) do
       {:ok, _row, _fields} ->
         socket
         |> assign(editing: nil)
@@ -279,7 +302,18 @@ defmodule PhoenixKitAgent.Web.UsersLive do
         show_errors(socket, editing, submitted, changeset_errors(changeset))
 
       {:error, :forbidden} ->
-        denied(socket)
+        if Access.may_manage?(socket), do: owner_only(socket), else: denied(socket)
+
+      {:error, :stale} ->
+        socket
+        |> assign(editing: nil)
+        |> load_rows()
+        |> put_flash(
+          :error,
+          gettext(
+            "Someone else changed these settings after the form was opened. Nothing was saved: open the form again."
+          )
+        )
 
       {:error, :not_found} ->
         socket
@@ -297,6 +331,9 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   defp denied(socket),
     do: put_flash(socket, :error, gettext("You do not have access to the AI assistant users."))
 
+  defp owner_only(socket),
+    do: put_flash(socket, :error, gettext("Only an Owner can change an Owner's assistant."))
+
   # The fields present in the submit as `admin_changeset/2` takes them: blank
   # means "the module default" (`nil`), dollars become micro-dollars, the model
   # must be one the form offered.
@@ -306,6 +343,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
         cond do
           Map.has_key?(@money_fields, key) -> money(key, value, attrs, errors)
           key == "endpoint_uuid" -> endpoint(value, editing, attrs, errors)
+          key in @whole_fields -> whole(key, value, attrs, errors)
           true -> {Map.put(attrs, Map.fetch!(@plain_fields, key), blank_to_nil(value)), errors}
         end
       end)
@@ -330,6 +368,25 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
           {:error, _reason} ->
             {attrs, Map.put(errors, field, [gettext("is not a valid amount")])}
+        end
+    end
+  end
+
+  # Read as `decimal_input` lets it be typed ("1 000", "3,0"); the range is
+  # the changeset's.
+  defp whole(key, value, attrs, errors) do
+    field = Map.fetch!(@plain_fields, key)
+
+    case blank_to_nil(value) do
+      nil ->
+        {Map.put(attrs, field, nil), errors}
+
+      text ->
+        with {:ok, decimal} <- Number.parse_decimal(text),
+             true <- Decimal.integer?(decimal) do
+          {Map.put(attrs, field, Decimal.to_integer(decimal)), errors}
+        else
+          _not_whole -> {attrs, Map.put(errors, field, [gettext("is not a whole number")])}
         end
     end
   end
@@ -383,7 +440,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   defp endpoint_options(editing) do
     default =
       case editing.default_endpoint do
-        %Endpoint{name: name} -> gettext("Module default (%{name})", name: name)
+        %{name: name} -> gettext("Module default (%{name})", name: name)
         nil -> gettext("Module default (none set)")
       end
 
@@ -585,6 +642,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
                 </td>
                 <td class="text-right">
                   <.button
+                    :if={@owner? or not row.owner?}
                     type="button"
                     size="sm"
                     id={"agent-user-configure-#{row.user.uuid}"}
