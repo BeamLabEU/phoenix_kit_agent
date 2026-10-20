@@ -8,24 +8,29 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   it again on mount and before every save, against the session's scope and
   against the user's current rights (a right taken away while the page is open
   stops the next save).
+
+  One setting is not for every manager: `agent_capture_ai_content` (whether the
+  bodies of the assistant's requests go to the AI journal, where every holder of
+  `ai` reads them on `/admin/ai/usage`) is switched by an Owner only. The check
+  is `Scope.owner?/1` in the `save_capture` handler, on every event — the tab is
+  only gated by `agent.manage`, which an Admin holds — and the switch is not
+  rendered for anyone else, who sees the state.
   """
 
   use Phoenix.LiveView
   use Gettext, backend: PhoenixKitAgent.Gettext
 
   import PhoenixKitWeb.Components.Core.Button, only: [button: 1]
+  import PhoenixKitWeb.Components.Core.Checkbox, only: [checkbox: 1]
   import PhoenixKitWeb.Components.Core.DecimalInput, only: [decimal_input: 1]
 
-  alias PhoenixKit.Users.Auth
-  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitAgent.Config
-
-  @manage "agent.manage"
+  alias PhoenixKitAgent.Web.Access
 
   @impl true
   def mount(_params, _session, socket) do
-    if may_manage?(socket) do
+    if Access.may_manage?(socket) do
       {:ok,
        socket
        |> assign(
@@ -34,6 +39,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
          page_section: gettext("Settings"),
          page_section_path: Routes.path("/admin/settings")
        )
+       |> assign_capture()
        |> assign_form(Config.defaults_changeset(%{}) |> Map.put(:action, nil))}
     else
       {:ok,
@@ -49,7 +55,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   end
 
   def handle_event("save", %{"settings" => params}, socket) do
-    if may_manage?(socket) do
+    if Access.may_manage?(socket) do
       save(socket, params)
     else
       {:noreply,
@@ -57,12 +63,24 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     end
   end
 
+  def handle_event("save_capture", %{"capture" => %{"enabled" => enabled}}, socket)
+      when enabled in ["true", "false"] do
+    if Access.owner?(socket) and Access.may_manage?(socket) do
+      save_capture(socket, enabled == "true")
+    else
+      {:noreply,
+       socket
+       |> assign_capture()
+       |> put_flash(:error, gettext("Only an Owner can change this setting."))}
+    end
+  end
+
   # A crafted event without the form's fields.
-  def handle_event(event, _params, socket) when event in ["validate", "save"],
+  def handle_event(event, _params, socket) when event in ["validate", "save", "save_capture"],
     do: {:noreply, socket}
 
   defp save(socket, params) do
-    case Config.save_defaults(params, actor_uuid: user_uuid(socket), source: "settings") do
+    case Config.save_defaults(params, actor_uuid: Access.user_uuid(socket), source: "settings") do
       {:ok, _keys} ->
         {:noreply,
          socket
@@ -83,31 +101,33 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     end
   end
 
+  defp save_capture(socket, value) do
+    case Config.put_capture_ai_content(value,
+           actor_uuid: Access.user_uuid(socket),
+           source: "settings"
+         ) do
+      {:ok, _setting} ->
+        {:noreply,
+         socket
+         |> assign_capture()
+         |> put_flash(:info, gettext("AI request journal setting saved."))}
+
+      {:error, _changeset} ->
+        {:noreply,
+         socket
+         |> assign_capture()
+         |> put_flash(:error, gettext("The setting could not be saved. Nothing was changed."))}
+    end
+  end
+
+  # What the capture section shows: the stored state, and whether this person
+  # may change it.
+  defp assign_capture(socket) do
+    assign(socket, capture?: Config.capture_ai_content?(), owner?: Access.owner?(socket))
+  end
+
   defp assign_form(socket, changeset),
     do: assign(socket, :form, to_form(changeset, as: :settings))
-
-  # The session's scope (its active role) and the user as they are now: both
-  # must hold the key.
-  defp may_manage?(socket) do
-    scope = socket.assigns[:phoenix_kit_current_scope]
-
-    with %Scope{} <- scope,
-         uuid when is_binary(uuid) <- user_uuid(socket),
-         %Auth.User{} = user <- Auth.get_user(uuid) do
-      Enum.all?([scope, Scope.for_user(user)], &Scope.can?(&1, @manage))
-    else
-      _ -> false
-    end
-  rescue
-    _ -> false
-  end
-
-  defp user_uuid(socket) do
-    case socket.assigns[:phoenix_kit_current_scope] do
-      %Scope{user: %{uuid: uuid}} -> uuid
-      _ -> nil
-    end
-  end
 
   @impl true
   def render(assigns) do
@@ -178,6 +198,42 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
           </.button>
         </div>
       </.form>
+
+      <section id="agent-capture" class="card bg-base-100 shadow-sm">
+        <div class="card-body gap-4">
+          <h2 class="card-title text-base">{gettext("Request content in the AI journal")}</h2>
+          <p id="agent-capture-note" class="text-sm text-base-content/70">
+            {gettext(
+              "When on, the full text of the assistant's requests and answers, with the data its tools returned, is written to the AI request journal, where everyone who holds the AI permission can read it on the AI usage page (/admin/ai/usage). When off, the journal keeps only the counts and the cost."
+            )}
+          </p>
+          <.form
+            :if={@owner?}
+            for={%{}}
+            as={:capture}
+            id="agent-capture-form"
+            phx-submit="save_capture"
+            class="flex items-center justify-between gap-4"
+          >
+            <.checkbox
+              variant="toggle"
+              id="agent-capture-enabled"
+              name="capture[enabled]"
+              checked={@capture?}
+              label={gettext("Write request content to the AI journal")}
+            />
+            <.button type="submit" variant="primary" id="agent-capture-save">
+              {gettext("Save")}
+            </.button>
+          </.form>
+          <p :if={!@owner?} id="agent-capture-status" class="text-sm">
+            <span class={["badge", if(@capture?, do: "badge-warning", else: "badge-ghost")]}>
+              {if @capture?, do: gettext("On"), else: gettext("Off")}
+            </span>
+            {gettext("Only an Owner can change this setting.")}
+          </p>
+        </div>
+      </section>
     </div>
     """
   end

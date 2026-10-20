@@ -34,7 +34,8 @@ defmodule PhoenixKitAgent.Config do
   `agent_capture_ai_content` is on only when it reads exactly `"true"`: then the
   bodies of the assistant's model calls are written to the AI request journal,
   where every holder of the `ai` permission reads them. Only an Owner may switch
-  it (that screen is not part of this module yet); this module only reads it.
+  it: `put_capture_ai_content/2` does not check that, its caller (the Settings
+  page, `PhoenixKitAgent.Web.SettingsLive`) does.
   """
 
   import Ecto.Changeset
@@ -144,6 +145,16 @@ defmodule PhoenixKitAgent.Config do
       @module,
       opts
     )
+  end
+
+  @doc """
+  Switches `agent_capture_ai_content`. `opts` go to `PhoenixKit.Settings`
+  (`actor_uuid:`, `source:`). The caller checks that the person is an Owner.
+  """
+  @spec put_capture_ai_content(boolean(), keyword()) ::
+          {:ok, term()} | {:error, Ecto.Changeset.t()}
+  def put_capture_ai_content(value, opts) when is_boolean(value) do
+    Settings.update_boolean_setting_with_module("agent_capture_ai_content", value, @module, opts)
   end
 
   @doc """
@@ -394,7 +405,13 @@ defmodule PhoenixKitAgent.Config do
 
   defp whole_number(_), do: nil
 
-  defp usd_to_micro(value) do
+  @doc """
+  Dollars typed by a person (`"2,5"`, `"0.05"`) as micro-dollars: `{:ok,
+  integer}`, `{:error, :fraction}` when finer than a millionth of a dollar,
+  `{:error, reason}` for anything that is not a non-negative amount.
+  """
+  @spec usd_to_micro(term()) :: {:ok, non_neg_integer()} | {:error, atom()}
+  def usd_to_micro(value) do
     with {:ok, usd} <- Number.parse_decimal(value, min: 0) do
       micro = Decimal.mult(usd, @micro_per_usd)
 
@@ -404,7 +421,9 @@ defmodule PhoenixKitAgent.Config do
     end
   end
 
-  defp micro_to_usd(micro) do
+  @doc "Micro-dollars as dollars for a form field: `1_500_000` is `\"1.5\"`."
+  @spec micro_to_usd(non_neg_integer()) :: String.t()
+  def micro_to_usd(micro) do
     micro
     |> Decimal.new()
     |> Decimal.div(@micro_per_usd)

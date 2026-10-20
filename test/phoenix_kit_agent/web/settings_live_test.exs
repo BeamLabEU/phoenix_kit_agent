@@ -9,7 +9,8 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.Settings
-  alias PhoenixKit.Users.{Permissions, Roles}
+  alias PhoenixKit.Users.Auth.Scope
+  alias PhoenixKit.Users.{Permissions, RoleAssignment, Roles}
   alias PhoenixKitAgent.Config
 
   @path "/en/admin/settings/agent"
@@ -129,6 +130,130 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
 
       assert has_element?(view, "#agent-settings-form")
       assert Config.limit_defaults().daily_turn_limit == 200
+    end
+  end
+
+  describe "agent_capture_ai_content: the Owner's switch" do
+    defp owner_user, do: owner_fixture()
+
+    # A user of the real Admin role, which holds `agent.manage` as core
+    # grants it to Admin (the test database has not seen this module before).
+    defp admin_user do
+      _ = owner_fixture()
+      user = user_fixture("admin")
+      {:ok, _} = Roles.assign_role(user, "Admin")
+      admin = Roles.get_role_by_name("Admin")
+
+      for key <- ["agent", "agent.manage"],
+          do: {:ok, _} = Permissions.grant_permission(admin.uuid, key)
+
+      user
+    end
+
+    # Core refuses to hand out Owner by hand; the assignment is written as
+    # the first-user rule does.
+    defp owner_assignment(user, :insert) do
+      owner = Roles.get_role_by_name("Owner")
+      Repo.insert!(%RoleAssignment{user_uuid: user.uuid, role_uuid: owner.uuid})
+    end
+
+    defp owner_assignment(user, :delete) do
+      owner = Roles.get_role_by_name("Owner")
+
+      Repo.delete_all(
+        from(a in RoleAssignment, where: a.user_uuid == ^user.uuid and a.role_uuid == ^owner.uuid)
+      )
+    end
+
+    defp capture_entries do
+      Repo.all(
+        from(a in PhoenixKit.Activity.Entry,
+          where: fragment("?->>'key' = ?", a.metadata, "agent_capture_ai_content")
+        )
+      )
+    end
+
+    test "the Owner sees the switch with the warning, and turns it on and off", %{conn: conn} do
+      owner = owner_user()
+      {:ok, view, _html} = live(log_in(conn, owner), @path)
+
+      assert has_element?(view, "#agent-capture-form")
+      assert has_element?(view, "#agent-capture-note")
+      refute Config.capture_ai_content?()
+
+      view |> form("#agent-capture-form", capture: %{enabled: "true"}) |> render_submit()
+
+      assert Config.capture_ai_content?()
+      assert has_element?(view, "#flash-info")
+      assert [entry] = capture_entries()
+      assert entry.actor_uuid == owner.uuid
+
+      view |> form("#agent-capture-form", capture: %{enabled: "false"}) |> render_submit()
+      refute Config.capture_ai_content?()
+    end
+
+    test "an Admin with agent.manage sees the state but has no switch", %{conn: conn} do
+      admin = admin_user()
+      assert Scope.can?(scope_of(admin), "agent.manage")
+      refute Scope.owner?(scope_of(admin))
+
+      {:ok, view, _html} = live(log_in(conn, admin), @path)
+
+      assert has_element?(view, "#agent-settings-form")
+      assert has_element?(view, "#agent-capture-status")
+      assert has_element?(view, "#agent-capture-note")
+      refute has_element?(view, "#agent-capture-form")
+    end
+
+    test "a forged submit from an Admin changes nothing", %{conn: conn} do
+      {:ok, view, _html} = live(log_in(conn, admin_user()), @path)
+
+      render_hook(view, "save_capture", %{"capture" => %{"enabled" => "true"}})
+
+      assert has_element?(view, "#flash-error")
+      refute Config.capture_ai_content?()
+      assert capture_entries() == []
+    end
+
+    test "nor can the defaults form carry it", %{conn: conn} do
+      {:ok, view, _html} = live(log_in(conn, admin_user()), @path)
+
+      render_hook(view, "save", %{
+        "settings" => %{"daily_turn_limit" => "150", "agent_capture_ai_content" => "true"},
+        "capture" => %{"enabled" => "true"},
+        "agent_capture_ai_content" => "true"
+      })
+
+      assert Config.limit_defaults().daily_turn_limit == 150
+      refute Config.capture_ai_content?()
+      assert capture_entries() == []
+    end
+
+    test "a page opened by an Owner who stopped being one changes nothing", %{conn: conn} do
+      second = admin_user()
+      owner_assignment(second, :insert)
+
+      {:ok, view, _html} = live(log_in(conn, second), @path)
+      assert has_element?(view, "#agent-capture-form")
+
+      owner_assignment(second, :delete)
+
+      view |> form("#agent-capture-form", capture: %{enabled: "true"}) |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      refute Config.capture_ai_content?()
+    end
+
+    test "an event without the form's fields changes nothing and does not crash", %{conn: conn} do
+      owner = owner_user()
+      {:ok, view, _html} = live(log_in(conn, owner), @path)
+
+      render_hook(view, "save_capture", %{})
+      render_hook(view, "save_capture", %{"capture" => "x"})
+      render_hook(view, "save_capture", %{"capture" => %{"enabled" => "maybe"}})
+
+      assert has_element?(view, "#agent-capture-form")
+      refute Config.capture_ai_content?()
     end
   end
 
