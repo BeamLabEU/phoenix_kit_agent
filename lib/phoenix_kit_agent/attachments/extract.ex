@@ -10,6 +10,20 @@ defmodule PhoenixKitAgent.Attachments.Extract do
   `pdf_tools_missing`, `image_tools_missing`) and say nothing of the content.
   A file that makes a parser raise is `unreadable`; what the parser said is
   dropped, as it can quote the file.
+
+  ## What is not shown
+
+  A text that holds less than the file is `truncated`, and says so where it
+  ends, in a line the model reads with it (`continues/1`): `[... the file
+  continues: 12 more rows not shown in full]`, `[... the sheet continues: 1240
+  of 1300 rows not shown in full]`, `[... the workbook continues: 2 more sheets
+  not shown: Q3, Q4]`, `[... the document continues: 38 of 50 pages not shown
+  in full]` — so that a total or a count is not taken from part of the data
+  without a word. These lines are not counted in `text_chars`.
+
+  A workbook's sheets share `text_chars`: a sheet that needs less than an
+  equal share leaves the rest to the others, and each is cut between rows, so
+  one large sheet does not push the others out.
   """
 
   alias PhoenixKit.Modules.Storage.ImageProcessor
@@ -32,25 +46,69 @@ defmodule PhoenixKitAgent.Attachments.Extract do
   """
   @spec text(Path.t()) :: {:ok, text()} | {:error, :unreadable}
   def text(path) do
-    with {:ok, text, cut?} <- read_text(path) do
+    with {:ok, text, cut?, size} <- read_text(path) do
       {text, clipped?} = clip(text)
-      {:ok, %{text: text, truncated: cut? or clipped?}}
+
+      if cut? or clipped? do
+        rest = max(size - byte_size(text), 1)
+
+        {:ok,
+         %{
+           text: text <> continues("the file continues: about #{rest} more characters not shown"),
+           truncated: true
+         }}
+      else
+        {:ok, %{text: text, truncated: false}}
+      end
     end
   end
 
   @doc "The first rows of a CSV file, as written in it (any delimiter)."
   @spec csv(Path.t()) :: {:ok, text()} | {:error, :unreadable}
   def csv(path) do
-    with {:ok, text, cut?} <- read_text(path) do
+    with {:ok, text, cut?, _size} <- read_text(path) do
       lines =
         text
         |> String.split(~r/\r\n|\n|\r/)
         |> drop_blank_tail()
+        # The read stopped inside the last line: it is not a row.
+        |> then(&if(cut?, do: Enum.drop(&1, -1), else: &1))
 
-      rows = Bounds.get(:sheet_rows)
-      {kept, rest} = Enum.split(lines, rows)
-      {text, clipped?} = kept |> Enum.join("\n") |> clip()
-      {:ok, %{text: text, truncated: cut? or rest != [] or clipped?}}
+      {kept, rest} = Enum.split(lines, Bounds.get(:sheet_rows))
+      {kept, not_full} = fit_lines(kept, Bounds.get(:text_chars))
+      not_shown = not_full + length(rest)
+      text = Enum.join(kept, "\n")
+
+      cond do
+        cut? and not_shown == 0 ->
+          {:ok,
+           %{text: text <> continues("the file continues: more rows not shown"), truncated: true}}
+
+        cut? ->
+          {:ok,
+           %{
+             text:
+               text <>
+                 continues(
+                   "the file continues: at least #{count(not_shown, "more row")} not shown in full"
+                 ),
+             truncated: true
+           }}
+
+        not_shown > 0 ->
+          {:ok,
+           %{
+             text:
+               text <>
+                 continues(
+                   "the file continues: #{count(not_shown, "more row")} not shown in full"
+                 ),
+             truncated: true
+           }}
+
+        true ->
+          {:ok, %{text: text, truncated: false}}
+      end
     end
   end
 
@@ -71,7 +129,7 @@ defmodule PhoenixKitAgent.Attachments.Extract do
         |> Message.strip_nul()
         |> String.replace_prefix("\uFEFF", "")
 
-      {:ok, text, cut?}
+      {:ok, text, cut?, size}
     else
       _unreadable -> {:error, :unreadable}
     end
@@ -103,11 +161,46 @@ defmodule PhoenixKitAgent.Attachments.Extract do
     if String.length(text) > max, do: {String.slice(text, 0, max), true}, else: {text, false}
   end
 
+  @doc false
+  # The line put after a text that holds less than its file (see the moduledoc).
+  @spec continues(String.t()) :: String.t()
+  def continues(detail), do: "\n" <> marker(detail)
+
+  @doc false
+  # Whether `text` has such a line.
+  @spec says_continued?(String.t()) :: boolean()
+  def says_continued?(text), do: String.contains?(text, "[... the ")
+
+  defp marker(detail), do: "[... " <> detail <> "]"
+
+  @doc false
+  # "1 page", "3 pages".
+  @spec count(integer(), String.t()) :: String.t()
+  def count(1, noun), do: "1 " <> noun
+  def count(n, noun), do: "#{n} #{noun}s"
+
+  # The first `lines` that fit in `budget` characters with the breaks between
+  # them, and how many are not shown in full; a first line longer than the
+  # budget is cut to it (and counted as not shown in full).
+  defp fit_lines(lines, budget) do
+    {kept, _used} =
+      Enum.reduce_while(lines, {[], 0}, fn line, {kept, used} ->
+        used = used + String.length(line) + if(kept == [], do: 0, else: 1)
+        if used <= budget, do: {:cont, {[line | kept], used}}, else: {:halt, {kept, used}}
+      end)
+
+    case {kept, lines} do
+      {[], [first | _]} when budget > 0 -> {[String.slice(first, 0, budget)], length(lines)}
+      _fitted -> {Enum.reverse(kept), length(lines) - length(kept)}
+    end
+  end
+
   # ── workbooks ───────────────────────────────────────────────────────
 
   @doc """
   A workbook as CSV: for each sheet (hidden ones left out) a `## Name` line and
-  its first rows, blank rows skipped. The parts of the workbook are inflated
+  its first rows, blank rows skipped, each sheet within its share of
+  `text_chars` (see the moduledoc). The parts of the workbook are inflated
   by `PhoenixKitAgent.Attachments.Unzip`, which counts the bytes it produces
   and does not believe the sizes the file declares: one that unpacks to more
   than the limit is `:too_large`, however it was forged, and is not opened.
@@ -119,15 +212,34 @@ defmodule PhoenixKitAgent.Attachments.Extract do
          {:ok, sheets} <- read_sheets(package) do
       rows = Bounds.get(:sheet_rows)
 
-      {blocks, cut?} =
-        Enum.map_reduce(sheets, false, fn {name, sheet_rows}, cut? ->
-          {kept, rest} = Enum.split(sheet_rows, rows)
-          {sheet_block(name, kept), cut? or rest != []}
+      sheets =
+        Enum.map(sheets, fn {name, sheet_rows} ->
+          header = "## " <> String.replace(name, ~r/[\r\n]+/, " ")
+          lines = sheet_rows |> Enum.take(rows) |> Enum.map(&csv_line/1)
+          %{header: header, lines: lines, total: length(sheet_rows)}
         end)
 
-      {text, clipped?} = blocks |> Enum.join("\n") |> clip()
-      all = package |> XlsxReader.sheet_names() |> length()
-      {:ok, %{text: text, truncated: cut? or clipped? or all > length(sheets)}}
+      # What each block takes whole (its header, its rows, a line break after
+      # each); the blank lines between the blocks come off the budget first.
+      shares =
+        sheets
+        |> Enum.map(fn sheet ->
+          String.length(sheet.header) + 1 +
+            (sheet.lines |> Enum.map(&(String.length(&1) + 1)) |> Enum.sum())
+        end)
+        |> fair_shares(max(Bounds.get(:text_chars) - (length(sheets) - 1), 0))
+
+      {blocks, cut?} =
+        sheets
+        |> Enum.zip(shares)
+        |> Enum.map_reduce(false, fn {sheet, share}, cut? ->
+          {block, sheet_cut?} = sheet_block(sheet, share)
+          {block, cut? or sheet_cut?}
+        end)
+
+      omitted = package |> XlsxReader.sheet_names() |> Enum.drop(length(sheets))
+      text = Enum.join(blocks ++ omitted_sheets(omitted), "\n")
+      {:ok, %{text: text, truncated: cut? or omitted != []}}
     else
       {:error, :too_large} -> {:error, :too_large}
       _unreadable -> {:error, :unreadable}
@@ -161,15 +273,61 @@ defmodule PhoenixKitAgent.Attachments.Extract do
 
   defp blank_row?(row), do: Enum.all?(row, &(cell_text(&1) == ""))
 
-  defp sheet_block(name, rows) do
-    csv =
-      rows
-      |> Enum.map(fn row -> row |> Enum.map(&cell_text/1) |> trim_empty_tail() end)
-      |> @csv.dump_to_iodata()
-      |> IO.iodata_to_binary()
-      |> String.replace("\r\n", "\n")
+  # One row as a CSV line, without its line break.
+  defp csv_line(row) do
+    [row |> Enum.map(&cell_text/1) |> trim_empty_tail()]
+    |> @csv.dump_to_iodata()
+    |> IO.iodata_to_binary()
+    |> String.replace("\r\n", "\n")
+    |> String.replace_suffix("\n", "")
+  end
 
-    "## " <> String.replace(name, ~r/[\r\n]+/, " ") <> "\n" <> csv
+  defp sheet_block(sheet, share) do
+    {kept, not_full} = fit_lines(sheet.lines, max(share - String.length(sheet.header) - 2, 0))
+    not_shown = not_full + sheet.total - length(sheet.lines)
+    rows = Enum.map_join(kept, &(&1 <> "\n"))
+
+    if not_shown > 0 do
+      line =
+        marker(
+          "the sheet continues: #{not_shown} of #{count(sheet.total, "row")} not shown in full"
+        )
+
+      {sheet.header <> "\n" <> rows <> line <> "\n", true}
+    else
+      {sheet.header <> "\n" <> rows, false}
+    end
+  end
+
+  # `total` split between parts that need `needs` characters: the smaller ones
+  # get what they need, the others an equal share of what is left.
+  defp fair_shares(needs, total) do
+    {shares, _left, _count} =
+      needs
+      |> Enum.with_index()
+      |> Enum.sort()
+      |> Enum.reduce({%{}, total, length(needs)}, fn {need, index}, {shares, left, count} ->
+        share = min(need, div(left, count))
+        {Map.put(shares, index, share), left - share, count - 1}
+      end)
+
+    Enum.map(Enum.with_index(needs), fn {_need, index} -> Map.fetch!(shares, index) end)
+  end
+
+  @named_sheets 50
+
+  defp omitted_sheets([]), do: []
+
+  defp omitted_sheets(names) do
+    shown = names |> Enum.take(@named_sheets) |> Enum.map(&String.replace(&1, ~r/[\r\n]+/, " "))
+    more = if length(names) > @named_sheets, do: ", ...", else: ""
+
+    [
+      marker(
+        "the workbook continues: #{count(length(names), "more sheet")} not shown: " <>
+          Enum.join(shown, ", ") <> more
+      )
+    ]
   end
 
   defp trim_empty_tail(cells),
@@ -205,12 +363,25 @@ defmodule PhoenixKitAgent.Attachments.Extract do
   def pdf(path) do
     with :ok <- pdf_tools(),
          {:ok, pages} <- page_count(path),
-         {:ok, text} <- pdf_text(path, min(pages, Bounds.get(:pdf_text_pages))) do
-      if meaningful?(text) do
-        {text, clipped?} = clip(text)
+         read = min(pages, Bounds.get(:pdf_text_pages)),
+         {:ok, raw} <- pdf_text(path, read) do
+      if meaningful?(raw) do
+        {kept, clipped?} = clip(raw)
+        # `pdftotext` ends each page with a form feed.
+        full_pages = if clipped?, do: length(String.split(kept, "\f")) - 1, else: read
+        not_full = pages - full_pages
+        text = kept |> String.replace("\f", "\n\n") |> String.trim()
 
-        {:ok,
-         %{text: text, pages: pages, truncated: clipped? or pages > Bounds.get(:pdf_text_pages)}}
+        text =
+          if not_full > 0,
+            do:
+              text <>
+                continues(
+                  "the document continues: #{not_full} of #{count(pages, "page")} not shown in full"
+                ),
+            else: text
+
+        {:ok, %{text: text, pages: pages, truncated: not_full > 0}}
       else
         {:ok, {:scan, pages}}
       end
@@ -259,12 +430,7 @@ defmodule PhoenixKitAgent.Attachments.Extract do
                out
              ]),
            {:ok, text} <- File.read(out) do
-        {:ok,
-         text
-         |> String.replace_invalid("")
-         |> Message.strip_nul()
-         |> String.replace("\f", "\n\n")
-         |> String.trim()}
+        {:ok, text |> String.replace_invalid("") |> Message.strip_nul()}
       else
         _ -> {:error, :unreadable}
       end

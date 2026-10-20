@@ -255,8 +255,12 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
       assert attachment.status == "ready"
       assert attachment.truncated
-      assert String.length(attachment.extracted_text) <= 100
-      assert String.starts_with?(text, attachment.extracted_text)
+      assert [shown, marker] = String.split(attachment.extracted_text, "\n[... ", parts: 2)
+      assert String.length(shown) <= 100
+      assert String.starts_with?(text, shown)
+
+      assert marker ==
+               "the file continues: about #{byte_size(text) - byte_size(shown)} more characters not shown]"
     end
 
     test "markdown is text; a byte order mark is dropped", ctx do
@@ -277,8 +281,21 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
       assert attachment.kind == "sheet"
       assert attachment.content_type == "text/csv"
-      assert attachment.extracted_text == "name;qty\nsofa;3\ntable;1"
+
+      assert attachment.extracted_text ==
+               "name;qty\nsofa;3\ntable;1\n[... the file continues: 2 more rows not shown in full]"
+
       assert attachment.truncated
+    end
+
+    test "a CSV over the text limit is cut between rows, and says how many are left", ctx do
+      with_limits(text_chars: 20)
+      csv = "name;qty\nsofa;3\ntable;1\nchair;4\n"
+
+      attachment = add_done!(ctx, csv, "list.csv", "text/csv")
+
+      assert attachment.extracted_text ==
+               "name;qty\nsofa;3\n[... the file continues: 2 more rows not shown in full]"
     end
   end
 
@@ -301,9 +318,55 @@ defmodule PhoenixKitAgent.AttachmentsTest do
                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
       assert attachment.extracted_text ==
-               "## Orders\nItem,Qty\n\"Sofa, big\",3\n\n## Notes\nOnly one\n"
+               "## Orders\nItem,Qty\n\"Sofa, big\",3\n" <>
+                 "[... the sheet continues: 1 of 3 rows not shown in full]\n\n" <>
+                 "## Notes\nOnly one\n"
 
       assert attachment.truncated
+    end
+
+    test "each sheet gets its share of the text; the model is told what is not shown", ctx do
+      serve_ai()
+      with_limits(text_chars: 300)
+      big = [["Item", "Qty"] | for(n <- 1..100, do: ["Item number #{n}", n])]
+      xlsx = Files.xlsx([{"Big", big}, {"Small", [["Only", "row"]]}])
+
+      attachment = add_done!(ctx, xlsx, "book.xlsx")
+      text = attachment.extracted_text
+
+      assert attachment.truncated
+      assert text =~ "## Big\nItem,Qty\nItem number 1,1\n"
+      # The big first sheet does not take the second one's place.
+      assert text =~ "## Small\nOnly,row\n"
+
+      shown = length(Regex.scan(~r/^Item number \d+,\d+$/m, text)) + 1
+      assert shown < 101
+
+      assert text =~
+               "[... the sheet continues: #{101 - shown} of 101 rows not shown in full]"
+
+      body = String.replace(text, ~r/\[\.\.\. [^\n]*\]\n?/, "")
+      assert String.length(body) <= 300
+
+      # The turn's model reads the marker with the file.
+      {:ok, turn_ref} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Sum it", [attachment.uuid])
+      await_turn(ctx, turn_ref)
+
+      assert_received {:model_request, body}
+      assert [%{"role" => "user", "content" => content}] = chat_messages(body)
+      assert content =~ "rows not shown in full]"
+    end
+
+    test "sheets beyond the bound are named, not left out silently", ctx do
+      with_limits(sheets: 1)
+      xlsx = Files.xlsx([{"First", [["a"]]}, {"Second", [["b"]]}, {"Third", [["c"]]}])
+
+      attachment = add_done!(ctx, xlsx, "book.xlsx")
+
+      assert attachment.truncated
+
+      assert attachment.extracted_text ==
+               "## First\na\n\n[... the workbook continues: 2 more sheets not shown: Second, Third]"
     end
 
     test "an xlsx is told by its content, not by its name", ctx do
@@ -367,7 +430,25 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       attachment = add_done!(ctx, pdf, "quote.pdf")
 
       assert attachment.truncated
-      assert String.length(attachment.extracted_text) <= 30
+      assert [shown, marker] = String.split(attachment.extracted_text, "\n[... ", parts: 2)
+      assert String.length(shown) <= 30
+      assert marker == "the document continues: 1 of 1 page not shown in full]"
+    end
+
+    test "pages past the bound are not read, and the model is told so", ctx do
+      with_limits(pdf_text_pages: 1)
+      pdf = Files.text_pdf(["Quote number 4711 for the sofa", "Second page: delivery on Friday"])
+
+      attachment = add_done!(ctx, pdf, "quote.pdf")
+
+      assert attachment.truncated
+      assert attachment.extracted_text =~ "Quote number 4711"
+      refute attachment.extracted_text =~ "Friday"
+
+      assert String.ends_with?(
+               attachment.extracted_text,
+               "\n[... the document continues: 1 of 2 pages not shown in full]"
+             )
     end
 
     test "a scan, for a model that sees, stays pixels: the first pages as pictures", ctx do
@@ -495,14 +576,14 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       assert attachment.extracted_text == "Described."
     end
 
-    test "a model that does not see and no vision model: the picture fails, it is not guessed",
+    test "a model that does not see and no vision model: the picture is refused at once",
          ctx do
       serve_ai(main_sees: false)
 
-      attachment = add_done!(ctx, Files.png(40, 30), "a.png")
+      assert {:error, :no_vision_model} = add(ctx, Files.png(40, 30), "a.png")
 
-      assert attachment.status == "failed"
-      assert attachment.error == "no_vision_model"
+      assert Repo.aggregate(Attachment, :count) == 0
+      assert Repo.aggregate(Storage.File, :count) == 0
       refute_received {:model_request, _}
     end
 
@@ -510,6 +591,22 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       serve_ai(main_sees: false)
       vision_endpoint!()
       limits!(ctx.user, %{daily_turn_limit: 0})
+
+      attachment = add_done!(ctx, Files.png(40, 30), "a.png")
+
+      assert attachment.status == "failed"
+      assert attachment.error == "limit_reached"
+      refute_received {:model_request, _}
+    end
+
+    test "the money limit before a description is the vision model's, not the chat model's",
+         ctx do
+      serve_ai(description: "Described.")
+      # The vision model reports what a call costs (OpenRouter); the chat model
+      # does not, so no money limit applies to the turns themselves.
+      vision_endpoint!()
+      deepseek = endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
+      limits!(ctx.user, %{endpoint_uuid: deepseek.uuid, daily_cost_limit_micro_usd: 0})
 
       attachment = add_done!(ctx, Files.png(40, 30), "a.png")
 
@@ -573,6 +670,46 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       _ = :sys.get_state(Process.whereis(PhoenixKitAgent.Attachments.TaskSupervisor))
       wait_for_children_to_end()
       assert Repo.get(Attachment, attachment.uuid) == nil
+    end
+
+    test "a row settled before a late task ends is left as it is, and heard of once", ctx do
+      settled = add_done!(ctx, "Sofa 3 pcs", "notes.txt")
+      assert settled.status == "ready"
+
+      timed_out = add!(ctx, "text", "late.txt")
+      await_done(timed_out)
+
+      Repo.update_all(from(a in Attachment, where: a.uuid == ^timed_out.uuid),
+        set: [status: "failed", error: "timeout", extracted_text: nil]
+      )
+
+      # A task for each row that comes too late: one settled as ready, one as
+      # failed by `settle_stale`.
+      for row <- [settled, timed_out], do: :ok = Processor.start(row.uuid, row.user_uuid)
+      wait_for_children_to_end()
+
+      assert %{status: "ready", error: nil, extracted_text: "Sofa 3 pcs"} =
+               Repo.get!(Attachment, settled.uuid)
+
+      assert %{status: "failed", error: "timeout"} = Repo.get!(Attachment, timed_out.uuid)
+      refute_received {:agent_attachment_processed, _, _}
+    end
+
+    test "without the worker supervisor a file fails as unavailable at once", ctx do
+      worker_sup = Process.whereis(PhoenixKitAgent.Attachments.WorkerSupervisor)
+      {:dictionary, dictionary} = Process.info(worker_sup, :dictionary)
+      [parent | _] = Keyword.fetch!(dictionary, :"$ancestors")
+      id = PhoenixKitAgent.Attachments.WorkerSupervisor
+
+      :ok = Supervisor.terminate_child(parent, id)
+      on_exit(fn -> Supervisor.restart_child(parent, id) end)
+
+      {attachment, logs} = LogProbe.capture(fn -> add_done!(ctx, "text", "a.txt") end)
+
+      assert attachment.status == "failed"
+      assert attachment.error == "unavailable"
+      refute Enum.any?(logs, &(&1 =~ "noproc"))
+      {:ok, _pid} = Supervisor.restart_child(parent, id)
     end
 
     test "the text of a file never reaches the log", ctx do
@@ -1396,7 +1533,9 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
       attachment = add_done!(ctx, "a,b\rc,d\re,f\r", "mac.csv")
 
-      assert attachment.extracted_text == "a,b\nc,d"
+      assert attachment.extracted_text ==
+               "a,b\nc,d\n[... the file continues: 1 more row not shown in full]"
+
       assert attachment.truncated
     end
   end
@@ -1437,26 +1576,158 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       assert :binary.match(Base.decode64!(sent), "SECRETCAM") == :nomatch
     end
 
-    test "a model that declares nothing of its input is not taken for a blind one", ctx do
-      test = self()
+    test "a model that declares nothing of its input is taken for a blind one", ctx do
+      serve_models_unknown()
 
-      Req.Test.stub(@stub, fn conn ->
-        case conn.request_path do
-          "/api/v1/models" ->
-            Req.Test.json(conn, %{"data" => [%{"id" => "a/chat", "architecture" => %{}}]})
+      # No vision model: refused before anything is stored, no pixels are tried.
+      assert {:error, :no_vision_model} = add(ctx, Files.png(40, 30), "sofa.png")
+      assert Repo.aggregate(Attachment, :count) == 0
 
-          _ ->
-            {:ok, raw, conn} = Plug.Conn.read_body(conn)
-            send(test, {:model_request, Jason.decode!(raw)})
-            Req.Test.json(conn, %{"choices" => [%{"message" => %{"content" => "ok"}}]})
-        end
-      end)
-
+      # With a vision model the picture is described.
+      vision_endpoint!()
       attachment = add_done!(ctx, Files.png(40, 30), "sofa.png")
 
       assert attachment.status == "ready"
-      assert attachment.extracted_text == nil
+      assert attachment.extracted_text == "Described."
     end
+
+    @tag :poppler
+    test "a scan for a model of unknown abilities and no vision model fails as no_vision_model",
+         ctx do
+      serve_models_unknown()
+
+      attachment = add_done!(ctx, Files.scan_pdf(1), "scan.pdf")
+
+      assert attachment.status == "failed"
+      assert attachment.error == "no_vision_model"
+      refute_received {:model_request, _}
+    end
+
+    test "a picture already shown as pixels is not sent to a model of unknown abilities",
+         ctx do
+      serve_ai(main_sees: true)
+      attachment = add_done!(ctx, Files.png(40, 30), "sofa.png")
+      assert attachment.extracted_text == nil
+
+      # Between the upload and the send the model changes to one that declares nothing.
+      Models.clear_cache()
+      serve_models_unknown()
+
+      {:ok, turn_ref} =
+        Turns.start(ctx.ref, false, ctx.chat.uuid, "What is this?", [attachment.uuid])
+
+      await_turn(ctx, turn_ref)
+
+      assert_received {:model_request, body}
+      assert [%{"role" => "user", "content" => content}] = chat_messages(body)
+      assert is_binary(content)
+      assert content =~ "sofa.png"
+      refute inspect(body) =~ "image_url"
+    end
+
+    test "a turn whose model fails on its pictures leaves the files unsent, to be sent again",
+         ctx do
+      serve_ai(main_sees: true)
+      picture = add_done!(ctx, Files.png(40, 30), "sofa.png")
+      notes = add_done!(ctx, "Sofa 3 pcs", "notes.txt")
+      uuids = [picture.uuid, notes.uuid]
+
+      serve_models_seeing_failing()
+      {:ok, turn_ref} = Turns.start(ctx.ref, false, ctx.chat.uuid, "What is this?", uuids)
+      await_turn(ctx, turn_ref)
+
+      assert_received {:model_request, body}
+      assert model_request_images(body) == 1
+
+      for uuid <- uuids, do: assert(Repo.get!(Attachment, uuid).message_uuid == nil)
+      assert {:ok, unsent} = Attachments.list_unsent(ctx.ref, ctx.chat.uuid, @me)
+      assert Enum.sort(Enum.map(unsent, & &1.uuid)) == Enum.sort(uuids)
+
+      assert %Message{error: error, content: notice} =
+               Repo.one!(
+                 from(m in Message,
+                   where: m.conversation_uuid == ^ctx.chat.uuid and m.role == "notice"
+                 )
+               )
+
+      assert error == "api_error"
+      assert notice =~ "send them again"
+
+      # Sent again, they go with the new message.
+      serve_ai(main_sees: true)
+      {:ok, turn_ref} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Again", uuids)
+      await_turn(ctx, turn_ref)
+
+      again =
+        Repo.one!(
+          from(m in Message,
+            where:
+              m.conversation_uuid == ^ctx.chat.uuid and m.role == "user" and
+                m.content == "Again"
+          )
+        )
+
+      for uuid <- uuids, do: assert(Repo.get!(Attachment, uuid).message_uuid == again.uuid)
+    end
+
+    test "a turn without pictures that fails keeps its files with its message", ctx do
+      serve_ai()
+      notes = add_done!(ctx, "Sofa 3 pcs", "notes.txt")
+
+      serve_models_seeing_failing()
+      {:ok, turn_ref} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Read it", [notes.uuid])
+      await_turn(ctx, turn_ref)
+
+      refute Repo.get!(Attachment, notes.uuid).message_uuid == nil
+    end
+  end
+
+  # A model listing that says nothing of what the chat model takes; a vision
+  # model that answers "Described.".
+  defp serve_models_unknown do
+    test = self()
+
+    Req.Test.stub(@stub, fn conn ->
+      case conn.request_path do
+        "/api/v1/models" ->
+          Req.Test.json(conn, %{
+            "data" => [
+              %{"id" => "a/chat", "architecture" => %{}},
+              %{"id" => "a/eyes", "architecture" => %{"modality" => "text+image->text"}}
+            ]
+          })
+
+        _ ->
+          {:ok, raw, conn} = Plug.Conn.read_body(conn)
+          send(test, {:model_request, Jason.decode!(raw)})
+
+          Req.Test.json(conn, %{
+            "choices" => [%{"message" => %{"role" => "assistant", "content" => "Described."}}]
+          })
+      end
+    end)
+  end
+
+  # A chat model that sees, and whose every call is refused by the provider.
+  defp serve_models_seeing_failing do
+    test = self()
+
+    Req.Test.stub(@stub, fn conn ->
+      case conn.request_path do
+        "/api/v1/models" ->
+          Req.Test.json(conn, %{
+            "data" => [%{"id" => "a/chat", "architecture" => %{"modality" => "text+image->text"}}]
+          })
+
+        _ ->
+          {:ok, raw, conn} = Plug.Conn.read_body(conn)
+          send(test, {:model_request, Jason.decode!(raw)})
+
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.send_resp(400, Jason.encode!(%{"error" => %{"message" => "no images"}}))
+      end
+    end)
   end
 
   describe "the lock on the chat" do
@@ -1584,7 +1855,11 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       assert_received {:model_request, body}
       assert [%{"role" => "user", "content" => content}] = chat_messages(body)
       assert String.length(content) < 3_000 + 400
-      assert length(String.split(content, "[... cut]")) == 4
+
+      assert length(
+               String.split(content, "[... the file continues: the rest of it is not shown here]")
+             ) == 4
+
       for n <- 1..3, do: assert(content =~ "[Attachment: f#{n}.txt]")
     end
 

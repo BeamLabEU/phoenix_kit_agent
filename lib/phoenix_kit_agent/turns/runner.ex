@@ -21,7 +21,9 @@ defmodule PhoenixKitAgent.Turns.Runner do
        note, where the model cannot see them or a picture cannot be made) in
        every round of this turn only — the history keeps the text — and such a
        turn is never captured into the AI journal
-       (`PhoenixKitAgent.Attachments.model_parts/3`);
+       (`PhoenixKitAgent.Attachments.model_parts/3`); a first model call with
+       pictures that the provider refuses (`api_error`, `model_error`) takes
+       the message's files off it, to be sent again;
     d. calls the model (`PhoenixKitAI.complete/3`, `source: "agent"`, the user,
        no cache, the module's content capture, and the uuid the answer will be
        stored under as `attribution`); a refusal of the `phoenix_kit_ai`
@@ -129,8 +131,8 @@ defmodule PhoenixKitAgent.Turns.Runner do
   @spec run(turn()) :: :ok
   def run(turn) do
     :ok = Monitor.check_stop()
-    store_user_message!(turn)
-    {turn, transcript} = with_pictures(turn)
+    message = store_user_message!(turn)
+    {turn, transcript} = with_pictures(Map.put(turn, :user_message_uuid, message.uuid))
     round(turn, 1, transcript)
   end
 
@@ -139,9 +141,16 @@ defmodule PhoenixKitAgent.Turns.Runner do
   # A turn that carries pictures is never captured into the AI journal, whatever
   # the module's setting: the pixels would be written there as base64. One that
   # carries only notes about pictures it could not show has no pixels to write.
-  defp with_pictures(%{attachment_uuids: []} = turn), do: {turn, turn.history}
+  #
+  # `pictures?` holds until the model has answered once: a first call that
+  # fails as the provider's refusal may be a refusal of the pictures, and then
+  # the files are taken off the message, to be sent again (`unsend/2`).
+  defp with_pictures(%{attachment_uuids: []} = turn),
+    do: {Map.put(turn, :pictures?, false), turn.history}
 
   defp with_pictures(turn) do
+    turn = Map.put(turn, :pictures?, false)
+
     case Attachments.model_parts(turn.attachment_uuids, turn.user_uuid, turn.endpoint_uuid) do
       [] ->
         {turn, turn.history}
@@ -156,7 +165,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
             do: text,
             else: [%{"type" => "text", "text" => text} | pictures]
 
-        turn = if pictures == [], do: turn, else: %{turn | capture?: false}
+        turn = if pictures == [], do: turn, else: %{turn | capture?: false, pictures?: true}
         {turn, earlier ++ [%{current | content: content}]}
     end
   end
@@ -198,6 +207,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
           case run_calls(turn, calls, allowed) do
             {:ok, results} ->
               latest = [assistant_entry(message) | results]
+              turn = %{turn | pictures?: false}
               round(turn, r + 1, fit_turn(transcript, latest, turn.result_chars) ++ latest)
 
             {:error, reason} ->
@@ -316,7 +326,9 @@ defmodule PhoenixKitAgent.Turns.Runner do
         store_answer(turn, message_uuid, response, request, latency_ms)
 
       {:error, reason} ->
-        notice(turn, error_code(reason), model_error_text(reason),
+        unsent? = unsend(turn, reason)
+
+        notice(turn, error_code(reason), model_error_text(reason, unsent?),
           uuid: message_uuid,
           ai_request_uuid: request && request.uuid
         )
@@ -593,8 +605,35 @@ defmodule PhoenixKitAgent.Turns.Runner do
   defp error_code(reason) when reason in @model_errors, do: Atom.to_string(reason)
   defp error_code(_reason), do: "model_error"
 
-  defp model_error_text({:budget_exceeded, _scope}), do: "The AI budget is used up."
-  defp model_error_text(_reason), do: "The model did not answer. Try again."
+  defp model_error_text({:budget_exceeded, _scope}, _unsent?), do: "The AI budget is used up."
+
+  defp model_error_text(_reason, true),
+    do:
+      "The model did not answer; it may not take the pictures. " <>
+        "The files were not sent with the message: you can send them again."
+
+  defp model_error_text(_reason, false), do: "The model did not answer. Try again."
+
+  # The first model call that carried the message's pictures was refused by
+  # the provider (spec §9: a model that cannot take them): the files are taken
+  # off the message and wait to be sent again. A budget, a key, a timeout or
+  # the network say nothing of the pictures, and leave them where they are.
+  defp unsend(%{pictures?: true} = turn, reason) do
+    if error_code(reason) in ["api_error", "model_error"] do
+      :ok =
+        Conversations.unlink_attachments(
+          turn.user_uuid,
+          turn.conversation_uuid,
+          turn.user_message_uuid
+        )
+
+      true
+    else
+      false
+    end
+  end
+
+  defp unsend(_turn, _reason), do: false
 
   # ── the AI request link ─────────────────────────────────────────
 

@@ -49,25 +49,37 @@ as U+FFFD.
 
 Before the turn a task makes each file readable, and the row goes from
 `pending` to `ready` (or `failed`, with a code in `error`): a PDF gives its
-text; a PDF with no text (a scan) and a picture are shown to a model that takes
-images as pixels, shrunk to 1600 px, in the message they came with only; for a
-model that does not, the vision model (setting `agent_vision_endpoint_uuid`)
+text; a PDF with no text (a scan) and a picture are shown to a model known to
+take images as pixels, shrunk to 1600 px, in the message they came with only;
+for any other model the vision model (setting `agent_vision_endpoint_uuid`)
 describes them once and the description is kept in the history; a sheet
 becomes CSV text, the first rows of each sheet; a text file is read as it is.
 All of it is cut to a size (`config :phoenix_kit_agent, attachment_limits:
-[…]`, see `PhoenixKitAgent.Attachments.Bounds`) and the row says when it was
-cut; the attachments of one message share `agent_history_chars` between them.
+[…]`, see `PhoenixKitAgent.Attachments.Bounds`), between rows where there are
+rows, and the sheets of a workbook share that size, so one large sheet does not
+push the others out. A text that holds less than its file ends with a line the
+model reads, such as `[... the sheet continues: 1240 of 1300 rows not shown in
+full]` or `[... the workbook continues: 2 more sheets not shown: Q3, Q4]`, so it
+does not take part of the data for all of it; the attachments of one message
+share `agent_history_chars` between them, and one cut to its share there says
+so too.
 
-Two things are decided as follows, and are open to change:
+How a picture reaches the model (decided 2026-10-20):
 
-  * A picture shown to a model that sees is not described afterwards: later
-    turns carry a line that names the picture and the assistant's own earlier
-    answer, not a second (paid) description.
-  * For a model of unknown abilities (any provider but OpenRouter, which lists
-    them) with no vision model set, the pixels are sent: a provider that rejects
-    images fails that turn with `model_error` and the picture is not in the
-    history. Setting `agent_vision_endpoint_uuid` makes such a model get
-    descriptions instead.
+  * A model known to take images (OpenRouter lists what each model takes) is
+    sent the pixels in the picture's own turn only; later turns carry a line
+    that names the file and the assistant's own earlier answer, not a second
+    (paid) description.
+  * A model whose abilities are not known (any provider but OpenRouter, or a
+    model that declares nothing) is taken for a blind one: the vision model
+    describes the picture. With no vision model set, `Attachments.add/4`
+    refuses a picture at once (`no_vision_model`), before anything is stored;
+    a scan, known to be one only once it is read, fails with the same code.
+    Pixels are never sent on a guess, also not when the model changes between
+    the upload and the send (the turn then gets a note instead).
+  * When the first model call of a turn that carries pictures is refused by
+    the provider (`api_error`, `model_error`), the files are taken off the
+    message, the notice says so, and they wait to be sent again.
 
 A JPEG for a model has its metadata removed (EXIF with the time and place of a
 photo, XMP, IPTC, comments; `Attachments.Jpeg`). A workbook is never opened by
@@ -103,7 +115,11 @@ journal of `phoenix_kit_ai` recorded for the user's assistant calls
 micro-dollars (`$1 = 1_000_000`); a turn is one message the user sent. The day
 and the month are those of the site time zone. Money counts only on an endpoint
 that reports what a call cost (today OpenRouter); on another only the turn
-limit applies, and the admin pages say so.
+limit applies, and the admin pages say so. A picture's description is held to
+the money limits of the **vision** endpoint it is paid on, not of the chat
+endpoint: when the vision endpoint reports no cost, the money limits do not
+cover descriptions at all (only the turn limit and the `phoenix_kit_ai` budget
+stop them): such an endpoint reports no cost to count.
 
 The limits are checked when a turn starts; a turn that started under them runs
 to its end. A limit used up refuses the turn with a notice in the chat. The

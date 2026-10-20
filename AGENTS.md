@@ -79,7 +79,13 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
   queue `Attachments.Slots` (a place is held by the job process, free when it
   ends); workers run under their own supervisor. A picture reaches the model as
   pixels in its own turn (`Attachments.model_parts/3`, used by `Turns.Runner`)
-  or, for a model that cannot see, as a description kept in the row. Writes
+  only for a model known to take images; any other (unknown abilities
+  included) gets a description kept in the row, or a `no_vision_model`
+  refusal (`Processor.picture_mode/1`). Every extractor that cuts a file ends
+  its text with a `[... the … continues: …]` line (`Extract.continues/1`) —
+  keep that for a new kind. Children in `children/0` need ids of their own
+  (`PhoenixKitAgent.…`): PhoenixKit.Supervisor starts every module's children
+  in one list. Writes
   that bind a file name or its text use `log: false`. Tests that need poppler
   or ImageMagick carry `@tag :poppler` / `:imagemagick` and are excluded, with a
   message, where the program is missing.

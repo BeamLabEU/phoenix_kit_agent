@@ -22,7 +22,9 @@ defmodule PhoenixKitAgent.Attachments do
        not believed from the caller);
     2. the **content** tells the kind (`PhoenixKitAgent.Attachments.Detect`):
        png/jpg/webp/heic, pdf, xlsx/csv, txt/md; anything else is
-       `:unsupported_type`;
+       `:unsupported_type`. A picture for a user whose model is not known to
+       take images, while the module has no vision model to describe it, is
+       `:no_vision_model` here, before anything is stored (see the processor);
     3. the chat has room: no more than `max_attachments_per_message` files that
        are not part of a message yet (a failed one takes no room there), and
        the user has no more than `unsent_files` (`Attachments.Bounds`) files of
@@ -45,6 +47,12 @@ defmodule PhoenixKitAgent.Attachments do
   listener reads the row with `get/3`. `error` of a failed row is a code (see
   the processor), never text of the file.
 
+  The row `add/4` returns is `pending` as it was when processing started, and
+  a small file can be processed — and its message sent — before the caller has
+  that return value. So a listener must not let it replace a row it already
+  read as `ready` or `failed`: after `add/4` returns, read the row again with
+  `get/3` (or keep whichever of the two is settled).
+
   ## Sending
 
   A `ready` attachment that belongs to the user and to the chat is passed to
@@ -53,7 +61,10 @@ defmodule PhoenixKitAgent.Attachments do
   history, the attachments of one message sharing `agent_history_chars`
   between them; a picture's pixels go only in the turn of that message (and,
   for a model that sees, are not described afterwards: later turns carry a line
-  that names the picture and the assistant's own answer).
+  that names the picture and the assistant's own answer). When the provider
+  refuses the first model call of a turn that carries pictures, the turn takes
+  its files off the message again (`PhoenixKitAgent.Turns.Runner`): after a
+  turn has ended, `list_unsent/3` is the list to show.
 
   ## The bytes
 
@@ -64,8 +75,8 @@ defmodule PhoenixKitAgent.Attachments do
 
   Those of `PhoenixKitAgent.Conversations`, and `:file_unreadable`,
   `:empty_file`, `:too_large`, `:unsupported_type`, `:unsupported_encoding` (a
-  text, CSV or Markdown file that is not UTF-8: save it as UTF-8), `:too_many`,
-  `:storage_unavailable`, `:already_sent`.
+  text, CSV or Markdown file that is not UTF-8: save it as UTF-8),
+  `:no_vision_model`, `:too_many`, `:storage_unavailable`, `:already_sent`.
 
   A row that is still `pending` after the processing deadline and a margin (the
   node was restarted, the task was lost) is settled as `failed`/`timeout` the
@@ -113,6 +124,7 @@ defmodule PhoenixKitAgent.Attachments do
           | :too_large
           | :unsupported_type
           | :unsupported_encoding
+          | :no_vision_model
           | :too_many
           | :storage_unavailable
           | :already_sent
@@ -121,7 +133,8 @@ defmodule PhoenixKitAgent.Attachments do
 
   @doc """
   Adds `upload` to the session user's chat (see the moduledoc). Returns the
-  `pending` row; the file's processing has started.
+  `pending` row; the file's processing has started. Read the row again with
+  `get/3` afterwards: it may be settled already (see "Adding a file").
   """
   @spec add(Conversations.session_ref(), term(), upload(), keyword()) ::
           {:ok, Attachment.t()} | {:error, refusal()}
@@ -132,6 +145,7 @@ defmodule PhoenixKitAgent.Attachments do
          settings = UserConfig.effective(conversation.user_uuid),
          :ok <- size_allowed(source.size, settings),
          {:ok, detected} <- Detect.detect(source.path, source.filename),
+         :ok <- can_be_shown(detected, settings),
          :ok <- settle_stale(conversation.user_uuid),
          {:ok, attachment} <- reserve(conversation, source, detected, settings),
          {:ok, attachment} <- store(attachment, source, detected) do
@@ -154,6 +168,16 @@ defmodule PhoenixKitAgent.Attachments do
   end
 
   defp readable(_not_an_upload), do: {:error, :file_unreadable}
+
+  # A picture the user's model would not see and nothing could describe.
+  defp can_be_shown(%{kind: "image"}, settings) do
+    case Processor.picture_mode(settings) do
+      {:ok, _mode} -> :ok
+      {:error, :no_vision_model} = refusal -> refusal
+    end
+  end
+
+  defp can_be_shown(_not_a_picture, _settings), do: :ok
 
   defp size_allowed(size, settings) do
     if size <= settings.max_attachment_mb * @mb, do: :ok, else: {:error, :too_large}
@@ -243,9 +267,11 @@ defmodule PhoenixKitAgent.Attachments do
   # so are the bytes, if they got as far as Storage.
   defp store(attachment, source, detected) do
     with {:ok, folder} <- Library.ensure_user_folder(attachment.user_uuid),
-         {:ok, checksum} <- FileHash.sha256(source.path),
-         {:ok, file} <- put_file(attachment, source, detected, folder, checksum) do
-      link(attachment, file, folder)
+         {:ok, checksum} <- FileHash.sha256(source.path) do
+      case put_file(attachment, source, detected, folder, checksum) do
+        {:ok, file} -> link(attachment, file, folder)
+        {:error, stored_uuid} -> abandon(attachment, stored_uuid)
+      end
     else
       _failed -> abandon(attachment, nil)
     end
@@ -299,8 +325,30 @@ defmodule PhoenixKitAgent.Attachments do
     case result do
       {:ok, %Storage.File{} = file} -> {:ok, file}
       {:ok, %Storage.File{} = file, _duplicate} -> {:ok, file}
-      _failed -> :error
+      _failed -> {:error, nil}
     end
+  rescue
+    # Storage may have kept the file before it raised: it is found by the key
+    # Storage keeps it under (this user, these bytes, this library), to be
+    # released — unless another attachment still uses it.
+    exception ->
+      Logger.warning(
+        "[PhoenixKitAgent] an attachment could not be stored: #{inspect(exception.__struct__)}"
+      )
+
+      {:error, stored_file_uuid(attachment.user_uuid, checksum, folder.library_uuid)}
+  end
+
+  defp stored_file_uuid(user_uuid, checksum, library_uuid) do
+    user_uuid
+    |> Storage.calculate_user_file_checksum(checksum, library_uuid)
+    |> Storage.get_file_by_user_checksum()
+    |> case do
+      %Storage.File{uuid: uuid} -> uuid
+      _none -> nil
+    end
+  rescue
+    _ -> nil
   end
 
   defp link_file(attachment, file) do
@@ -472,8 +520,9 @@ defmodule PhoenixKitAgent.Attachments do
   @doc false
   # What the turn adds to the user's message after its text, for the pixel
   # attachments among `uuids` (the user's own): the pictures as `image_url`
-  # parts, or a note when the model cannot see them or a picture cannot be
-  # made. `[]` when there are none.
+  # parts for a model known to take images, else a note (a model that cannot
+  # see them, or whose abilities are not known, is not sent pixels), and a
+  # note for a picture that cannot be made. `[]` when there are none.
   @spec model_parts([String.t()], String.t(), String.t() | nil) :: [map()]
   def model_parts(uuids, user_uuid, endpoint_uuid) do
     rows =
@@ -489,8 +538,8 @@ defmodule PhoenixKitAgent.Attachments do
       rows == [] ->
         []
 
-      Models.image_input(endpoint_uuid) == :unsupported ->
-        [note("The attached pictures were not shown: this model cannot see images.")]
+      Models.image_input(endpoint_uuid) != :supported ->
+        [note("The attached pictures were not shown: this model is not known to see images.")]
 
       true ->
         Enum.flat_map(rows, &parts_of/1)

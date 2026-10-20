@@ -13,18 +13,26 @@ defmodule PhoenixKitAgent.Attachments.Processor do
     * `image` — checked to be a picture ImageMagick can read.
 
   A picture (or a scan) is shown to the model in one of two ways, decided here
-  by the user's model as it is now (`PhoenixKitAgent.Models.image_input/1`):
+  by the user's model as it is now (`PhoenixKitAgent.Models.image_input/1`,
+  `picture_mode/1`):
 
-    * the model takes images (or is not known not to, and no vision model is
-      set): the row stays without text — the turn sends the pixels, in its own
-      message only (`PhoenixKitAgent.Attachments.pictures/1`);
-    * it does not: the vision model of the module (`agent_vision_endpoint_uuid`)
-      describes it once, now, and the description is the row's text, which the
-      history keeps. With no vision model the picture `failed` as
-      `no_vision_model`. The vision call is paid, so it is made only for a user
-      still within their limits (`limit_reached` otherwise); it carries the
-      user and `source: "agent"` — the spending limits count it — and the
-      content of the call is never written to the AI journal.
+    * the model is known to take images: the row stays without text — the turn
+      sends the pixels, in its own message only
+      (`PhoenixKitAgent.Attachments.pictures/1`); later turns carry a line that
+      names the file, and the assistant's own answer about it;
+    * it is known not to, or its abilities are not known (a provider without a
+      model listing, a model that declares nothing): it is taken for a blind
+      one, and the vision model of the module (`agent_vision_endpoint_uuid`)
+      describes the picture once, now; the description is the row's text,
+      which the history keeps. With no vision model a picture is refused by
+      `PhoenixKitAgent.Attachments.add/4` before it is stored, and a scan
+      (known to be one only here) `failed` as `no_vision_model`. The vision
+      call is paid, so it is made only for a user still within their limits
+      (`limit_reached` otherwise) — the money limits as they apply to the
+      **vision** endpoint (`PhoenixKitAgent.Limits.money_counted?/1`): one that
+      reports no cost is held by the turn limit only. The call carries the user
+      and `source: "agent"` — the spending limits count it — and its content is
+      never written to the AI journal.
 
   ## Failing safely
 
@@ -113,6 +121,9 @@ defmodule PhoenixKitAgent.Attachments.Processor do
       {:exit, _reason} -> {:error, :crashed}
       nil -> {:error, :timeout}
     end
+  catch
+    # `WorkerSupervisor` is not running (being restarted): no place to read the file.
+    :exit, _no_worker_supervisor -> {:error, :unavailable}
   end
 
   # ── the worker ──────────────────────────────────────────────────────
@@ -163,7 +174,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
           {:ok, %{extracted_text: nil, truncated: false}}
 
         {:describe, vision} ->
-          describe(settings, vision, [jpeg_input(jpeg)], @describe_picture, %{})
+          describe(settings, vision, [jpeg_input(jpeg)], @describe_picture, %{}, [])
       end
     end
   end
@@ -181,7 +192,18 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
         {:describe, vision} ->
           inputs = Enum.map(pngs, &%{data: &1, content_type: "image/png"})
-          describe(settings, vision, inputs, @describe_scan, shown)
+          not_described = pages - length(pngs)
+
+          notes =
+            if not_described > 0,
+              do: [
+                Extract.continues(
+                  "the document continues: #{not_described} of #{Extract.count(pages, "page")} not described"
+                )
+              ],
+              else: []
+
+          describe(settings, vision, inputs, @describe_scan, shown, notes)
       end
     end
   end
@@ -196,28 +218,38 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   # ── how a picture reaches the model ─────────────────────────────────
 
-  defp picture_mode(settings) do
-    vision = Config.vision_endpoint_uuid()
-
-    case {Models.image_input(settings.endpoint_uuid), vision} do
+  @doc false
+  # How a picture reaches the user's model (see the moduledoc): as pixels only
+  # for a model known to take images; else described by the vision model, or
+  # `no_vision_model` when there is none.
+  @spec picture_mode(map()) ::
+          {:ok, :pixels | {:describe, String.t()}} | {:error, :no_vision_model}
+  def picture_mode(settings) do
+    case {Models.image_input(settings.endpoint_uuid), Config.vision_endpoint_uuid()} do
       {:supported, _vision} -> {:ok, :pixels}
-      {:unsupported, nil} -> {:error, :no_vision_model}
-      {:unknown, nil} -> {:ok, :pixels}
-      {_not_supported, vision} -> {:ok, {:describe, vision}}
+      {_blind_or_unknown, nil} -> {:error, :no_vision_model}
+      {_blind_or_unknown, vision} -> {:ok, {:describe, vision}}
     end
   end
 
-  defp describe(settings, vision, inputs, prompt, fields) do
-    with :ok <- within_limits(settings),
+  defp describe(settings, vision, inputs, prompt, fields, notes) do
+    with :ok <- within_limits(settings, vision),
          {:ok, text} <- ask_vision(settings, vision, inputs, prompt) do
       {text, clipped?} = Extract.clip(text)
-      truncated = Map.get(fields, :truncated, false) or clipped?
-      {:ok, Map.merge(fields, %{extracted_text: text, truncated: truncated})}
+
+      notes =
+        if clipped?,
+          do: [Extract.continues("the description continues: not shown in full") | notes],
+          else: notes
+
+      {:ok,
+       Map.merge(fields, %{extracted_text: Enum.join([text | notes]), truncated: notes != []})}
     end
   end
 
-  defp within_limits(settings) do
-    case SpendLimits.check(settings, settings.endpoint_uuid) do
+  # The money limits as they apply to the endpoint the call is paid on.
+  defp within_limits(settings, vision) do
+    case SpendLimits.check(settings, vision) do
       :ok -> :ok
       {:error, {:limit_reached, _status}} -> {:error, :limit_reached}
     end

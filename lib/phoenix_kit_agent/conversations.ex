@@ -342,6 +342,23 @@ defmodule PhoenixKitAgent.Conversations do
     :ok
   end
 
+  @doc false
+  # The files linked to the user message `message_uuid` back to "not sent"
+  # (`PhoenixKitAgent.Turns.Runner`: a model that refused the pictures).
+  @spec unlink_attachments(String.t(), String.t(), String.t()) :: :ok
+  def unlink_attachments(user_uuid, conversation_uuid, message_uuid) do
+    repo().update_all(
+      from(a in Attachment,
+        where:
+          a.message_uuid == ^message_uuid and a.user_uuid == ^user_uuid and
+            a.conversation_uuid == ^conversation_uuid
+      ),
+      set: [message_uuid: nil]
+    )
+
+    :ok
+  end
+
   @doc """
   Checks 1-3 of the moduledoc for a session, without a chat: `{:ok,
   user_uuid}` when the session may use the assistant now.
