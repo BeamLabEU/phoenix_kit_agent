@@ -46,7 +46,12 @@ or file that is refused leaves no chat behind). A long chat opens at its end,
 with "Earlier messages" above. Open or closed, the chosen chat and the width are
 kept in the browser (`localStorage`) and come back after a navigation, a reload
 or a lost connection (a running answer comes back with its indicator and
-"Stop"); the text being written is never wiped by an update of the panel.
+"Stop"); the text being written is never wiped by an update of the panel. The
+indicator and "Stop" follow the chat's lock on the server, never the browser:
+after a reconnect the panel shows the turn the lock holds then, and while it
+shows one it reads the lock again every 5 s (`config :phoenix_kit_agent,
+turn_check_ms:`), so a turn whose end never reached it is let go of, with the
+messages it left.
 Notices are shown in the user's language by their code.
 
 What the panel shows of a chat: the user's messages, the model's answers as
@@ -123,10 +128,20 @@ How a picture reaches the model (decided 2026-10-20):
     refuses a picture at once (`no_vision_model`), before anything is stored;
     a scan, known to be one only once it is read, fails with the same code.
     Pixels are never sent on a guess, also not when the model changes between
-    the upload and the send (the turn then gets a note instead).
+    the upload and the send: the turn then calls no model, the files go back
+    to wait for a message, and the notice `pictures_not_seen` says to attach
+    them again (to be described).
   * When the first model call of a turn that carries pictures is refused by
-    the provider (`api_error`, `model_error`), the files are taken off the
-    message, the notice says so, and they wait to be sent again.
+    the provider as a request it does not take (`api_error` 400, 413, 415 or
+    422), the files are taken off the message, the notice says so, and they
+    wait to be sent again. A missing model (404) or a failure of the provider
+    (5xx) says nothing of the pictures: the files stay with the message.
+  * A description is paid, so right before it the AI module must be on and
+    the session that added the file must still be one that may use the
+    assistant (else the file fails as `ai_disabled`, `session_gone` or
+    `forbidden`, and nothing is called); one user's descriptions are made one
+    at a time (a `:global` lock per user), each checked against the limits
+    with the cost of the one before already in the journal.
 
 A JPEG for a model has its metadata removed (EXIF with the time and place of a
 photo, XMP, IPTC, comments; `Attachments.Jpeg`). A workbook is never opened by
@@ -207,6 +222,15 @@ The admin pages check every event against the scope of the browser session
 as it is now — the role it acts as, a logout — not the user's default role. An
 Owner's assistant settings are changed by an Owner only, and a settings form
 opened before another admin's save does not overwrite it.
+
+Settings → AI Agent sets the module defaults: the default model and the vision
+model (among the `phoenix_kit_ai` endpoints that chat; the default's list marks
+the models without tools, the vision model's the ones that take no pictures),
+the per-user limits, the limits of one turn, the module's prompt (its change is
+recorded in the Activity log by field name, never its text) and who is told
+about limits (none chosen: every Owner). A user without a model of their own,
+while no default is chosen, is refused every turn with a text that says where
+the model is chosen.
 
 The Settings page has one switch only an Owner can change,
 `agent_capture_ai_content`: when on, the bodies of the assistant's requests are

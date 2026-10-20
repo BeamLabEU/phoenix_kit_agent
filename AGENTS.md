@@ -62,8 +62,15 @@ and `Web.Markdown`).
   settings. A form takes only the fields it offers; the user being edited is
   the one the server opened, never a submitted uuid; a save is refused when
   the shown values changed since the form opened (`admin_update/4`,
-  `expected:`). Pages keep endpoints as `Models.summary/1`, never the row
-  with its API key.
+  `expected:`). A model or a watcher a form did not offer is refused (and
+  `Config.put_default_endpoint/2` / `put_vision_endpoint/2` take only an
+  existing endpoint that chats). Pages keep endpoints as `Models.summary/1`,
+  never the row with its API key. The admin pages run with `log: false` (an
+  event's parameters hold prompts). The module prompt is written without
+  core's settings history (which keeps a value in Activity and in the query
+  log) and its change is logged as `agent.settings_updated`, field names only;
+  every other text a person writes (personal instructions, an admin's prompt
+  for a user) is written with `log: false`.
 - **Money and turns:** money only from the AI journal (`user_uuid` +
   `metadata.source = "agent"`), never from the module's own messages; every
   model call of the module passes `user_uuid:` and `source: "agent"`; every
@@ -91,9 +98,16 @@ and `Web.Markdown`).
   queue `Attachments.Slots` (a place is held by the job process, free when it
   ends); workers run under their own supervisor. A picture reaches the model as
   pixels in its own turn (`Attachments.model_parts/3`, used by `Turns.Runner`)
-  only for a model known to take images; any other (unknown abilities
-  included) gets a description kept in the row, or a `no_vision_model`
-  refusal (`Processor.picture_mode/1`). Every extractor that cuts a file ends
+  only for a model known to take images, asked again as the turn starts (one
+  that stopped being known to: no call, the files go back, notice
+  `pictures_not_seen`); any other (unknown abilities included) gets a
+  description kept in the row, or a `no_vision_model` refusal
+  (`Processor.picture_mode/1`). A description is paid: right before it the AI
+  module and the session that added the file are checked again (the
+  processing gets the session reference), and one user's descriptions are
+  made one at a time (`:global` lock), so each sees what the last one cost.
+  Files leave a message only when the provider refuses the request (400, 413,
+  415, 422), not on a 404 or a 5xx. Every extractor that cuts a file ends
   its text with a `[... the … continues: …]` line (`Extract.continues/1`) —
   keep that for a new kind. Children in `children/0` need ids of their own
   (`PhoenixKitAgent.…`): PhoenixKit.Supervisor starts every module's children
@@ -126,7 +140,11 @@ and `Web.Markdown`).
   composer's textarea). A re-join after a lost connection mounts the LiveView
   afresh but calls the hook's `reconnected()`, not `mounted()`: state the
   server must get back (`restore`) is pushed from both. They are inline
-  scripts: a host CSP needs `script-src 'unsafe-inline'`. A daisyUI focus
+  scripts: a host CSP needs `script-src 'unsafe-inline'`. The indicator and
+  "Stop" come from the server only: while a turn is shown the panel reads the
+  chat's lock again every `:turn_check_ms` and lets an ended turn go (with the
+  messages it left), and every `restore` changes `data-restored`, so its
+  answer patches the whole panel over whatever the browser kept. A daisyUI focus
   dropdown's trigger is a `div` with `tabindex="0"`, never a `<button>`
   (Safari does not focus a clicked button).
 - **Prompt input from a browser** (`page:`, `locale:` of `Turns.start/6`) is
