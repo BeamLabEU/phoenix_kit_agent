@@ -16,9 +16,13 @@ its tables (`PhoenixKitAgent.Migrations`, `PhoenixKitAgent.Schemas.*`), the
 permission keys `agent` / `agent.manage`, the module settings and the
 Settings → AI Agent page (`PhoenixKitAgent.Config`,
 `PhoenixKitAgent.Web.SettingsLive`), the hidden Storage library
-(`PhoenixKitAgent.Library`) and the user-deletion cleanup
-(`PhoenixKitAgent.UserDeletion`). Chats, the model loop and the chat UI are not
-built yet.
+(`PhoenixKitAgent.Library`), the user-deletion cleanup
+(`PhoenixKitAgent.UserDeletion`), the chats and messages
+(`PhoenixKitAgent.Conversations`: session-bound, owner-only; a client writes
+only the user's text and never reads raw tool results) and the read-only turn
+loop (`PhoenixKitAgent.Turns` with `Turns.Monitor`, `Runner`, `Locks`, `Tools`).
+Not built yet: the chat panel (Dock), per-user settings screens, limits and
+notifications, attachment processing.
 
 - **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins to the
   `timujinne` forks' `integration/andi-2026-10` branches (the session-actor API,
@@ -56,3 +60,7 @@ checkout, export `<APP>_PATH` (the dep's app name upper-cased plus `_PATH`, e.g.
 - `0 tests` is not a pass: a test run that excluded everything proves nothing.
 - Do not edit `CHANGELOG.md` or `@version` in `mix.exs` in a pull request.
 - Tables are PhoenixKit-style: UUIDv7 primary keys, module-owned migrations.
+- Nothing of a chat — the user's text, a model answer, a tool result, a system
+  prompt — may reach `Logger` (message, metadata or crash report): log the
+  class of a failure only. `test/support/log_probe.ex` checks whole log events
+  for it.

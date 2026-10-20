@@ -12,8 +12,13 @@ credentials, budget and the request journal come from
 (module key `agent`) and the enable/disable switch, the module's tables (own
 migration chain, run by `mix phoenix_kit.update`), the permissions `agent` and
 `agent.manage`, the module defaults under Settings → AI Agent, a hidden Storage
-library for attachments and the cleanup when a user is deleted. Chats, the
-model loop and the chat UI are not implemented yet.
+library for attachments and the cleanup when a user is deleted; the chats and
+their messages (`PhoenixKitAgent.Conversations` — session-bound, owner-only,
+with a PubSub topic per chat) and the read-only turn loop
+(`PhoenixKitAgent.Turns` — locks, rounds of model and tool calls over the
+session's own read tools, stop and deadline). Not built yet: the chat panel
+(Dock), per-user settings screens, spending and turn limits, and attachment
+processing.
 
 ## Installation
 
