@@ -40,9 +40,10 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
 `Web.Dock.Panel` (markup and hooks), `Web.Dock.Components`, `Web.Dock.Texts`
 and `Web.Markdown`).
 
-- **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins to the
-  `timujinne` forks' `integration/andi-2026-10` branches (the session-actor API,
-  hidden Storage libraries and tool calling are not on Hex yet),
+- **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins:
+  `phoenix_kit` to upstream main 435d5b3 (the session-actor API and hidden
+  Storage libraries are merged but not on Hex yet), `phoenix_kit_ai` to the
+  `timujinne` fork's `integration/andi-2026-10` branch (tool calling, #38),
   `phoenix_live_view`, and `mdex` (already phoenix_kit's) for the markdown
   of the chat panel.
 - **Module key** `"agent"`; settings prefix `agent_`; tables

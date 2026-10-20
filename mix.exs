@@ -86,13 +86,12 @@ defmodule PhoenixKitAgent.MixProject do
       # PhoenixKit provides the Module behaviour, the Settings API, the API
       # Executor (execute_as/visible_for), SessionRef and hidden Storage
       # libraries.
-      # Integration pin until release: the timujinne fork's
-      # integration/andi-2026-10 branch (upstream + #946, #948, #949, #950).
-      # Hex 2.63.0 does not carry these functions; switch back to a Hex
-      # requirement once they ship.
+      # Pinned to upstream main 435d5b3, which carries #948, #949 and #950
+      # (merged). Hex 2.63.0 does not carry these functions; switch back to a
+      # Hex requirement once a release ships them.
       pk_dep(:phoenix_kit,
-        git: "https://github.com/timujinne/phoenix_kit.git",
-        ref: "b15e87409388c1d48eda5d46198a9335b8aacb02",
+        git: "https://github.com/BeamLabEU/phoenix_kit.git",
+        ref: "435d5b3275fe208e5674f337b91479f603e4f0df",
         override: true
       ),
 
