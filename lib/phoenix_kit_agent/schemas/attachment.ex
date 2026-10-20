@@ -4,6 +4,11 @@ defmodule PhoenixKitAgent.Schemas.Attachment do
   in Storage, in the module's hidden library (`file_uuid`); the row keeps what
   the model reads: the extracted text of a PDF or a sheet, truncated to a limit.
 
+  `status` goes `pending` → `ready` | `failed`; a failed row keeps a code in
+  `error` (see `PhoenixKitAgent.Attachments.Processor`), never text of the file.
+  A `ready` picture or scanned PDF has no `extracted_text`: the model is shown
+  its pixels in the turn that sends it.
+
   `conversation_uuid`, `message_uuid`, `user_uuid` and `file_uuid` are set by the
   caller, never cast.
   """

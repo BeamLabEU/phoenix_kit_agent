@@ -47,6 +47,10 @@ config :phoenix_kit, repo: PhoenixKitAgent.Test.Repo
 
 config :phoenix, :json_library, Jason
 
+# Keys the time-window tokens of private (hidden-library) file URLs; without it
+# core mints a token that nothing accepts.
+config :phoenix_kit, secret_key_base: String.duplicate("t", 64)
+
 config :logger, level: :warning
 
 config :phoenix_kit_agent, PhoenixKitAgent.Test.Endpoint,

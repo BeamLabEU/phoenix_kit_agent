@@ -24,8 +24,36 @@ instructions), the system prompt put together in the order of priority
 `agent.manage` sees every user's model, limits and spending and sets them, the
 spending and turn limits (`PhoenixKitAgent.Limits` — checked before each turn,
 with a notice in the chat and notifications to the user and the watchers) and
-Admin → AI Agent → Spending, what everyone spent today and this month. Not
-built yet: the chat panel (Dock) and attachment processing.
+Admin → AI Agent → Spending, what everyone spent today and this month, and the
+attachments (`PhoenixKitAgent.Attachments` — files added to a chat, kept in the
+hidden library and made readable for the model before the turn). Not built
+yet: the chat panel (Dock).
+
+## Attachments
+
+A user adds png/jpg/webp/heic pictures, PDFs, xlsx/csv sheets and txt/md
+files to their own chat. The content decides what a file is, not its name or
+the type the browser claimed. A file is kept in the module's hidden Storage
+library, in a folder named by the user's uuid: it is in no media picker or
+browser, not even for a holder of `media.view_all`, and its bytes are reached
+only through `PhoenixKitAgent.Attachments.url/3`, an expiring address minted
+for the owner's own session. The size and the number of files per message come
+from the user's settings (`max_attachment_mb`, `max_attachments_per_message`).
+
+Before the turn a task makes each file readable, and the row goes from
+`pending` to `ready` (or `failed`, with a code in `error`): a PDF gives its
+text; a PDF with no text (a scan) and a picture are shown to a model that takes
+images as pixels, shrunk to 1600 px, in the message they came with only; for a
+model that does not, the vision model (setting `agent_vision_endpoint_uuid`)
+describes them once and the description is kept in the history; a sheet
+becomes CSV text, the first rows of each sheet; a text file is read as it is.
+All of it is cut to a size (`config :phoenix_kit_agent, attachment_limits:
+[…]`, see `PhoenixKitAgent.Attachments.Bounds`) and the row says when it was
+cut.
+
+PDF processing needs poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and pictures
+need ImageMagick (`convert`, `identify`) on the host; without them such a file
+fails with `pdf_tools_missing` / `image_tools_missing`, nothing else breaks.
 
 ## Limits
 

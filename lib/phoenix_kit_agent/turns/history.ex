@@ -8,6 +8,7 @@ defmodule PhoenixKitAgent.Turns.History do
   (the user's own files) is part of that message.
   """
 
+  alias PhoenixKitAgent.Attachments
   alias PhoenixKitAgent.Schemas.{Attachment, Message}
 
   @typedoc "A message as the model reads it."
@@ -35,14 +36,26 @@ defmodule PhoenixKitAgent.Turns.History do
     |> Kernel.++([current])
   end
 
-  @doc "The content of a user message: its text, then the text of each attachment."
+  @doc """
+  The content of a user message: its text, then each attachment — the text it
+  carries, or, for a picture the model is shown as pixels, a line that names it
+  (the pixels themselves go with the message of their own turn only).
+  """
   @spec user_content(String.t(), [Attachment.t()]) :: String.t()
   def user_content(text, attachments) do
-    attachments
-    |> Enum.filter(&is_binary(&1.extracted_text))
-    |> Enum.reduce(text, fn attachment, acc ->
-      acc <> "\n\n[Attachment: " <> attachment.filename <> "]\n" <> attachment.extracted_text
-    end)
+    Enum.reduce(attachments, text, fn attachment, acc -> acc <> attachment_block(attachment) end)
+  end
+
+  defp attachment_block(%{extracted_text: text, filename: filename}) when is_binary(text),
+    do: "\n\n[Attachment: " <> filename <> "]\n" <> text
+
+  defp attachment_block(%{filename: filename} = attachment) do
+    if Attachments.pixels?(attachment),
+      do:
+        "\n\n[Attachment: " <>
+          filename <>
+          " - a picture, shown to you only along with the message it was sent with]",
+      else: ""
   end
 
   defp entry(%Message{role: "user", content: content}, attachments) when is_binary(content),

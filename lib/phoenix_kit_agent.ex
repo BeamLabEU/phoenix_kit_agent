@@ -199,7 +199,12 @@ defmodule PhoenixKitAgent do
   end
 
   @impl PhoenixKit.Module
-  def children, do: [PhoenixKitAgent.Turns.Supervisor]
+  def children do
+    [
+      PhoenixKitAgent.Turns.Supervisor,
+      {Task.Supervisor, name: PhoenixKitAgent.Attachments.TaskSupervisor}
+    ]
+  end
 
   @doc """
   The `phoenix_kit_ai` usage sink: a request row whose `attribution` names an

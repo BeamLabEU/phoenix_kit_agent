@@ -36,6 +36,7 @@ support_dir = Path.expand("support", __DIR__)
   {PhoenixKitAgent.Test.Tools, "agent_test_tools.ex"},
   {PhoenixKitAgent.Test.LogProbe, "log_probe.ex"},
   {PhoenixKitAgent.Test.Addenda, "prompt_addenda.ex"},
+  {PhoenixKitAgent.Test.Files, "files.ex"},
   {PhoenixKitAgent.DataCase, "data_case.ex"},
   {PhoenixKitAgent.LiveCase, "live_case.ex"}
 ]
@@ -120,4 +121,20 @@ if repo_available do
 end
 
 exclude = if skip_db?, do: [:integration], else: []
-ExUnit.start(exclude: exclude)
+
+# Attachment tests that need an external program carry its tag; without the
+# program they are excluded, loudly, never passed.
+missing_tools =
+  [poppler: ["pdftotext", "pdftoppm", "pdfinfo"], imagemagick: ["convert", "identify"]]
+  |> Enum.reject(fn {_tag, tools} -> Enum.all?(tools, &System.find_executable/1) end)
+  |> Keyword.keys()
+
+if missing_tools != [] do
+  IO.puts("""
+
+  Excluding tests tagged #{inspect(missing_tools)}: the program is not installed here.
+  They did NOT run.
+  """)
+end
+
+ExUnit.start(exclude: exclude ++ missing_tools)

@@ -109,6 +109,12 @@ defmodule PhoenixKitAgent.MixProject do
       # LiveView is needed for the admin pages (Phase 1).
       {:phoenix_live_view, "~> 1.1"},
 
+      # Attachments: a sheet (xlsx) becomes CSV text for the model. nimble_csv
+      # is already in the tree (phoenix_kit's); it is named here because the
+      # module calls it itself.
+      {:xlsx_reader, "~> 0.8"},
+      {:nimble_csv, "~> 1.2"},
+
       # The module's own gettext backend for its admin pages.
       {:gettext, "~> 1.0"},
 

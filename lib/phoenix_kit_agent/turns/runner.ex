@@ -16,7 +16,12 @@ defmodule PhoenixKitAgent.Turns.Runner do
        results of earlier rounds of this turn only as many as fit, together
        with the newest round's, in `10 × agent_tool_result_chars` characters
        (spec §6.4): an older one beyond that is sent as a short stub that says
-       it was left out (the database keeps it whole);
+       it was left out (the database keeps it whole); the pictures of the
+       user's message, if it has any, go along with it as image parts (or a
+       note, where the model cannot see them or a picture cannot be made) in
+       every round of this turn only — the history keeps the text — and such a
+       turn is never captured into the AI journal
+       (`PhoenixKitAgent.Attachments.model_parts/3`);
     d. calls the model (`PhoenixKitAI.complete/3`, `source: "agent"`, the user,
        no cache, the module's content capture, and the uuid the answer will be
        stored under as `attribution`); a refusal of the `phoenix_kit_ai`
@@ -73,7 +78,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   alias PhoenixKit.API.Executor
   alias PhoenixKit.API.MCP.Names
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Conversations, Limits}
+  alias PhoenixKitAgent.{Attachments, Conversations, Limits}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
   alias PhoenixKitAgent.Turns.{Locks, Monitor, Tools}
 
@@ -126,7 +131,33 @@ defmodule PhoenixKitAgent.Turns.Runner do
     :ok = Monitor.check_stop()
     message = store!(turn, %{turn_ref: turn.turn_ref, role: "user", content: turn.text})
     link_attachments(turn.attachment_uuids, message)
-    round(turn, 1, turn.history)
+    {turn, transcript} = with_pictures(turn)
+    round(turn, 1, transcript)
+  end
+
+  # The pictures of this message's attachments go along with its text, in this
+  # turn only (spec §9): the history keeps the extracted text, not the pixels.
+  # A turn that carries pictures is never captured into the AI journal, whatever
+  # the module's setting: the pixels would be written there as base64.
+  defp with_pictures(%{attachment_uuids: []} = turn), do: {turn, turn.history}
+
+  defp with_pictures(turn) do
+    case Attachments.model_parts(turn.attachment_uuids, turn.user_uuid, turn.endpoint_uuid) do
+      [] ->
+        {turn, turn.history}
+
+      parts ->
+        {earlier, [current]} = Enum.split(turn.history, -1)
+        {notes, pictures} = Enum.split_with(parts, &(&1["type"] == "text"))
+        text = Enum.reduce(notes, current.content, &(&2 <> "\n\n" <> &1["text"]))
+
+        content =
+          if pictures == [],
+            do: text,
+            else: [%{"type" => "text", "text" => text} | pictures]
+
+        {%{turn | capture?: false}, earlier ++ [%{current | content: content}]}
+    end
   end
 
   defp link_attachments([], _message), do: :ok

@@ -64,7 +64,10 @@ defmodule PhoenixKitAgent.Conversations do
   reads it through `get_message/4` (or `list_messages/3` with `after:`), with
   a fresh scope. `subscribe/3` subscribes only after the checks above;
   `unsubscribe/1` undoes it (subscribing twice delivers every event twice).
-  PubSub is in-process and anyone in the VM can subscribe to a topic
+  The topic also hears `{:agent_attachment_processed, conversation_uuid,
+  attachment_uuid}` when a file added to the chat is ready or has failed
+  (`PhoenixKitAgent.Attachments`). PubSub is in-process and anyone in the VM
+  can subscribe to a topic
   directly; the check guards the code that serves a user's browser, not
   hostile code in the node.
   """

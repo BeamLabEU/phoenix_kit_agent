@@ -33,8 +33,9 @@ chat, marked for tool support), the spending read from the AI journal
 (`PhoenixKitAgent.Limits`: checked by `Turns.start/6` under the turn's locks;
 one notice per limit and period through `phoenix_kit_agent_limit_events`;
 notification type `agent_limit` from `notification_types/0`) and Admin → AI
-Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`). Not built yet: the chat
-panel (Dock), attachment processing.
+Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
+(`PhoenixKitAgent.Attachments` with `Attachments.Detect`, `Extract`, `Processor`,
+`Cmd`, `Bounds`). Not built yet: the chat panel (Dock).
 
 - **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins to the
   `timujinne` forks' `integration/andi-2026-10` branches (the session-actor API,
@@ -60,6 +61,20 @@ panel (Dock), attachment processing.
   outright: "Stop" and the deadline ask it to stop between steps
   (`Turns.Monitor.check_stop/0`), and only after `turn_stop_grace_ms` is it
   killed.
+- **Attachments:** session-bound like `Conversations` (`impersonated:` in the
+  options); only the owner adds, reads, discards or gets the address of a
+  file, an Owner/Admin of the site included. Bytes live in the hidden library
+  (`PhoenixKitAgent.Library`) and leave only through `Attachments.url/3`
+  (`Storage.authorized_url/4` for the session's scope) — never a Media URL.
+  The content, not the name, decides the kind (`Attachments.Detect`). Files are
+  processed in a task under `PhoenixKitAgent.Attachments.TaskSupervisor`
+  (`children/0`), with a deadline and a heap limit; a failure is a code in
+  `attachments.error`, never a parser's message. A picture reaches the model as
+  pixels in its own turn (`Attachments.model_parts/3`, used by `Turns.Runner`)
+  or, for a model that cannot see, as a description kept in the row. Writes
+  that bind a file name or its text use `log: false`. Tests that need poppler
+  or ImageMagick carry `@tag :poppler` / `:imagemagick` and are excluded, with a
+  message, where the program is missing.
 - **Prompt input from a browser** (`page:`, `locale:` of `Turns.start/6`) is
   untrusted: `PhoenixKitAgent.Prompt` drops a value with a control character and
   cuts a long one.

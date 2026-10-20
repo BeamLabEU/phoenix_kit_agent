@@ -19,8 +19,10 @@ defmodule PhoenixKitAgent.Turns do
          the user's;
        - a non-blank message of at most `agent_history_chars` characters, the
          AI module on, an endpoint chosen (the user's own, else
-         `agent_default_endpoint_uuid`; `PhoenixKitAgent.UserConfig`), the
-         attachments ready and the user's own, of this chat and not sent yet;
+         `agent_default_endpoint_uuid`; `PhoenixKitAgent.UserConfig`), no more
+         attachments than `max_attachments_per_message` allows, and each one
+         ready, the user's own, of this chat and not sent yet
+         (`PhoenixKitAgent.Attachments`);
     2. the locks (`PhoenixKitAgent.Turns.Locks`): one turn per chat
        (`:conversation_busy`) and per user (`:turn_in_flight`); the history
        is read only once they are taken, so it holds the previous turn's end;
@@ -74,6 +76,7 @@ defmodule PhoenixKitAgent.Turns do
           | :ai_disabled
           | :no_endpoint
           | :invalid_attachments
+          | :too_many_attachments
           | :conversation_busy
           | :turn_in_flight
           | {:limit_reached, Limits.kind()}
@@ -120,6 +123,7 @@ defmodule PhoenixKitAgent.Turns do
          :ok <- ai_enabled(),
          settings = UserConfig.effective(conversation.user_uuid),
          {:ok, endpoint_uuid} <- endpoint(settings),
+         :ok <- attachment_count(settings, attachment_uuids),
          {:ok, attachments} <- new_attachments(conversation, attachment_uuids) do
       user = %{scope: scope, settings: settings, endpoint_uuid: endpoint_uuid}
       launch(session_ref, conversation, text, attachments, user, opts)
@@ -176,6 +180,14 @@ defmodule PhoenixKitAgent.Turns do
   # change takes effect with the next turn of any chat.
   defp endpoint(%{endpoint_uuid: nil}), do: {:error, :no_endpoint}
   defp endpoint(%{endpoint_uuid: uuid}), do: {:ok, uuid}
+
+  # No more files than the user may send in one message (their own limit, else
+  # the module's), whatever was accepted when they were uploaded.
+  defp attachment_count(settings, uuids) do
+    if length(Enum.uniq(uuids)) <= settings.max_attachments_per_message,
+      do: :ok,
+      else: {:error, :too_many_attachments}
+  end
 
   # Every uuid must name a ready attachment of this user in this chat that is
   # not part of a message yet.
