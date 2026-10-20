@@ -143,6 +143,19 @@ defmodule PhoenixKitAgent do
         parent: :admin_agent,
         match: :exact,
         live_view: {PhoenixKitAgent.Web.UsersLive, :index}
+      ),
+      Tab.new!(
+        id: :admin_agent_spending,
+        label: "Spending",
+        gettext_backend: PhoenixKitAgent.Gettext,
+        icon: "hero-banknotes",
+        path: "agent/spending",
+        priority: 652,
+        level: :admin,
+        permission: "agent.manage",
+        parent: :admin_agent,
+        match: :exact,
+        live_view: {PhoenixKitAgent.Web.SpendingLive, :index}
       )
     ]
   end

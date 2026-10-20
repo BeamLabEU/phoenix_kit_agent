@@ -114,6 +114,20 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
       refute has_element?(view, "#{row}-status[data-off]")
     end
 
+    test "a model that reports no cost: money is marked as not counted", %{conn: conn} do
+      counted = user_with(["agent"], "counted")
+      direct = user_with(["agent"], "direct")
+      openrouter = endpoint_fixture(%{name: "Router", model: "a/with-tools"})
+      deepseek = endpoint_fixture(%{name: "Direct", provider: "deepseek", model: "deepseek-chat"})
+      Repo.insert!(%UserSettings{user_uuid: counted.uuid, endpoint_uuid: openrouter.uuid})
+      Repo.insert!(%UserSettings{user_uuid: direct.uuid, endpoint_uuid: deepseek.uuid})
+
+      {:ok, view, _html} = live(conn, @path)
+
+      assert has_element?(view, "#agent-user-#{direct.uuid}-money-off", "only the turn limit")
+      refute has_element?(view, "#agent-user-#{counted.uuid}-money-off")
+    end
+
     test "a user the assistant is switched off for is marked", %{conn: conn} do
       member = user_with(["agent"], "member")
       Repo.insert!(%UserSettings{user_uuid: member.uuid, enabled: false})
@@ -179,6 +193,23 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
                view,
                "#agent-user-form input[name='user_settings[monthly_cost_limit_usd]'][value='']"
              )
+    end
+
+    test "the form says when the chosen model's money is not counted", ctx do
+      view = open(ctx.conn, ctx.member)
+      refute has_element?(view, "#agent-user-money-off")
+
+      view
+      |> form("#agent-user-form", user_settings: %{endpoint_uuid: ctx.other.uuid})
+      |> render_change()
+
+      assert has_element?(view, "#agent-user-money-off", "only the turn limit")
+
+      view
+      |> form("#agent-user-form", user_settings: %{endpoint_uuid: ctx.with_tools.uuid})
+      |> render_change()
+
+      refute has_element?(view, "#agent-user-money-off")
     end
 
     test "the choice is the phoenix_kit_ai endpoints, with the ones without tools marked", ctx do

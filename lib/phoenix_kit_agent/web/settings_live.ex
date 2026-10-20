@@ -9,6 +9,10 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   against the user's current rights (a right taken away while the page is open
   stops the next save).
 
+  When the default model does not report what a call costs
+  (`PhoenixKitAgent.Models.reports_cost?/1`), the limits say that money is not
+  counted for it and only the turn limit applies.
+
   One setting is not for every manager: `agent_capture_ai_content` (whether the
   bodies of the assistant's requests go to the AI journal, where every holder of
   `ai` reads them on `/admin/ai/usage`) is switched by an Owner only. The check
@@ -25,7 +29,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   import PhoenixKitWeb.Components.Core.DecimalInput, only: [decimal_input: 1]
 
   alias PhoenixKit.Utils.Routes
-  alias PhoenixKitAgent.Config
+  alias PhoenixKitAgent.{Config, Models}
   alias PhoenixKitAgent.Web.Access
 
   @impl true
@@ -39,6 +43,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
          page_section: gettext("Settings"),
          page_section_path: Routes.path("/admin/settings")
        )
+       |> assign(money_off?: money_off?())
        |> assign_capture()
        |> assign_form(Config.defaults_changeset(%{}) |> Map.put(:action, nil))}
     else
@@ -126,6 +131,16 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     assign(socket, capture?: Config.capture_ai_content?(), owner?: Access.owner?(socket))
   end
 
+  # Whether the default model leaves money uncounted (no default: nothing to say).
+  defp money_off? do
+    with uuid when is_binary(uuid) <- Config.default_endpoint_uuid(),
+         %{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
+      not Models.reports_cost?(endpoint)
+    else
+      _none -> false
+    end
+  end
+
   defp assign_form(socket, changeset),
     do: assign(socket, :form, to_form(changeset, as: :settings))
 
@@ -140,6 +155,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
             <p class="text-sm text-base-content/70">
               {gettext(
                 "Apply to every user without limits of their own. Money is counted from the AI request journal, in US dollars, for endpoints that report a cost."
+              )}
+            </p>
+            <p :if={@money_off?} id="agent-settings-money-off" class="text-sm text-warning">
+              {gettext(
+                "The default model does not report what a call costs: money is not counted, only the turn limit applies."
               )}
             </p>
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">

@@ -25,6 +25,7 @@ defmodule PhoenixKitAgent.Test.Router do
       on_mount: {PhoenixKitAgent.Test.Hooks, :assign_scope} do
       live("/settings/agent", SettingsLive, :index)
       live("/agent/users", UsersLive, :index)
+      live("/agent/spending", SpendingLive, :index)
     end
   end
 end

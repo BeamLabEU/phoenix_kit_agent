@@ -16,6 +16,11 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   own instructions or the notice list. A model that the form did not offer
   (one that cannot chat, or does not exist) is refused.
 
+  A user whose model does not report what a call costs
+  (`PhoenixKitAgent.Models.reports_cost?/1`) is marked: money is not counted
+  for them and only the turn limit applies — in the list, and in the form for
+  the model chosen there.
+
   Who changed what for whom goes to the core Activity log, field names only.
   The model list marks the endpoints whose model is known not to take tools, and
   those where that is unknown (`PhoenixKitAgent.Models`); that listing is
@@ -136,12 +141,14 @@ defmodule PhoenixKitAgent.Web.UsersLive do
     rows =
       Enum.map(users, fn user ->
         settings = Map.fetch!(effective, user.uuid)
+        endpoint = Map.get(endpoints, settings.endpoint_uuid)
 
         %{
           user: user,
           settings: settings,
           spend: Map.fetch!(spend, user.uuid),
-          endpoint: Map.get(endpoints, settings.endpoint_uuid),
+          endpoint: endpoint,
+          money_off?: endpoint != nil and not Models.reports_cost?(endpoint),
           own_endpoint?: :endpoint_uuid in settings.own
         }
       end)
@@ -159,7 +166,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
     from(e in Endpoint,
       where: e.uuid in ^uuids,
-      select: {e.uuid, %{name: e.name, model: e.model}}
+      select: {e.uuid, %{name: e.name, model: e.model, provider: e.provider}}
     )
     |> RepoHelper.repo().all()
     |> Map.new()
@@ -349,15 +356,18 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
   # ── rendering ─────────────────────────────────────────────────────────
 
-  defp usd(micro) do
-    text = micro |> Decimal.new() |> Decimal.div(1_000_000) |> Decimal.normalize()
-    text = Decimal.to_string(text, :normal)
+  defp usd(micro), do: Spend.format_usd(micro)
 
-    case String.split(text, ".") do
-      [whole] -> "#{whole}.00"
-      [whole, <<_::binary-size(1)>> = fraction] -> "#{whole}.#{fraction}0"
-      _ -> text
-    end
+  # Whether money goes uncounted for the model chosen in the form (the
+  # module's when none is).
+  defp money_off?(editing) do
+    chosen =
+      case editing.params["endpoint_uuid"] do
+        uuid when uuid in [nil, ""] -> editing.default_endpoint
+        uuid -> Enum.find(editing.endpoints, &(&1.uuid == uuid))
+      end
+
+    chosen != nil and not Models.reports_cost?(chosen)
   end
 
   defp endpoint_label(endpoint, editing) do
@@ -431,6 +441,12 @@ defmodule PhoenixKitAgent.Web.UsersLive do
               errors={errors(@editing, :system_prompt)}
               rows="4"
             />
+
+            <p :if={money_off?(@editing)} id="agent-user-money-off" class="text-sm text-warning">
+              {gettext(
+                "This model does not report what a call costs: money is not counted, only the turn limit applies."
+              )}
+            </p>
 
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <.decimal_input
@@ -546,6 +562,13 @@ defmodule PhoenixKitAgent.Web.UsersLive do
                   </div>
                   <div>
                     {row.settings.daily_turn_limit} {gettext("turns")} / {gettext("day")}
+                  </div>
+                  <div
+                    :if={row.money_off?}
+                    id={"agent-user-#{row.user.uuid}-money-off"}
+                    class="text-xs text-warning"
+                  >
+                    {gettext("money is not counted — only the turn limit applies")}
                   </div>
                 </td>
                 <td id={"agent-user-#{row.user.uuid}-day"} class="text-right tabular-nums">

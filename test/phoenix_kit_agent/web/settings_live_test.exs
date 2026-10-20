@@ -57,6 +57,23 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
              )
     end
 
+    test "a default model that reports no cost: money is marked as not counted", %{conn: conn} do
+      {:ok, view, _html} = live(conn, @path)
+      refute has_element?(view, "#agent-settings-money-off")
+
+      direct = endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", direct.uuid)
+
+      {:ok, view, _html} = live(conn, @path)
+      assert has_element?(view, "#agent-settings-money-off", "only the turn limit")
+
+      counted = endpoint_fixture()
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", counted.uuid)
+
+      {:ok, view, _html} = live(conn, @path)
+      refute has_element?(view, "#agent-settings-money-off")
+    end
+
     test "saves the defaults, with who saved them in the settings history", %{
       conn: conn,
       manager: manager

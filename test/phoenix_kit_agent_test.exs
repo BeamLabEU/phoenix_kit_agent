@@ -71,8 +71,8 @@ defmodule PhoenixKitAgentTest do
       assert tab.live_view == {PhoenixKitAgent.Web.SettingsLive, :index}
     end
 
-    test "admin_tabs/0: Admin → Agent, with Users under it, both under agent.manage" do
-      assert [parent, users] = PhoenixKitAgent.admin_tabs()
+    test "admin_tabs/0: Admin → Agent, with Users and Spending under it, all under agent.manage" do
+      assert [parent, users, spending] = PhoenixKitAgent.admin_tabs()
 
       assert parent.id == :admin_agent
       assert parent.path == "agent"
@@ -84,6 +84,12 @@ defmodule PhoenixKitAgentTest do
       assert users.level == :admin
       assert users.permission == "agent.manage"
       assert users.live_view == {PhoenixKitAgent.Web.UsersLive, :index}
+
+      assert spending.parent == :admin_agent
+      assert spending.path == "agent/spending"
+      assert spending.level == :admin
+      assert spending.permission == "agent.manage"
+      assert spending.live_view == {PhoenixKitAgent.Web.SpendingLive, :index}
     end
 
     test "notification_types/0 declares agent_limit, so a watcher can switch it off" do
