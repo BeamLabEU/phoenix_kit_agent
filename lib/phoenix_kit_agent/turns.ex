@@ -57,6 +57,7 @@ defmodule PhoenixKitAgent.Turns do
 
   import Ecto.Query, only: [from: 2]
 
+  alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.{Config, Conversations, Limits, Prompt, UserConfig}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
@@ -156,6 +157,64 @@ defmodule PhoenixKitAgent.Turns do
           {:error, :not_running}
       end
     end
+  end
+
+  @doc """
+  What became of the turn the user's chat is locked by, for a client that
+  opens the chat (decision of 2026-10-20, spec §6.1): `{:ok, :idle}` — no
+  turn; `{:ok, {:running, turn_ref}}` — a turn runs (its task is here, or its
+  lock is younger than its TTL: it may run on another node);
+  `{:ok, :interrupted}` — the turn was lost (its node went down, its monitor
+  with it): its lock is older than the TTL and no task runs it here, so its
+  locks are released, the chat gets the notice "the answer was interrupted"
+  (error `interrupted`) and its topic hears `{:agent_turn_finished,
+  conversation_uuid, turn_ref}`. Of two clients that open the chat at once,
+  only one writes the notice. Refusals are those of `Conversations`.
+  """
+  @spec settle_interrupted(Conversations.session_ref(), boolean(), term()) ::
+          {:ok, :idle | :interrupted | {:running, String.t()}} | {:error, refusal()}
+  def settle_interrupted(session_ref, impersonated?, conversation_uuid) do
+    with {:ok, conversation} <-
+           Conversations.owned_conversation(session_ref, conversation_uuid,
+             impersonated: impersonated?
+           ) do
+      {:ok, settle(conversation)}
+    end
+  end
+
+  defp settle(%Conversation{busy_turn_ref: nil}), do: :idle
+
+  defp settle(%Conversation{busy_turn_ref: turn_ref} = conversation) do
+    cond do
+      Registry.lookup(@registry, turn_ref) != [] ->
+        {:running, turn_ref}
+
+      Locks.release_stale(conversation.user_uuid, conversation.uuid, turn_ref, lock_ttl_s()) ->
+        interrupted(conversation, turn_ref)
+        :interrupted
+
+      true ->
+        # Not stale, or released (or taken) since the row was read.
+        case busy_turn_ref(conversation.user_uuid, conversation.uuid) do
+          {:ok, running} -> {:running, running}
+          {:error, _none} -> :idle
+        end
+    end
+  end
+
+  defp interrupted(conversation, turn_ref) do
+    _ =
+      Conversations.add_turn_message(conversation.user_uuid, conversation.uuid, %{
+        turn_ref: turn_ref,
+        role: "notice",
+        content: "The answer was interrupted. Try again.",
+        error: "interrupted"
+      })
+
+    PubSub.broadcast(
+      Conversations.topic(conversation.uuid),
+      {:agent_turn_finished, conversation.uuid, turn_ref}
+    )
   end
 
   # ── start ───────────────────────────────────────────────────────

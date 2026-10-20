@@ -83,6 +83,40 @@ defmodule PhoenixKitAgent.Turns.Locks do
     :ok
   end
 
+  @doc """
+  Releases the locks of `turn_ref` only while the chat's lock is still its and
+  older than `ttl_s` (the database's clock): what is left of a turn lost with
+  its node. `true` when this call released it, so of two callers at most one
+  does; the user's lock goes too, if `turn_ref` still holds it.
+  """
+  @spec release_stale(String.t(), String.t(), String.t(), pos_integer()) :: boolean()
+  def release_stale(user_uuid, conversation_uuid, turn_ref, ttl_s) do
+    stale = DateTime.add(db_now(), -ttl_s, :second)
+
+    {count, _} =
+      repo().update_all(
+        from(c in Conversation,
+          where:
+            c.uuid == ^conversation_uuid and c.busy_turn_ref == ^turn_ref and
+              c.busy_since < ^stale
+        ),
+        set: [busy_since: nil, busy_turn_ref: nil]
+      )
+
+    if count == 1 do
+      repo().update_all(
+        from(s in UserSettings,
+          where: s.user_uuid == ^user_uuid and s.busy_turn_ref == ^turn_ref
+        ),
+        set: [busy_since: nil, busy_turn_ref: nil]
+      )
+
+      true
+    else
+      false
+    end
+  end
+
   defp lock_conversation(user_uuid, conversation_uuid, turn_ref, now, stale) do
     {count, _} =
       repo().update_all(
