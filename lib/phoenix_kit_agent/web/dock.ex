@@ -58,12 +58,14 @@ defmodule PhoenixKitAgent.Web.Dock do
   runs the send is let go; a turn whose end never reached the panel is let go
   of, and the message goes. A chat busy with a turn of another tab shows that
   turn, with its "Stop".
-  "Stop" asks the turn to stop; when no task runs it here, the chat's lock
-  says what to show (a turn lost but still within its time is said to be
-  lost — the chat is free when its lock expires). The indicator says whether
-  the model thinks or a tool is called; in the browser it gives up after the
-  deadline of a turn and its grace period (`Monitor.stop_grace_ms/0`),
-  counted again for each turn and after a lost connection is found again.
+  "Stop" asks the turn to stop — on whichever node runs it (`Turns.stop/4`
+  passes the request on over PubSub while the chat's lock is within its
+  time); a turn lost with its node shows "Stopping…" until its lock expires,
+  then the chat is free. When `Turns.stop/4` finds no such turn, the chat's
+  lock says what to show. The indicator says whether the model thinks or a
+  tool is called; in the browser it gives up after the deadline of a turn and
+  its grace period (`Monitor.stop_grace_ms/0`), counted again for each turn
+  and after a lost connection is found again.
   The indicator follows the server only: while a turn is shown as running,
   the panel reads the chat's lock again every `:turn_check_ms` (application
   environment, default 5 s), so a turn whose end never reached it — it came
@@ -688,11 +690,11 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  # "Stop" found no task for the turn here. The chat's lock says what it is
-  # now: a newer turn is shown instead; the same turn still in its lock's time
-  # is lost (or runs on another node) — the panel says so, rather than offer
-  # a Stop that cannot work; else the chat is free (a lost turn past its time
-  # is settled, its notice comes over the topic).
+  # "Stop" found no such turn. The chat's lock says what it is now: a newer
+  # turn is shown instead; the same turn still in its lock's time (it changed
+  # between the two reads) is said to be lost, rather than offer a Stop that
+  # cannot work; else the chat is free (a lost turn past its time is settled,
+  # its notice comes over the topic).
   defp after_lost_stop(socket, uuid, turn_ref) do
     %{ref: ref, impersonated?: impersonated?} = socket.assigns
     socket = assign(socket, turn_ref: nil, activity: nil)

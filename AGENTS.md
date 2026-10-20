@@ -79,7 +79,10 @@ and `Web.Markdown`).
   locks, so the previous turn's spending is in. A turn is never killed
   outright: "Stop" and the deadline ask it to stop between steps
   (`Turns.Monitor.check_stop/0`), and only after `turn_stop_grace_ms` is it
-  killed.
+  killed. A "Stop" for a turn whose task is not in this node's registry, while
+  the chat's lock is within its TTL, is broadcast on `agent:turn:<turn_ref>`
+  (`Monitor.broadcast_stop/1`, the ref only); the monitor subscribes to the
+  topic of each turn it runs. Ownership is checked in `Turns.stop/4`, before.
 - **Attachments:** session-bound like `Conversations` (`impersonated:` in the
   options); only the owner adds, reads, discards or gets the address of a
   file, an Owner/Admin of the site included. Bytes live in the hidden library

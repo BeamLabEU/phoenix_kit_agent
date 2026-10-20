@@ -35,6 +35,17 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   as stopped or past its deadline. A second request, or a deadline after a
   stop, changes nothing.
 
+  ## Stopping a turn of another node
+
+  A "Stop" that reaches a node where the turn does not run (its task is not in
+  this node's `PhoenixKitAgent.Turns.Registry`) is passed on over PubSub
+  (`broadcast_stop/1`): the topic `agent:turn:<turn_ref>` (`topic/1`) hears
+  `{:agent_stop_turn, turn_ref}` — the turn ref and nothing else. The monitor
+  listens to the topic of every turn it runs, from its start to its end, and
+  takes such a request as it takes a local "Stop" (`request_stop/2`); a request
+  for a turn ref it does not run is ignored. Who may stop the turn is checked
+  where the request is made (`PhoenixKitAgent.Turns.stop/4`).
+
   ## Nothing of a turn in the log
 
   A turn carries the user's text, the history, the system prompt and the
@@ -193,6 +204,24 @@ defmodule PhoenixKitAgent.Turns.Monitor do
     end
   end
 
+  @doc "The PubSub topic of the turn `turn_ref`: `agent:turn:<turn_ref>`."
+  @spec topic(String.t()) :: String.t()
+  def topic(turn_ref) when is_binary(turn_ref), do: "agent:turn:" <> turn_ref
+
+  @doc """
+  Asks the monitor of whichever node runs `turn_ref` to stop it (see "Stopping
+  a turn of another node"); the message is the turn ref only. Asynchronous: a
+  turn that no node runs is not told. `{:error, :not_running}` when PubSub
+  refuses the message.
+  """
+  @spec broadcast_stop(String.t()) :: :ok | {:error, :not_running}
+  def broadcast_stop(turn_ref) when is_binary(turn_ref) do
+    case PubSub.broadcast(topic(turn_ref), {:agent_stop_turn, turn_ref}) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :not_running}
+    end
+  end
+
   @doc """
   In a turn's task: ends it as `{:shutdown, reason}` if it was asked to stop,
   else `:ok`. The turn calls it between its steps.
@@ -216,6 +245,7 @@ defmodule PhoenixKitAgent.Turns.Monitor do
     case start_task(fn -> task(turn, callers, token, go_wait) end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
+        listen(turn.turn_ref, :subscribe)
 
         entry = %{
           turn: Map.take(turn, [:turn_ref, :user_uuid, :conversation_uuid]),
@@ -256,6 +286,14 @@ defmodule PhoenixKitAgent.Turns.Monitor do
     end
   end
 
+  # A "Stop" made on another node (`broadcast_stop/1`).
+  def handle_info({:agent_stop_turn, turn_ref}, turns) when is_binary(turn_ref) do
+    case Enum.find(turns, fn {_ref, entry} -> entry.turn.turn_ref == turn_ref end) do
+      {ref, _entry} -> {:noreply, ask_to_stop(turns, ref, :stopped)}
+      nil -> {:noreply, turns}
+    end
+  end
+
   # The grace period is over and the task is still there.
   def handle_info({:kill, ref}, turns) do
     case Map.fetch(turns, ref) do
@@ -275,6 +313,7 @@ defmodule PhoenixKitAgent.Turns.Monitor do
         if entry.timer, do: Process.cancel_timer(entry.timer)
         if entry.kill_timer, do: Process.cancel_timer(entry.kill_timer)
         turn = entry.turn
+        listen(turn.turn_ref, :unsubscribe)
         ending = ending(entry, reason)
 
         case start_task(fn -> finish(turn, ending) end) do
@@ -287,6 +326,18 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   end
 
   def handle_info(_other, turns), do: {:noreply, turns}
+
+  # A PubSub that is not there makes the turn unstoppable from another node,
+  # but must not take this process down, and every running turn with it.
+  defp listen(turn_ref, action) do
+    apply(PubSub, action, [topic(turn_ref)])
+  rescue
+    error ->
+      Logger.warning("[PhoenixKitAgent] turn topic #{action}: #{inspect(error.__struct__)}")
+  catch
+    kind, reason ->
+      Logger.warning("[PhoenixKitAgent] turn topic #{action}: #{kind} #{exit_class(reason)}")
+  end
 
   # The first request wins: a deadline after "Stop" does not make the turn a
   # deadline, and the grace period is not restarted.

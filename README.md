@@ -198,7 +198,11 @@ that period.
 "Stop" and the turn deadline ask the turn to stop between its steps, so a model
 call under way finishes and its cost reaches the journal; a turn still running
 after the grace period (`config :phoenix_kit_agent, turn_stop_grace_ms:`,
-default 30 000) is killed.
+default 30 000) is killed. With several nodes, a "Stop" made on a node the turn
+does not run on goes over PubSub (topic `agent:turn:<turn_ref>`, the message
+carries the turn ref only) to the node that runs it, which stops it the same
+way; who may stop is checked where "Stop" was pressed. A turn lost with its
+node shows "Stopping…" until its lock expires.
 
 ## Configuration
 

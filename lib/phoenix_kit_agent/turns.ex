@@ -141,6 +141,14 @@ defmodule PhoenixKitAgent.Turns do
   made. With `turn_ref`, only that turn is stopped — a newer one in the chat
   keeps running. `{:error, :not_running}` when no such turn runs there (or
   the monitor is restarting); someone else's chat is `{:error, :not_found}`.
+
+  Who may stop is checked here, with the session's scope as it is now; the
+  turn is the one the chat's lock names. When its task is not on this node
+  while the lock is younger than its TTL, the turn may run on another node:
+  the request goes out over PubSub (`PhoenixKitAgent.Turns.Monitor.broadcast_stop/1`,
+  the turn ref only) and `:ok` is returned — the node that runs the turn stops
+  it the same way, and the chat's topic hears its end. A lock past its TTL is
+  a turn no node runs: `{:error, :not_running}`.
   """
   @spec stop(Conversations.session_ref(), boolean(), term(), String.t() | nil) ::
           :ok | {:error, refusal()}
@@ -153,7 +161,10 @@ defmodule PhoenixKitAgent.Turns do
         [{pid, ^conversation_uuid}] ->
           Monitor.request_stop(pid, :stopped)
 
-        _not_here ->
+        [] ->
+          stop_elsewhere(conversation_uuid, running)
+
+        _another_chats ->
           {:error, :not_running}
       end
     end
@@ -457,6 +468,12 @@ defmodule PhoenixKitAgent.Turns do
   defp lock_ttl_s, do: Config.turn_deadline_s() + @lock_grace_s
 
   # ── stop ────────────────────────────────────────────────────────
+
+  defp stop_elsewhere(conversation_uuid, turn_ref) do
+    if Locks.fresh?(conversation_uuid, turn_ref, lock_ttl_s()),
+      do: Monitor.broadcast_stop(turn_ref),
+      else: {:error, :not_running}
+  end
 
   defp same_turn(_running, nil), do: :ok
   defp same_turn(running, running), do: :ok

@@ -16,6 +16,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
   alias PhoenixKit.HeaderWidget
   alias PhoenixKit.ModuleRegistry
+  alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Permissions
@@ -1012,20 +1013,49 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert messages(chat) == []
     end
 
-    test "Stop on a turn that runs nowhere says so, instead of leaving a dead end", ctx do
-      chat = conversation_fixture(ctx.user, %{title: "Gone"})
+    test "Stop on a turn within its time that runs not here asks the other nodes", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Elsewhere"})
+      elsewhere = UUIDv7.generate()
 
       Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
-        set: [busy_since: DateTime.utc_now(), busy_turn_ref: UUIDv7.generate()]
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: elsewhere]
       )
+
+      :ok = PubSub.subscribe("agent:turn:" <> elsewhere)
 
       view = dock(ctx)
       open_chat(view, chat)
       view |> element("#pk-agent-stop") |> render_click()
 
+      assert_receive {:agent_stop_turn, ^elsewhere}, 1_000
+      assert has_element?(view, "#pk-agent-waiting[data-activity=stopping]")
+      refute has_element?(view, "#pk-agent-dock-error")
+    end
+
+    test "Stop on a turn whose lock has expired since the chat was opened frees it", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Gone"})
+      gone = UUIDv7.generate()
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: gone]
+      )
+
+      :ok = PubSub.subscribe("agent:turn:" <> gone)
+
+      view = dock(ctx)
+      open_chat(view, chat)
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: at(Config.turn_deadline_s() + 120)]
+      )
+
+      view |> element("#pk-agent-stop") |> render_click()
+
+      refute_received {:agent_stop_turn, _}
       refute has_element?(view, "#pk-agent-stop")
       refute has_element?(view, "#pk-agent-waiting")
-      assert has_element?(view, "#pk-agent-dock-error", "no longer running")
+      assert has_element?(view, "#pk-agent-feed [data-role=notice]", "interrupted")
+      assert lock_of(chat) == {nil, nil}
     end
   end
 

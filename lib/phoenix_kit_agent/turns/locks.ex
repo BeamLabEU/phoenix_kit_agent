@@ -65,6 +65,23 @@ defmodule PhoenixKitAgent.Turns.Locks do
       )
   end
 
+  @doc """
+  Whether the chat's lock is `turn_ref`'s and younger than `ttl_s` (the
+  database's clock): the turn may still run, on this node or another.
+  """
+  @spec fresh?(String.t(), String.t(), pos_integer()) :: boolean()
+  def fresh?(conversation_uuid, turn_ref, ttl_s) do
+    stale = DateTime.add(db_now(), -ttl_s, :second)
+
+    repo().exists?(
+      from(c in Conversation,
+        where:
+          c.uuid == ^conversation_uuid and c.busy_turn_ref == ^turn_ref and
+            c.busy_since >= ^stale
+      )
+    )
+  end
+
   @doc "Releases both locks if `turn_ref` still holds them."
   @spec release(String.t(), String.t(), String.t()) :: :ok
   def release(user_uuid, conversation_uuid, turn_ref) do

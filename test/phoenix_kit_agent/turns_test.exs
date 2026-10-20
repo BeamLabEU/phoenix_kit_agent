@@ -16,6 +16,7 @@ defmodule PhoenixKitAgent.TurnsTest do
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.ModuleRegistry
+  alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Permissions
@@ -1361,6 +1362,137 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert Process.whereis(PhoenixKitAgent.Turns.Monitor) == monitor
       assert %Message{role: "notice", error: "interrupted"} = List.last(messages(ctx.chat))
       assert unlocked?(ctx)
+    end
+  end
+
+  # ── "Stop" for a turn on another node (spec §6.1) ───────────────────
+
+  describe "stop on another node" do
+    # The topic of a turn, as the spec names it: the stop request carries
+    # the turn ref and nothing else.
+    defp turn_topic(turn_ref), do: "agent:turn:" <> turn_ref
+
+    # In the turn's task (a model answer's `before`): this node's registry
+    # forgets the task, as if it ran on another node.
+    defp leave_registry do
+      registry = PhoenixKitAgent.Turns.Registry
+      for key <- Registry.keys(registry, self()), do: Registry.unregister(registry, key)
+      :ok
+    end
+
+    defp lock_chat(chat, turn_ref, busy_since) do
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: busy_since, busy_turn_ref: turn_ref]
+      )
+    end
+
+    defp pubsub_subscribers(topic),
+      do: for({pid, _} <- Registry.lookup(:phoenix_kit_internal_pubsub, topic), do: pid)
+
+    test "a turn this node does not run is asked over PubSub, and its node stops it", ctx do
+      answer_next(tool_answer([call("c1", "agenttest_list_items", %{})]), &leave_registry/0)
+      hang_next()
+
+      turn_ref = start!(ctx, "Hi")
+      assert_receive {:model_waiting, _pid}, 5_000
+      assert Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref) == []
+
+      # Another subscriber of the topic, as the monitor of another node is.
+      :ok = PubSub.subscribe(turn_topic(turn_ref))
+
+      assert :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref)
+      assert_receive {:agent_stop_turn, ^turn_ref}, 1_000
+      await_end(ctx.chat, turn_ref)
+
+      # Stopped, not interrupted: no answer kept, no notice, locks freed.
+      roles = Enum.map(messages(ctx.chat), & &1.role)
+      assert roles == ["user", "assistant", "tool"]
+      assert unlocked?(ctx)
+    end
+
+    test "the monitor listens to the topic of each turn it runs, until the turn ends", ctx do
+      hang_next()
+      turn_ref = start!(ctx, "Hi")
+      assert_receive {:model_waiting, _pid}, 5_000
+
+      monitor = Process.whereis(PhoenixKitAgent.Turns.Monitor)
+      assert monitor in pubsub_subscribers(turn_topic(turn_ref))
+
+      :ok =
+        PubSub.broadcast(turn_topic(turn_ref), {:agent_stop_turn, turn_ref})
+
+      await_end(ctx.chat, turn_ref)
+
+      assert [%Message{role: "user"}] = messages(ctx.chat)
+      assert unlocked?(ctx)
+      _ = :sys.get_state(monitor)
+      refute monitor in pubsub_subscribers(turn_topic(turn_ref))
+    end
+
+    test "a stop request for another turn ref stops nothing", ctx do
+      hang_next()
+      turn_ref = start!(ctx, "Hi")
+      assert_receive {:model_waiting, _pid}, 5_000
+
+      other = UUIDv7.generate()
+      :ok = PubSub.broadcast(turn_topic(turn_ref), {:agent_stop_turn, other})
+      :ok = PubSub.broadcast(turn_topic(other), {:agent_stop_turn, other})
+      :ok = PubSub.broadcast(turn_topic(turn_ref), {:agent_stop_turn, 42})
+      _ = :sys.get_state(PhoenixKitAgent.Turns.Monitor)
+
+      assert [{_pid, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
+      refute_received {:agent_turn_finished, _, ^turn_ref}
+
+      :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref)
+      await_end(ctx.chat, turn_ref)
+    end
+
+    test "a stop with a turn ref the chat's lock does not hold asks no node", ctx do
+      turn_ref = UUIDv7.generate()
+      lock_chat(ctx.chat, turn_ref, DateTime.utc_now())
+      other = UUIDv7.generate()
+      :ok = PubSub.subscribe(turn_topic(turn_ref))
+      :ok = PubSub.subscribe(turn_topic(other))
+
+      assert {:error, :not_running} = Turns.stop(ctx.ref, false, ctx.chat.uuid, other)
+      refute_received {:agent_stop_turn, _}
+    end
+
+    test "someone else's session or an impersonated one asks no node", ctx do
+      turn_ref = UUIDv7.generate()
+      lock_chat(ctx.chat, turn_ref, DateTime.utc_now())
+      :ok = PubSub.subscribe(turn_topic(turn_ref))
+
+      other = user_with(["agent", "dashboard"], "other")
+      {other_ref, _} = session_fixture(other)
+
+      assert {:error, :not_found} = Turns.stop(other_ref, false, ctx.chat.uuid, turn_ref)
+      assert {:error, :not_found} = Turns.stop(other_ref, false, ctx.chat.uuid)
+      assert {:error, :impersonated} = Turns.stop(ctx.ref, true, ctx.chat.uuid, turn_ref)
+
+      Auth.delete_user_session_token(ctx.token)
+      assert {:error, _revoked} = Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref)
+
+      refute_received {:agent_stop_turn, _}
+    end
+
+    test "a fresh lock with no task here: the request goes out with the ref only", ctx do
+      turn_ref = UUIDv7.generate()
+      lock_chat(ctx.chat, turn_ref, DateTime.utc_now())
+      :ok = PubSub.subscribe(turn_topic(turn_ref))
+
+      assert :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid)
+      assert_receive message, 1_000
+      assert message == {:agent_stop_turn, turn_ref}
+    end
+
+    test "a lock past its TTL is no turn anywhere: not running, nobody asked", ctx do
+      turn_ref = UUIDv7.generate()
+      lock_chat(ctx.chat, turn_ref, DateTime.add(DateTime.utc_now(), -(300 + 60 + 30), :second))
+      :ok = PubSub.subscribe(turn_topic(turn_ref))
+
+      assert {:error, :not_running} = Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref)
+      refute_received {:agent_stop_turn, _}
     end
   end
 
