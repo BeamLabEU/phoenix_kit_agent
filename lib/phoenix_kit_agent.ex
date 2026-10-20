@@ -37,6 +37,7 @@ defmodule PhoenixKitAgent do
 
   alias PhoenixKit.Dashboard.Tab
   alias PhoenixKit.Settings
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitAgent.Attachments.Work
   alias PhoenixKitAgent.Models.Cache
   alias PhoenixKitAgent.Turns.Runner
@@ -211,6 +212,46 @@ defmodule PhoenixKitAgent do
       Work.sweep_task()
     ]
   end
+
+  @impl PhoenixKit.Module
+  def css_sources, do: [:phoenix_kit_agent]
+
+  @doc """
+  The assistant in the admin header (spec §10): the chat panel
+  `PhoenixKitAgent.Web.Dock`, before the notifications bell, in the dock
+  column. Its session comes from `header_widget_session/1`.
+  """
+  @impl PhoenixKit.Module
+  def header_widgets do
+    [
+      {PhoenixKitAgent.Web.Dock, "pk-agent-dock-widget", &__MODULE__.header_widget_session/1,
+       [dock: true]}
+    ]
+  end
+
+  @doc """
+  The session of the chat panel, from the admin layout's assigns: the user's
+  uuid and locale and nothing else, or `nil` — no panel — when the module is
+  off, the session's scope does not hold `agent`, or the layout says the
+  account is borrowed (`:impersonating?`, a hint only: the panel checks the
+  session itself in its connected mount). Runs on every render of the layout,
+  so it reads only the scope and the cached module switch.
+  """
+  @spec header_widget_session(map()) :: %{String.t() => String.t() | nil} | nil
+  def header_widget_session(assigns) when is_map(assigns) do
+    with false <- assigns[:impersonating?] == true,
+         %Scope{} = scope <- assigns[:phoenix_kit_current_scope],
+         uuid when is_binary(uuid) <- Scope.user_uuid(scope),
+         true <- enabled?(),
+         true <- Scope.can?(scope, module_key()) do
+      %{"user_uuid" => uuid, "locale" => locale_of(assigns[:current_locale_base])}
+    else
+      _no_panel -> nil
+    end
+  end
+
+  defp locale_of(locale) when is_binary(locale), do: locale
+  defp locale_of(_none), do: nil
 
   @doc """
   The `phoenix_kit_ai` usage sink: a request row whose `attribution` names an

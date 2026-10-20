@@ -35,12 +35,15 @@ one notice per limit and period through `phoenix_kit_agent_limit_events`;
 notification type `agent_limit` from `notification_types/0`) and Admin → AI
 Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
 (`PhoenixKitAgent.Attachments` with `Attachments.Detect`, `Extract`, `Processor`,
-`Cmd`, `Bounds`, `Unzip`, `Jpeg`, `Work`). Not built yet: the chat panel (Dock).
+`Cmd`, `Bounds`, `Unzip`, `Jpeg`, `Work`) and the chat panel
+(`PhoenixKitAgent.Web.Dock`, the module's header widget, with
+`Web.Dock.Components`, `Web.Dock.Texts` and `Web.Markdown`).
 
 - **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins to the
   `timujinne` forks' `integration/andi-2026-10` branches (the session-actor API,
-  hidden Storage libraries and tool calling are not on Hex yet), and
-  `phoenix_live_view`.
+  hidden Storage libraries and tool calling are not on Hex yet),
+  `phoenix_live_view`, and `mdex` (already phoenix_kit's) for the markdown
+  of the chat panel.
 - **Module key** `"agent"`; settings prefix `agent_`; tables
   `phoenix_kit_agent_*` (marker `pk_agent_schema:<N>` on
   `phoenix_kit_agent_conversations`).
@@ -89,6 +92,22 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
   that bind a file name or its text use `log: false`. Tests that need poppler
   or ImageMagick carry `@tag :poppler` / `:imagemagick` and are excluded, with a
   message, where the program is missing.
+- **The chat panel** (`Web.Dock`): the widget's session carries only the
+  user's uuid and locale (`header_widget_session/1`); the session reference and
+  the impersonation flag are read by the panel itself in its **connected**
+  mount, never taken from the widget session, params or events, and the static
+  render shows nothing of the user. Every event calls `Conversations`, `Turns`,
+  `Attachments` or `UserConfig` with them — no Repo query of its own, no
+  shortcut through a uuid the browser sent. Model text is rendered only through
+  `Web.Markdown` (no `<img>`, no raw HTML, links with domain and
+  `rel="noopener noreferrer nofollow"`), a tool call only by its
+  `tool_summary`. A refusal is shown through `Web.Dock.Texts`, never as a code.
+  The LiveView runs with `log: false` (event parameters are the user's text);
+  an exception at a turn's start is caught and logged as its class only. The
+  path given to `Attachments.add/4` is LiveView's own upload file
+  (`consume_uploaded_entry/3` with `:postpone` until `add/4` is done). Browser
+  hooks are runtime colocated hooks (`runtime` attribute), since a dependency's
+  extracted hooks would not reach the host's bundle.
 - **Prompt input from a browser** (`page:`, `locale:` of `Turns.start/6`) is
   untrusted: `PhoenixKitAgent.Prompt` drops a value with a control character and
   cuts a long one.

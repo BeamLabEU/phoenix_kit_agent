@@ -211,8 +211,9 @@ defmodule PhoenixKitAgent.Conversations do
   end
 
   @doc false
-  # `get_conversation/3` without the messages, for `PhoenixKitAgent.Turns`:
-  # the same checks, and the chat row only.
+  # `get_conversation/3` without the messages, for `PhoenixKitAgent.Turns`
+  # and the chat panel (`PhoenixKitAgent.Web.Dock`): the same checks, and the
+  # chat row only.
   @spec owned_conversation(session_ref(), term(), keyword()) ::
           {:ok, Conversation.t()} | {:error, refusal()}
   def owned_conversation(session_ref, conversation_uuid, opts),

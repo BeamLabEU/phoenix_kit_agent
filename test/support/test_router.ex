@@ -28,4 +28,15 @@ defmodule PhoenixKitAgent.Test.Router do
       live("/agent/spending", SpendingLive, :index)
     end
   end
+
+  # A page that renders the chat panel the way core's admin layout does.
+  scope "/en/admin" do
+    pipe_through(:browser)
+
+    live_session :agent_dock_test,
+      layout: {PhoenixKitAgent.Test.Layouts, :app},
+      on_mount: {PhoenixKitAgent.Test.Hooks, :assign_scope} do
+      live("/dock-host", PhoenixKitAgent.Test.DockHostLive, :index)
+    end
+  end
 end

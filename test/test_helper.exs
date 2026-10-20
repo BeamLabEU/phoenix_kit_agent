@@ -30,6 +30,7 @@ support_dir = Path.expand("support", __DIR__)
   {PhoenixKitAgent.Test.SchemaMigration, "schema_migration.ex"},
   {PhoenixKitAgent.Test.Layouts, "test_layouts.ex"},
   {PhoenixKitAgent.Test.Hooks, "hooks.ex"},
+  {PhoenixKitAgent.Test.DockHostLive, "dock_host_live.ex"},
   {PhoenixKitAgent.Test.Router, "test_router.ex"},
   {PhoenixKitAgent.Test.Endpoint, "test_endpoint.ex"},
   {PhoenixKitAgent.Fixtures, "fixtures.ex"},
