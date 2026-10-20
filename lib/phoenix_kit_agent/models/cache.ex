@@ -37,7 +37,7 @@ defmodule PhoenixKitAgent.Models.Cache do
 
       _missing_or_stale ->
         value = fun.()
-        put(key, now + ttl_fun.(value), value)
+        put(key, now, now + ttl_fun.(value), value)
         value
     end
   end
@@ -62,8 +62,14 @@ defmodule PhoenixKitAgent.Models.Cache do
     end
   end
 
-  defp put(key, expires, value) do
-    if :ets.whereis(@table) != :undefined, do: :ets.insert(@table, {key, expires, value})
+  # The entries past their time go first: a key holds the endpoint's
+  # `updated_at`, so an edited endpoint would leave its old entry for ever.
+  defp put(key, now, expires, value) do
+    if :ets.whereis(@table) != :undefined do
+      :ets.select_delete(@table, [{{:_, :"$1", :_}, [{:"=<", :"$1", now}], [true]}])
+      :ets.insert(@table, {key, expires, value})
+    end
+
     :ok
   end
 end

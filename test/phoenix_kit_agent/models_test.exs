@@ -251,4 +251,19 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert Models.tools_support([]) == %{}
     end
   end
+
+  describe "the cache" do
+    alias PhoenixKitAgent.Models.Cache
+
+    test "an entry past its time is dropped when another one is kept" do
+      Cache.clear()
+      on_exit(&Cache.clear/0)
+
+      assert Cache.fetch({:old, 1}, fn _ -> 0 end, fn -> :old end) == :old
+      assert Cache.fetch({:new, 1}, fn _ -> 60_000 end, fn -> :new end) == :new
+
+      assert :ets.lookup(Cache, {:old, 1}) == []
+      assert [{{:new, 1}, _expires, :new}] = :ets.lookup(Cache, {:new, 1})
+    end
+  end
 end
