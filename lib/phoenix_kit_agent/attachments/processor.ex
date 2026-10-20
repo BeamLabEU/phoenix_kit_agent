@@ -27,12 +27,17 @@ defmodule PhoenixKitAgent.Attachments.Processor do
       which the history keeps. With no vision model a picture is refused by
       `PhoenixKitAgent.Attachments.add/4` before it is stored, and a scan
       (known to be one only here) `failed` as `no_vision_model`. The vision
-      call is paid, so it is made only for a user still within their limits
-      (`limit_reached` otherwise) — the money limits as they apply to the
-      **vision** endpoint (`PhoenixKitAgent.Limits.money_counted?/1`): one that
-      reports no cost is held by the turn limit only. The call carries the user
-      and `source: "agent"` — the spending limits count it — and its content is
-      never written to the AI journal.
+      call is paid, so right before it is made the AI module must be on
+      (`ai_disabled` otherwise), the session that added the file must still
+      be one that may use the assistant (`session_gone` or `forbidden`), and
+      the user must be within their limits (`limit_reached`) — the money
+      limits as they apply to the **vision** endpoint
+      (`PhoenixKitAgent.Limits.money_counted?/1`): one that reports no cost is
+      held by the turn limit only. One user's descriptions are made one at a
+      time (a `:global` lock per user, on every connected node), so each is
+      checked against a journal that holds what the one before cost. The call
+      carries the user and `source: "agent"` — the spending limits count it
+      — and its content is never written to the AI journal.
 
   ## Failing safely
 
@@ -40,7 +45,8 @@ defmodule PhoenixKitAgent.Attachments.Processor do
   to a heap size (a file that needs more is `too_large`), and turns every
   exception into a code; the codes are `unreadable`, `too_large`,
   `pdf_tools_missing`, `image_tools_missing`, `no_vision_model`,
-  `limit_reached`, `budget_exceeded`, `model_error`, `timeout`, `crashed`,
+  `ai_disabled`, `session_gone`, `forbidden`, `limit_reached`,
+  `budget_exceeded`, `model_error`, `timeout`, `crashed`,
   `unavailable` (no place within `queue_wait_ms`, see `Attachments.Slots`, or no
   scratch space).
 
@@ -78,12 +84,15 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   @doc """
   Starts the processing of the pending attachment `uuid` of the user
-  `user_uuid` and returns at once. The task waits for a place
+  `user_uuid`, added in the browser session `session_ref` (checked again
+  before a paid call), and returns at once. The task waits for a place
   (`PhoenixKitAgent.Attachments.Slots`) before it does any work.
   """
-  @spec start(String.t(), String.t()) :: :ok
-  def start(uuid, user_uuid) do
-    case Task.Supervisor.start_child(@task_supervisor, fn -> supervise(uuid, user_uuid) end) do
+  @spec start(String.t(), String.t(), Conversations.session_ref()) :: :ok
+  def start(uuid, user_uuid, session_ref) do
+    job = fn -> supervise(uuid, user_uuid, session_ref) end
+
+    case Task.Supervisor.start_child(@task_supervisor, job) do
       {:ok, _pid} -> :ok
       _not_started -> finish(uuid, {:error, :unavailable})
     end
@@ -93,12 +102,12 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   # The scratch directory is made, and removed, here and not in the worker:
   # a worker that is killed (the deadline, the heap) cannot clean up after itself.
-  defp supervise(uuid, user_uuid) do
+  defp supervise(uuid, user_uuid, session_ref) do
     with :ok <- Slots.acquire(user_uuid),
          {:ok, dir} <- Work.create() do
       outcome =
         try do
-          run_worker(uuid, dir)
+          run_worker(uuid, dir, session_ref)
         after
           Work.remove(dir)
         end
@@ -109,8 +118,9 @@ defmodule PhoenixKitAgent.Attachments.Processor do
     end
   end
 
-  defp run_worker(uuid, dir) do
-    worker = Task.Supervisor.async_nolink(@worker_supervisor, fn -> work(uuid, dir) end)
+  defp run_worker(uuid, dir, session_ref) do
+    worker =
+      Task.Supervisor.async_nolink(@worker_supervisor, fn -> work(uuid, dir, session_ref) end)
 
     case Task.yield(worker, Bounds.get(:process_deadline_ms)) ||
            Task.shutdown(worker, :brutal_kill) do
@@ -128,7 +138,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   # ── the worker ──────────────────────────────────────────────────────
 
-  defp work(uuid, dir) do
+  defp work(uuid, dir, session_ref) do
     Process.flag(:max_heap_size, %{
       size: Bounds.get(:worker_heap_words),
       kill: true,
@@ -141,7 +151,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
          when is_binary(file_uuid) <-
            RepoHelper.repo().get(Attachment, uuid),
          {:ok, path} <- Work.fetch(file_uuid, dir) do
-      process(attachment, path)
+      process(attachment, path, session_ref)
     else
       _gone_or_not_stored -> {:error, :unreadable}
     end
@@ -151,23 +161,23 @@ defmodule PhoenixKitAgent.Attachments.Processor do
     _kind, _reason -> {:error, :crashed}
   end
 
-  defp process(%{kind: "text"}, path), do: path |> Extract.text() |> fields()
+  defp process(%{kind: "text"}, path, _session_ref), do: path |> Extract.text() |> fields()
 
-  defp process(%{kind: "sheet", content_type: "text/csv"}, path),
+  defp process(%{kind: "sheet", content_type: "text/csv"}, path, _session_ref),
     do: path |> Extract.csv() |> fields()
 
-  defp process(%{kind: "sheet"}, path), do: path |> Extract.xlsx() |> fields()
+  defp process(%{kind: "sheet"}, path, _session_ref), do: path |> Extract.xlsx() |> fields()
 
-  defp process(%{kind: "pdf"} = attachment, path) do
+  defp process(%{kind: "pdf"} = attachment, path, session_ref) do
     case Extract.pdf(path) do
-      {:ok, {:scan, pages}} -> scan(attachment, path, pages)
+      {:ok, {:scan, pages}} -> scan(attachment, path, pages, session_ref)
       other -> fields(other)
     end
   end
 
-  defp process(%{kind: "image"} = attachment, path) do
+  defp process(%{kind: "image"} = attachment, path, session_ref) do
     with {:ok, jpeg} <- Extract.picture(path),
-         settings = UserConfig.effective(attachment.user_uuid),
+         settings = effective(attachment, session_ref),
          {:ok, mode} <- picture_mode(settings) do
       case mode do
         :pixels ->
@@ -179,8 +189,12 @@ defmodule PhoenixKitAgent.Attachments.Processor do
     end
   end
 
-  defp scan(attachment, path, pages) do
-    settings = UserConfig.effective(attachment.user_uuid)
+  # The user's settings, and the session the file was added in.
+  defp effective(attachment, session_ref),
+    do: attachment.user_uuid |> UserConfig.effective() |> Map.put(:session_ref, session_ref)
+
+  defp scan(attachment, path, pages, session_ref) do
+    settings = effective(attachment, session_ref)
 
     with {:ok, mode} <- picture_mode(settings),
          {:ok, pngs, ^pages} <- Extract.pdf_pages(path) do
@@ -233,8 +247,8 @@ defmodule PhoenixKitAgent.Attachments.Processor do
   end
 
   defp describe(settings, vision, inputs, prompt, fields, notes) do
-    with :ok <- within_limits(settings, vision),
-         {:ok, text} <- ask_vision(settings, vision, inputs, prompt) do
+    with {:ok, text} <-
+           one_at_a_time(settings.user_uuid, fn -> paid(settings, vision, inputs, prompt) end) do
       {text, clipped?} = Extract.clip(text)
 
       notes =
@@ -244,6 +258,31 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
       {:ok,
        Map.merge(fields, %{extracted_text: Enum.join([text | notes]), truncated: notes != []})}
+    end
+  end
+
+  # The checks right before the paid call (see the moduledoc), then the call.
+  defp paid(settings, vision, inputs, prompt) do
+    with :ok <- ai_enabled(),
+         :ok <- session_alive(settings),
+         :ok <- within_limits(settings, vision),
+         do: ask_vision(settings, vision, inputs, prompt)
+  end
+
+  # One description of a user at a time, on every connected node: the lock is
+  # held by this worker, and freed when it returns or is killed.
+  defp one_at_a_time(user_uuid, fun),
+    do: :global.trans({{__MODULE__, :describe, user_uuid}, self()}, fun)
+
+  defp ai_enabled, do: if(PhoenixKitAI.enabled?(), do: :ok, else: {:error, :ai_disabled})
+
+  # The session that added the file may still use the assistant, as its own
+  # user (it was not an impersonated one: `Attachments.add/4` refuses those).
+  defp session_alive(%{session_ref: session_ref, user_uuid: user_uuid}) do
+    case Conversations.authorize_session(session_ref, impersonated: false) do
+      {:ok, ^user_uuid} -> :ok
+      {:error, reason} when reason in [:forbidden, :not_found] -> {:error, :forbidden}
+      _ended -> {:error, :session_gone}
     end
   end
 

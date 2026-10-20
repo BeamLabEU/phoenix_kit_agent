@@ -153,7 +153,7 @@ defmodule PhoenixKitAgent.Attachments do
          :ok <- settle_stale(conversation.user_uuid),
          {:ok, attachment} <- reserve(conversation, source, detected, settings),
          {:ok, attachment} <- store(attachment, source, detected) do
-      :ok = Processor.start(attachment.uuid, attachment.user_uuid)
+      :ok = Processor.start(attachment.uuid, attachment.user_uuid, session_ref)
       {:ok, attachment}
     end
   end

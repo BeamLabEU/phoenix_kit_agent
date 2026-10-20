@@ -147,6 +147,24 @@ defmodule PhoenixKitAgent.AttachmentsTest do
     end)
   end
 
+  # A process that holds one of the user's places for work on files
+  # (`Attachments.Slots`) until it is sent `:release`.
+  defp hold_place(user) do
+    test = self()
+
+    holder =
+      spawn_link(fn ->
+        send(test, {:held, Slots.acquire(user.uuid)})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+
+    assert_receive {:held, :ok}
+    holder
+  end
+
   defp storage_file(attachment), do: Repo.get!(Storage.File, attachment.file_uuid)
 
   # ── what is accepted ────────────────────────────────────────────────
@@ -615,6 +633,93 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       refute_received {:model_request, _}
     end
 
+    test "with the AI module switched off a picture is not described, and nothing is paid",
+         ctx do
+      serve_ai(main_sees: false)
+      vision_endpoint!()
+      {:ok, _} = PhoenixKitAI.disable_system()
+
+      attachment = add_done!(ctx, Files.png(40, 30), "a.png")
+
+      assert attachment.status == "failed"
+      assert attachment.error == "ai_disabled"
+      refute_received {:model_request, _}
+    end
+
+    test "a session that ends while the picture waits for its turn: no description, no call",
+         ctx do
+      serve_ai(main_sees: false)
+      vision_endpoint!()
+      with_limits(jobs_per_user: 1)
+      holder = hold_place(ctx.user)
+
+      {:ok, attachment} = add(ctx, Files.png(40, 30), "a.png")
+      Auth.delete_user_session_token(ctx.token)
+      send(holder, :release)
+
+      attachment = await_done(attachment)
+      assert attachment.status == "failed"
+      assert attachment.error == "session_gone"
+      refute_received {:model_request, _}
+    end
+
+    test "one user's pictures are described one at a time, each after the cost of the last",
+         ctx do
+      test = self()
+      vision_endpoint!()
+      # The first description costs $0.001, twice the user's daily limit: the
+      # second, checked only once the first is in the journal, is not made.
+      limits!(ctx.user, %{daily_cost_limit_micro_usd: 500})
+
+      Req.Test.stub(@stub, fn conn ->
+        case conn.request_path do
+          "/api/v1/models" ->
+            Req.Test.json(conn, %{
+              "data" => [
+                %{"id" => "a/chat", "architecture" => %{"modality" => "text->text"}},
+                %{"id" => "a/eyes", "architecture" => %{"modality" => "text+image->text"}}
+              ]
+            })
+
+          _ ->
+            send(test, {:describing, self()})
+
+            receive do
+              :go -> :ok
+            after
+              5_000 -> :ok
+            end
+
+            Req.Test.json(conn, %{
+              "model" => "a/eyes",
+              "choices" => [%{"message" => %{"role" => "assistant", "content" => "Described."}}],
+              "usage" => %{
+                "prompt_tokens" => 30,
+                "completion_tokens" => 8,
+                "total_tokens" => 38,
+                "cost" => 0.001
+              }
+            })
+        end
+      end)
+
+      {:ok, first} = add(ctx, Files.png(40, 30), "a.png")
+      {:ok, second} = add(ctx, Files.png(41, 30), "b.png")
+
+      assert_receive {:describing, describing}, 5_000
+      refute_receive {:describing, _}, 500
+      send(describing, :go)
+
+      outcomes =
+        [first, second]
+        |> Enum.map(&await_done/1)
+        |> Enum.map(&{&1.status, &1.error})
+        |> Enum.sort()
+
+      assert outcomes == [{"failed", "limit_reached"}, {"ready", nil}]
+      refute_received {:describing, _}
+    end
+
     test "a failed description is a code, not the provider's text", ctx do
       serve_ai(main_sees: false)
       vision_endpoint!()
@@ -685,7 +790,9 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
       # A task for each row that comes too late: one settled as ready, one as
       # failed by `settle_stale`.
-      for row <- [settled, timed_out], do: :ok = Processor.start(row.uuid, row.user_uuid)
+      for row <- [settled, timed_out],
+          do: :ok = Processor.start(row.uuid, row.user_uuid, ctx.ref)
+
       wait_for_children_to_end()
 
       assert %{status: "ready", error: nil, extracted_text: "Sofa 3 pcs"} =

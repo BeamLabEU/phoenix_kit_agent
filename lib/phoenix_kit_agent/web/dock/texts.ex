@@ -107,6 +107,15 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   def attachment_error("no_vision_model"),
     do: gettext("No model that sees images is set up to read it.")
 
+  def attachment_error("ai_disabled"),
+    do: gettext("The AI module is switched off, so it was not read.")
+
+  def attachment_error("session_gone"),
+    do: gettext("Your session ended before it was read. Sign in and add it again.")
+
+  def attachment_error("forbidden"),
+    do: gettext("You may not use the assistant now, so it was not read.")
+
   def attachment_error("limit_reached"),
     do: gettext("Your assistant limit is reached, so it was not read.")
 
