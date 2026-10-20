@@ -52,7 +52,7 @@ defmodule PhoenixKitAgent.Schemas.Conversation do
   def changeset(conversation, attrs) do
     conversation
     |> cast(attrs, [:title, :status, :metadata])
-    |> validate_required([:status])
+    |> validate_required([:status, :metadata])
     |> validate_inclusion(:status, @statuses)
     |> validate_length(:title, max: @title_max)
     |> foreign_key_constraint(:user_uuid,

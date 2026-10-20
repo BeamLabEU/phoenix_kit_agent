@@ -57,6 +57,10 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     end
   end
 
+  # A crafted event without the form's fields.
+  def handle_event(event, _params, socket) when event in ["validate", "save"],
+    do: {:noreply, socket}
+
   defp save(socket, params) do
     case Config.save_defaults(params, actor_uuid: user_uuid(socket), source: "settings") do
       {:ok, _keys} ->
@@ -70,6 +74,12 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
          socket
          |> assign_form(changeset)
          |> put_flash(:error, gettext("Nothing was saved: check the highlighted fields."))}
+
+      {:error, :not_saved} ->
+        {:noreply,
+         socket
+         |> assign_form(Config.defaults_changeset(params))
+         |> put_flash(:error, gettext("The defaults could not be saved. Nothing was changed."))}
     end
   end
 

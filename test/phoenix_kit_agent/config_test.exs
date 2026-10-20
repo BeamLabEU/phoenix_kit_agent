@@ -66,10 +66,13 @@ defmodule PhoenixKitAgent.ConfigTest do
       assert Config.capture_ai_content?()
     end
 
-    test "watchers are a newline-separated list of uuids" do
+    test "watchers are a JSON list of uuids; a broken entry or a repeat is dropped" do
       a = Ecto.UUID.generate()
       b = Ecto.UUID.generate()
-      Settings.update_setting("agent_limit_watchers", "#{a}\n\n#{b}\nnot-a-uuid\n#{a}")
+
+      Settings.update_json_setting("agent_limit_watchers", %{
+        "uuids" => [a, "not-a-uuid", b, a, 42]
+      })
 
       assert Config.limit_watchers() == [a, b]
     end
@@ -77,13 +80,40 @@ defmodule PhoenixKitAgent.ConfigTest do
     test "remove_limit_watcher/1 takes one uuid out and leaves the rest" do
       a = Ecto.UUID.generate()
       b = Ecto.UUID.generate()
-      Settings.update_setting("agent_limit_watchers", "#{a}\n#{b}")
+      {:ok, _} = Config.put_limit_watchers([a, b], [])
 
       assert {:ok, _} = Config.remove_limit_watcher(a)
       assert Config.limit_watchers() == [b]
 
       assert {:ok, :unchanged} = Config.remove_limit_watcher(Ecto.UUID.generate())
       assert Config.limit_watchers() == [b]
+    end
+  end
+
+  describe "the long settings: the module prompt and the watchers" do
+    # Core keeps a string setting to 1000 characters; these are stored as
+    # JSON, which has no such cap.
+    test "a module prompt longer than 1000 characters is saved and read back" do
+      user = user_fixture()
+      prompt = String.duplicate("Answer in Estonian. ", 200)
+
+      assert {:ok, _} = Config.put_system_prompt(prompt, actor_uuid: user.uuid)
+      assert Config.system_prompt() == prompt
+
+      assert {:ok, _} = Config.put_system_prompt("   ", [])
+      assert Config.system_prompt() == nil
+    end
+
+    test "more watchers than a string setting holds are saved and read back" do
+      uuids = for _ <- 1..60, do: Ecto.UUID.generate()
+
+      assert {:ok, _} = Config.put_limit_watchers(uuids ++ [hd(uuids)], [])
+      assert Config.limit_watchers() == uuids
+    end
+
+    test "a watcher that is not a uuid is refused, nothing is saved" do
+      assert {:error, :invalid_uuid} = Config.put_limit_watchers([Ecto.UUID.generate(), "x"], [])
+      assert Config.limit_watchers() == []
     end
   end
 
@@ -137,6 +167,34 @@ defmodule PhoenixKitAgent.ConfigTest do
 
       assert {:ok, ["agent_daily_turn_limit"]} = Config.save_defaults(params, [])
       assert Settings.get_setting("agent_daily_cost_limit_micro_usd", nil) in [nil, ""]
+    end
+
+    test "a write that fails half-way leaves every setting as it was" do
+      # The keys are written in key order; the second one is refused by the
+      # database after the first was written.
+      Repo.query!("""
+      CREATE FUNCTION pg_temp.agent_refuse_rounds() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.key = 'agent_max_tool_rounds' THEN RAISE EXCEPTION 'refused'; END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER agent_refuse_rounds BEFORE INSERT OR UPDATE ON phoenix_kit_settings
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.agent_refuse_rounds()
+      """)
+
+      params = %{
+        Config.defaults_form_values()
+        | "daily_turn_limit" => "150",
+          "max_tool_rounds" => "6"
+      }
+
+      assert {:error, :not_saved} = Config.save_defaults(params, [])
+      assert Settings.get_setting("agent_daily_turn_limit", nil) in [nil, ""]
+      assert Config.limit_defaults().daily_turn_limit == 200
+      assert Config.max_tool_rounds() == 8
     end
 
     test "a sub-micro-dollar fraction is refused, not rounded" do

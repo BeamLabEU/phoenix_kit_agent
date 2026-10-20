@@ -67,10 +67,11 @@ defmodule PhoenixKitAgent.Schemas.Attachment do
       :truncated,
       :error
     ])
-    |> validate_required([:filename, :content_type, :size_bytes, :kind, :status])
+    |> validate_required([:filename, :content_type, :size_bytes, :kind, :status, :truncated])
     |> validate_inclusion(:kind, @kinds)
     |> validate_inclusion(:status, @statuses)
     |> validate_number(:size_bytes, greater_than_or_equal_to: 0)
+    |> validate_number(:pages, less_than_or_equal_to: 2_147_483_647)
     |> foreign_key_constraint(:conversation_uuid,
       name: :phoenix_kit_agent_attachments_conversation_uuid_fkey
     )

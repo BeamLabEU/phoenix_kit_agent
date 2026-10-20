@@ -14,7 +14,6 @@ defmodule PhoenixKitAgent.UserDeletionTest do
 
   alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Modules.Storage.{Bucket, Folder, Libraries}
-  alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
   alias PhoenixKitAgent.{Config, Library}
 
@@ -131,7 +130,7 @@ defmodule PhoenixKitAgent.UserDeletionTest do
     attach(user, conversation, nil)
 
     %UserSettings{user_uuid: user.uuid, updated_by_uuid: owner.uuid}
-    |> UserSettings.changeset(%{endpoint_uuid: endpoint.uuid, daily_turn_limit: 10})
+    |> UserSettings.admin_changeset(%{endpoint_uuid: endpoint.uuid, daily_turn_limit: 10})
     |> Repo.insert!()
 
     %LimitEvent{user_uuid: user.uuid}
@@ -159,7 +158,7 @@ defmodule PhoenixKitAgent.UserDeletionTest do
     other = user_fixture("other")
 
     %UserSettings{user_uuid: other.uuid, updated_by_uuid: admin.uuid}
-    |> UserSettings.changeset(%{daily_turn_limit: 10})
+    |> UserSettings.admin_changeset(%{daily_turn_limit: 10})
     |> Repo.insert!()
 
     delete_user!(admin, owner)
@@ -224,6 +223,45 @@ defmodule PhoenixKitAgent.UserDeletionTest do
     assert %Storage.File{} = Storage.get_file(shared.uuid)
   end
 
+  test "a module file another user's attachment uses is kept, their attachment linked", %{
+    user: user,
+    owner: owner,
+    library: library,
+    n: n
+  } do
+    shared = store(user, library.uuid, "two users #{n}")
+    attach(user, conversation_fixture(user), shared)
+
+    other = user_fixture("other")
+    theirs = attach(other, conversation_fixture(other), shared)
+
+    delete_user!(user, owner)
+
+    assert %Storage.File{} = Storage.get_file(shared.uuid)
+    assert Repo.get!(Attachment, theirs.uuid).file_uuid == shared.uuid
+  end
+
+  test "the module's tables not found while its library exists: a warning, nothing of the user",
+       %{user: user, library: library, n: n} do
+    file = store(user, library.uuid, "unseen #{n}")
+    attach(user, conversation_fixture(user), file)
+
+    # The version marker is gone, as on an install the gate reads in the
+    # wrong schema: the cleanup is skipped, and that must show.
+    Repo.query!("COMMENT ON TABLE phoenix_kit_agent_conversations IS NULL")
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok = PhoenixKitAgent.before_user_delete(user.uuid)
+      end)
+
+    assert log =~ "[PhoenixKitAgent]"
+    assert log =~ "library"
+    refute log =~ user.uuid
+    refute log =~ user.email
+    assert %Storage.File{} = Storage.get_file(file.uuid)
+  end
+
   test "an attachment that is a Media file is not deleted", %{user: user, owner: owner, n: n} do
     media_file = store(user, nil, "media #{n}")
     attach(user, conversation_fixture(user), media_file)
@@ -264,10 +302,10 @@ defmodule PhoenixKitAgent.UserDeletionTest do
     keep = user_fixture("keep")
 
     %UserSettings{user_uuid: other.uuid}
-    |> UserSettings.changeset(%{notify_user_uuids: [user.uuid, keep.uuid]})
+    |> UserSettings.admin_changeset(%{notify_user_uuids: [user.uuid, keep.uuid]})
     |> Repo.insert!()
 
-    Settings.update_setting("agent_limit_watchers", Enum.join([keep.uuid, user.uuid], "\n"))
+    {:ok, _} = Config.put_limit_watchers([keep.uuid, user.uuid], [])
 
     delete_user!(user, owner)
 
@@ -279,7 +317,7 @@ defmodule PhoenixKitAgent.UserDeletionTest do
     endpoint = endpoint_fixture()
 
     %UserSettings{user_uuid: user.uuid}
-    |> UserSettings.changeset(%{endpoint_uuid: endpoint.uuid})
+    |> UserSettings.admin_changeset(%{endpoint_uuid: endpoint.uuid})
     |> Repo.insert!()
 
     request = ai_request_fixture(user, endpoint)

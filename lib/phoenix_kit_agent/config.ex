@@ -9,13 +9,13 @@ defmodule PhoenixKitAgent.Config do
   | `agent_enabled` | `false` (see `PhoenixKitAgent.enabled?/0`) |
   | `agent_default_endpoint_uuid` | none — the AI endpoint the assistant uses |
   | `agent_vision_endpoint_uuid` | none — describes images for a model without image input |
-  | `agent_system_prompt` | none — the module's system prompt |
+  | `agent_system_prompt` | none — the module's system prompt (JSON `{"text": …}`) |
   | `agent_daily_cost_limit_micro_usd` | `1_000_000` ($1) |
   | `agent_monthly_cost_limit_micro_usd` | `10_000_000` ($10) |
   | `agent_daily_turn_limit` | `200` |
   | `agent_max_attachment_mb` | `20` |
   | `agent_max_attachments_per_message` | `5` |
-  | `agent_limit_watchers` | none (newline-separated user uuids; none = every Owner) |
+  | `agent_limit_watchers` | none — JSON `{"uuids": […]}` of user uuids; none = every Owner |
   | `agent_max_tool_rounds` | `8` |
   | `agent_turn_deadline_s` | `300` |
   | `agent_history_chars` | `24_000` |
@@ -27,6 +27,10 @@ defmodule PhoenixKitAgent.Config do
   number, or is outside its range (below), reads as the default. A limit of `0`
   is a real limit (nothing allowed); a technical value must be positive.
 
+  Core keeps a string setting to 1000 characters, so the two settings that can
+  be longer — the module prompt and the watchers — are JSON settings
+  (`value_json`), written by `put_system_prompt/2` and `put_limit_watchers/2`.
+
   `agent_capture_ai_content` is on only when it reads exactly `"true"`: then the
   bodies of the assistant's model calls are written to the AI request journal,
   where every holder of the `ai` permission reads them. Only an Owner may switch
@@ -35,7 +39,9 @@ defmodule PhoenixKitAgent.Config do
 
   import Ecto.Changeset
 
+  alias PhoenixKit.RepoHelper
   alias PhoenixKit.Settings
+  alias PhoenixKit.Settings.History
   alias PhoenixKit.Utils.Number
 
   @module "agent"
@@ -65,6 +71,7 @@ defmodule PhoenixKitAgent.Config do
   }
 
   @watchers_key "agent_limit_watchers"
+  @prompt_key "agent_system_prompt"
 
   # ── Readers ───────────────────────────────────────────────────────────
 
@@ -99,9 +106,12 @@ defmodule PhoenixKitAgent.Config do
   @doc "The module's system prompt, or `nil`."
   @spec system_prompt() :: String.t() | nil
   def system_prompt do
-    case string_setting("agent_system_prompt") do
-      nil -> nil
-      prompt -> if String.trim(prompt) == "", do: nil, else: prompt
+    case json_setting(@prompt_key) do
+      %{"text" => prompt} when is_binary(prompt) ->
+        if String.trim(prompt) == "", do: nil, else: prompt
+
+      _none ->
+        nil
     end
   end
 
@@ -110,11 +120,7 @@ defmodule PhoenixKitAgent.Config do
   every Owner; who those are is decided where the notice is sent.
   """
   @spec limit_watchers() :: [String.t()]
-  def limit_watchers do
-    @watchers_key
-    |> string_setting()
-    |> parse_uuid_list()
-  end
+  def limit_watchers, do: @watchers_key |> json_setting() |> watcher_uuids()
 
   @doc "Whether the bodies of the assistant's model calls go to the AI journal."
   @spec capture_ai_content?() :: boolean()
@@ -125,19 +131,70 @@ defmodule PhoenixKitAgent.Config do
   # ── Writers ───────────────────────────────────────────────────────────
 
   @doc """
+  Sets the module's system prompt (`agent_system_prompt`); a blank one means
+  none. `opts` go to `PhoenixKit.Settings` (`actor_uuid:`, `source:`). The
+  caller checks `agent.manage`.
+  """
+  @spec put_system_prompt(String.t() | nil, keyword()) ::
+          {:ok, term()} | {:error, Ecto.Changeset.t()}
+  def put_system_prompt(prompt, opts) when is_binary(prompt) or is_nil(prompt) do
+    Settings.update_json_setting_with_module(
+      @prompt_key,
+      %{"text" => prompt || ""},
+      @module,
+      opts
+    )
+  end
+
+  @doc """
+  Sets who is told when someone hits a limit (`agent_limit_watchers`): user
+  uuids, repeats dropped; an empty list means every Owner. Anything that is
+  not a uuid is `{:error, :invalid_uuid}` and nothing is written. The caller
+  checks `agent.manage`.
+  """
+  @spec put_limit_watchers([String.t()], keyword()) ::
+          {:ok, term()} | {:error, :invalid_uuid | Ecto.Changeset.t()}
+  def put_limit_watchers(uuids, opts) when is_list(uuids) do
+    cast = Enum.map(uuids, &Ecto.UUID.cast/1)
+
+    if Enum.all?(cast, &match?({:ok, _}, &1)) do
+      list = cast |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+      Settings.update_json_setting_with_module(@watchers_key, %{"uuids" => list}, @module, opts)
+    else
+      {:error, :invalid_uuid}
+    end
+  end
+
+  @doc """
   Takes `user_uuid` out of `agent_limit_watchers`, under the setting's row lock
   (a concurrent change of the list is not lost). `{:ok, :unchanged}` when it was
   not in the list.
   """
   @spec remove_limit_watcher(String.t()) :: {:ok, term()} | {:error, Ecto.Changeset.t()}
   def remove_limit_watcher(user_uuid) when is_binary(user_uuid) do
-    Settings.modify_setting_with_module(@watchers_key, @module, fn stored ->
-      uuids = parse_uuid_list(stored)
+    result =
+      RepoHelper.repo().transaction(fn ->
+        stored = History.lock_current(@watchers_key)
+        uuids = watcher_uuids(stored && stored.value_json)
 
-      if user_uuid in uuids,
-        do: uuids |> List.delete(user_uuid) |> Enum.join("\n"),
-        else: :unchanged
-    end)
+        if user_uuid in uuids do
+          case Settings.update_json_setting_with_module(
+                 @watchers_key,
+                 %{"uuids" => List.delete(uuids, user_uuid)},
+                 @module
+               ) do
+            {:ok, setting} -> setting
+            {:error, changeset} -> RepoHelper.repo().rollback(changeset)
+          end
+        else
+          :unchanged
+        end
+      end)
+
+    # The write dropped the cached value before this transaction committed; a
+    # reader in between could have cached the old list again.
+    PhoenixKit.Cache.invalidate_now(:settings, [@watchers_key])
+    result
   end
 
   # ── The defaults form (Settings → AI Agent) ──────────────────────────
@@ -187,10 +244,14 @@ defmodule PhoenixKitAgent.Config do
   Saves the defaults form: dollars become micro-dollars; every value is checked
   against its range and nothing is written unless all are valid. Only values
   that differ from what is in effect are written, so an untouched built-in
-  default stays unstored (and follows a later change of the default). `opts` go to `PhoenixKit.Settings` (`actor_uuid:`,
+  default stays unstored (and follows a later change of the default). They are
+  written in one transaction (`PhoenixKit.Settings.update_settings_batch/2`):
+  a write the database refuses leaves every setting as it was and is
+  `{:error, :not_saved}`. `opts` go to `PhoenixKit.Settings` (`actor_uuid:`,
   `source:`) so the change is in the settings history with who made it.
   """
-  @spec save_defaults(map(), keyword()) :: {:ok, [String.t()]} | {:error, Ecto.Changeset.t()}
+  @spec save_defaults(map(), keyword()) ::
+          {:ok, [String.t()]} | {:error, Ecto.Changeset.t() | :not_saved}
   def save_defaults(params, opts) do
     changeset = defaults_changeset(params)
 
@@ -198,15 +259,21 @@ defmodule PhoenixKitAgent.Config do
       changeset
       |> to_settings()
       |> Enum.reject(fn {key, value} -> effective_value(key) == value end)
-      |> Enum.reduce_while({:ok, []}, fn {key, value}, {:ok, written} ->
-        case Settings.update_setting_with_module(key, value, @module, opts) do
-          {:ok, _} -> {:cont, {:ok, [key | written]}}
-          {:error, _} = error -> {:halt, error}
-        end
-      end)
+      |> write_all(opts)
     else
       {:error, changeset}
     end
+  end
+
+  defp write_all([], _opts), do: {:ok, []}
+
+  defp write_all(settings, opts) do
+    case Settings.update_settings_batch(Map.new(settings), opts) do
+      {:ok, _written} -> {:ok, Enum.map(settings, &elem(&1, 0))}
+      {:error, _step, _value, _changes} -> {:error, :not_saved}
+    end
+  rescue
+    _db_error in [Postgrex.Error, DBConnection.ConnectionError] -> {:error, :not_saved}
   end
 
   defp form_integer_specs do
@@ -288,6 +355,27 @@ defmodule PhoenixKitAgent.Config do
     :exit, _ -> nil
   end
 
+  defp json_setting(key) do
+    Settings.get_json_setting_cached(key, nil)
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  defp watcher_uuids(%{"uuids" => uuids}) when is_list(uuids) do
+    uuids
+    |> Enum.flat_map(fn uuid ->
+      case Ecto.UUID.cast(uuid) do
+        {:ok, uuid} -> [uuid]
+        :error -> []
+      end
+    end)
+    |> Enum.uniq()
+  end
+
+  defp watcher_uuids(_none), do: []
+
   defp uuid_setting(key) do
     with value when is_binary(value) <- string_setting(key),
          {:ok, uuid} <- Ecto.UUID.cast(String.trim(value)) do
@@ -295,20 +383,6 @@ defmodule PhoenixKitAgent.Config do
     else
       _ -> nil
     end
-  end
-
-  defp parse_uuid_list(nil), do: []
-
-  defp parse_uuid_list(value) when is_binary(value) do
-    value
-    |> String.split(["\r\n", "\n"])
-    |> Enum.flat_map(fn line ->
-      case Ecto.UUID.cast(String.trim(line)) do
-        {:ok, uuid} -> [uuid]
-        :error -> []
-      end
-    end)
-    |> Enum.uniq()
   end
 
   defp whole_number(value) when is_binary(value) do

@@ -8,9 +8,17 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
   `notify_user_uuids` are extra people told when this user hits a limit (the
   uuid of a deleted user is removed from every row, see
   `PhoenixKitAgent.UserDeletion`). `busy_since` / `busy_turn_ref` are the
-  "one turn in flight per user" lock and `updated_by_uuid` the last admin who
-  changed the row: both are set by the caller, never cast. Money is in
-  micro-dollars ($1 = 1_000_000).
+  "one turn in flight per user" lock (`PhoenixKitAgent.Turns.Locks`, which
+  leaves `updated_at` alone) and `updated_by_uuid` the last admin who changed
+  the row: both are set by the caller, never cast. Money is in micro-dollars
+  ($1 = 1_000_000).
+
+  Two changesets, for the two people who write a row: `admin_changeset/2` —
+  the switch, the model, the admin's prompt, the limits and the notices, for
+  a caller that has checked `agent.manage`; `personal_changeset/2` — the
+  user's own `personal_instructions`, nothing else. Neither casts the lock
+  columns, `updated_by_uuid` or the key. Never upsert this row with
+  `on_conflict: :replace_all`: that would wipe a live turn lock.
   """
 
   use Ecto.Schema
@@ -22,6 +30,10 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
   @foreign_key_type UUIDv7
 
   @limits ~w(daily_cost_limit_micro_usd monthly_cost_limit_micro_usd daily_turn_limit max_attachment_mb max_attachments_per_message)a
+
+  # The limits kept in `integer` columns (the money ones are `bigint`).
+  @int4_limits ~w(daily_turn_limit max_attachment_mb max_attachments_per_message)a
+  @int4_max 2_147_483_647
 
   @type t :: %__MODULE__{}
 
@@ -48,24 +60,41 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
   @spec limit_fields() :: [atom()]
   def limit_fields, do: @limits
 
-  @doc "Changes the settings a person edits: switch, model, prompts, limits, notices."
-  @spec changeset(t(), map()) :: Ecto.Changeset.t()
-  def changeset(settings, attrs) do
+  @doc """
+  What an admin with `agent.manage` sets for a user: switch, model, the
+  admin's prompt, limits, notices. The caller checks the permission.
+  """
+  @spec admin_changeset(t(), map()) :: Ecto.Changeset.t()
+  def admin_changeset(settings, attrs) do
     settings
     |> cast(
       attrs,
-      [
-        :enabled,
-        :endpoint_uuid,
-        :system_prompt,
-        :personal_instructions,
-        :notify_on_limit,
-        :notify_user_uuids
-      ] ++ @limits
+      [:enabled, :endpoint_uuid, :system_prompt, :notify_on_limit, :notify_user_uuids] ++ @limits
     )
+    |> validate_required([:notify_on_limit, :notify_user_uuids])
     |> then(fn changeset ->
       Enum.reduce(@limits, changeset, &validate_number(&2, &1, greater_than_or_equal_to: 0))
     end)
+    |> then(fn changeset ->
+      Enum.reduce(
+        @int4_limits,
+        changeset,
+        &validate_number(&2, &1, less_than_or_equal_to: @int4_max)
+      )
+    end)
+    |> key_constraints()
+  end
+
+  @doc "What the user writes for themself: `personal_instructions` only."
+  @spec personal_changeset(t(), map()) :: Ecto.Changeset.t()
+  def personal_changeset(settings, attrs) do
+    settings
+    |> cast(attrs, [:personal_instructions])
+    |> key_constraints()
+  end
+
+  defp key_constraints(changeset) do
+    changeset
     |> unique_constraint(:user_uuid, name: :phoenix_kit_agent_user_settings_pkey)
     |> foreign_key_constraint(:user_uuid,
       name: :phoenix_kit_agent_user_settings_user_uuid_fkey

@@ -291,7 +291,7 @@ defmodule PhoenixKitAgent.TurnsTest do
 
     test "the module's prompt and the admin's prompt for the user are the system message",
          ctx do
-      {:ok, _} = Settings.update_setting("agent_system_prompt", "You help with furniture.")
+      {:ok, _} = PhoenixKitAgent.Config.put_system_prompt("You help with furniture.", [])
 
       Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, system_prompt: "Answer in Estonian."})
 

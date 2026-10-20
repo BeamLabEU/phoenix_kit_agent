@@ -92,6 +92,44 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert has_element?(view, "#agent-settings-form p.text-error")
       assert Config.limit_defaults().daily_turn_limit == 200
     end
+
+    test "a save the database refuses keeps the form as typed and says nothing was saved",
+         %{conn: conn} do
+      Repo.query!("""
+      CREATE FUNCTION pg_temp.agent_refuse_settings() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'refused'; END $$ LANGUAGE plpgsql
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER agent_refuse_settings BEFORE INSERT OR UPDATE ON phoenix_kit_settings
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.agent_refuse_settings()
+      """)
+
+      {:ok, view, _html} = live(conn, @path)
+
+      view
+      |> form("#agent-settings-form", settings: %{daily_turn_limit: "150"})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+
+      assert has_element?(
+               view,
+               "#agent-settings-form input[name='settings[daily_turn_limit]'][value='150']"
+             )
+
+      assert Config.limit_defaults().daily_turn_limit == 200
+    end
+
+    test "an event without the form's fields changes nothing and does not crash", %{conn: conn} do
+      {:ok, view, _html} = live(conn, @path)
+
+      render_hook(view, "save", %{})
+      render_hook(view, "validate", %{"other" => "x"})
+
+      assert has_element?(view, "#agent-settings-form")
+      assert Config.limit_defaults().daily_turn_limit == 200
+    end
   end
 
   describe "without agent.manage" do

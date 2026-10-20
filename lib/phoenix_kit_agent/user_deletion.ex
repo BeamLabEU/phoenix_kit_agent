@@ -4,6 +4,12 @@ defmodule PhoenixKitAgent.UserDeletion do
   spec §5.7). Core calls it outside the delete's transaction, whether or not the
   module is enabled, and a failure here never stops the delete.
 
+  **Known gap (MVP):** core runs this hook *before* the transaction that
+  deletes the user. If that delete then fails, the user stays, but their
+  attachment files are already gone from Storage for good. The fix — unlink
+  here and delete the files from a job once the user row is gone — needs a
+  core hook after the delete, or a job; it is not built.
+
     1. **Attachment files.** Every Storage file of the user's attachments is
        deleted completely (`Storage.delete_file_completely/1`) — **only if** it
        lies in the module's hidden library (`PhoenixKitAgent.Library`) **and**
@@ -27,6 +33,12 @@ defmodule PhoenixKitAgent.UserDeletion do
   children) do not count; a folder link, a derived copy or a folder cover does.
   A reference without a foreign key cannot be seen; the hidden library is not
   offered by any picker, which is what keeps such references from existing.
+
+  Steps 1-3 run only when the module's tables are there: the version marker
+  is read in the schema the module's tables live in (`config :phoenix_kit,
+  prefix:`). When it reads `0` while the module's library exists, the cleanup
+  is skipped with a warning (no user data in it). Failures are logged as
+  their class only — never a file name or a value.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -36,7 +48,7 @@ defmodule PhoenixKitAgent.UserDeletion do
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.{Config, Migrations}
   alias PhoenixKitAgent.Library, as: AgentLibrary
-  alias PhoenixKitAgent.Schemas.{Attachment, UserSettings}
+  alias PhoenixKitAgent.Schemas.{Attachment, Conversation, UserSettings}
 
   require Logger
 
@@ -61,7 +73,7 @@ defmodule PhoenixKitAgent.UserDeletion do
   # Each step runs on its own: one that fails is logged and the others still
   # run (the user row is deleted either way).
   defp do_run(user_uuid) do
-    if Migrations.migrated_version_runtime() > 0 do
+    if tables_installed?() do
       ctx = %{user_uuid: user_uuid, library: AgentLibrary.library(), refs: nil}
 
       ctx =
@@ -78,11 +90,33 @@ defmodule PhoenixKitAgent.UserDeletion do
     :ok
   end
 
+  # The marker is read in the schema of the module's own tables, as
+  # `files_table/0` reads Storage's.
+  defp tables_installed? do
+    prefix = Conversation.__schema__(:prefix) || "public"
+
+    case Migrations.migrated_version_runtime(prefix: prefix) do
+      version when version > 0 ->
+        true
+
+      _none ->
+        if step("library lookup", nil, &AgentLibrary.library/0) do
+          Logger.warning(
+            "[PhoenixKitAgent] user deletion cleanup skipped: the module's tables are not " <>
+              "found in schema #{prefix} (version 0) though its library exists; the user's " <>
+              "attachment files stay in Storage"
+          )
+        end
+
+        false
+    end
+  end
+
   defp step(what, fallback, fun) do
     fun.()
   rescue
     error ->
-      log_failure(what, Exception.message(error))
+      log_failure(what, error)
       fallback
   catch
     kind, reason ->
@@ -127,7 +161,7 @@ defmodule PhoenixKitAgent.UserDeletion do
 
         case Storage.delete_folder(folder) do
           {:ok, _} -> :ok
-          other -> log_failure("folder #{folder.uuid}", other)
+          other -> log_failure("the user's folder", other)
         end
 
       nil ->
@@ -139,7 +173,7 @@ defmodule PhoenixKitAgent.UserDeletion do
 
   defp remove_from_notice_lists(user_uuid) do
     from(s in UserSettings,
-      where: fragment("? = ANY(?)", type(^user_uuid, UUIDv7), s.notify_user_uuids),
+      where: fragment("? @> ARRAY[?]::uuid[]", s.notify_user_uuids, type(^user_uuid, UUIDv7)),
       update: [
         set: [
           notify_user_uuids:
@@ -232,7 +266,7 @@ defmodule PhoenixKitAgent.UserDeletion do
     case Storage.delete_file_completely(file_uuid) do
       {:ok, _} -> :ok
       {:error, :not_found} -> :ok
-      other -> log_failure("file #{file_uuid}", other)
+      other -> log_failure("an attachment file", other)
     end
   end
 
@@ -251,9 +285,27 @@ defmodule PhoenixKitAgent.UserDeletion do
 
   defp log_failure(what, reason) do
     Logger.warning(
-      "[PhoenixKitAgent] user deletion cleanup of #{what} failed: #{inspect(reason)}"
+      "[PhoenixKitAgent] user deletion cleanup of #{what} failed: #{failure_class(reason)}"
     )
 
     :ok
   end
+
+  # What went wrong, without the values: an error can carry a file struct
+  # (its name) or a changeset (its changes).
+  defp failure_class(exception) when is_exception(exception), do: inspect(exception.__struct__)
+  defp failure_class({:error, %Ecto.Changeset{} = cs}), do: inspect(Keyword.keys(cs.errors))
+  defp failure_class({:error, reason}) when is_atom(reason), do: inspect(reason)
+
+  defp failure_class({kind, reason}) when kind in [:exit, :throw, :error],
+    do: "#{kind} #{class(reason)}"
+
+  defp failure_class(_other), do: "unexpected result"
+
+  defp class(reason) when is_atom(reason), do: inspect(reason)
+
+  defp class(reason) when is_tuple(reason) and is_atom(elem(reason, 0)),
+    do: inspect(elem(reason, 0))
+
+  defp class(_reason), do: "term"
 end
