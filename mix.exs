@@ -30,7 +30,7 @@ defmodule PhoenixKitAgent.MixProject do
   end
 
   def application do
-    [extra_applications: [:logger, :phoenix_kit, :phoenix_kit_ai]]
+    [extra_applications: [:logger, :gettext, :phoenix_kit, :phoenix_kit_ai]]
   end
 
   def cli do
@@ -109,6 +109,9 @@ defmodule PhoenixKitAgent.MixProject do
       # LiveView is needed for the admin pages (Phase 1).
       {:phoenix_live_view, "~> 1.1"},
 
+      # The module's own gettext backend for its admin pages.
+      {:gettext, "~> 1.0"},
+
       # Optional rustler pin so the transitive `mdex_native` NIF (via phoenix_kit,
       # a test dependency) can source-build on hosts where its precompiled variant
       # doesn't match the local NIF version.
@@ -116,6 +119,9 @@ defmodule PhoenixKitAgent.MixProject do
 
       # Documentation
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+
+      # LiveView tests (Phoenix.LiveViewTest parses the rendered HTML with it).
+      {:lazy_html, ">= 0.1.0", only: :test},
 
       # Code quality
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

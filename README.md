@@ -8,10 +8,12 @@ does no more than the user can in their current session. Model calls, endpoints,
 credentials, budget and the request journal come from
 [`phoenix_kit_ai`](https://github.com/BeamLabEU/phoenix_kit_ai).
 
-**Status: under development.** Only the module skeleton exists so far: the
-OTP application, the `PhoenixKit.Module` registration (module key `agent`) and
-the enable/disable switch. Chats, settings, permissions and the UI are not
-implemented yet.
+**Status: under development.** So far: the `PhoenixKit.Module` registration
+(module key `agent`) and the enable/disable switch, the module's tables (own
+migration chain, run by `mix phoenix_kit.update`), the permissions `agent` and
+`agent.manage`, the module defaults under Settings → AI Agent, a hidden Storage
+library for attachments and the cleanup when a user is deleted. Chats, the
+model loop and the chat UI are not implemented yet.
 
 ## Installation
 

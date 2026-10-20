@@ -10,16 +10,26 @@ PhoenixKit API registry. It implements the `PhoenixKit.Module` behaviour for
 auto-discovery by the host application; it is a library, and the host supplies
 endpoint and router (`config/` exists only for tests).
 
-**Status: skeleton.** Only `PhoenixKitAgent` (module registration and the
-enable/disable switch) exists. Migrations, permissions, tables and UI come in
-the next phase.
+**Status: under development.** In place: module registration and the
+enable/disable switch (`PhoenixKitAgent`), the module-owned migration chain and
+its tables (`PhoenixKitAgent.Migrations`, `PhoenixKitAgent.Schemas.*`), the
+permission keys `agent` / `agent.manage`, the module settings and the
+Settings → AI Agent page (`PhoenixKitAgent.Config`,
+`PhoenixKitAgent.Web.SettingsLive`), the hidden Storage library
+(`PhoenixKitAgent.Library`) and the user-deletion cleanup
+(`PhoenixKitAgent.UserDeletion`). Chats, the model loop and the chat UI are not
+built yet.
 
 - **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins to the
   `timujinne` forks' `integration/andi-2026-10` branches (the session-actor API,
   hidden Storage libraries and tool calling are not on Hex yet), and
   `phoenix_live_view`.
-- **Module key** `"agent"`; settings prefix `agent_`; tables will be
-  `phoenix_kit_agent_*`.
+- **Module key** `"agent"`; settings prefix `agent_`; tables
+  `phoenix_kit_agent_*` (marker `pk_agent_schema:<N>` on
+  `phoenix_kit_agent_conversations`).
+- **Permissions:** `agent` (use the assistant) and `agent.manage` (defaults,
+  other users' settings, spending; core auto-grants it to Admin). Do not add an
+  `agent.view_all`: it would be auto-granted to Admin too.
 - **Boundaries:** nothing about orders, customers or other host domain data
   lives here — the module only knows "tools from the registry". Model calls,
   budget and the request journal stay in `phoenix_kit_ai`.

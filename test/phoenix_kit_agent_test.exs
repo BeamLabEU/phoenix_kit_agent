@@ -45,4 +45,32 @@ defmodule PhoenixKitAgentTest do
       assert function_exported?(PhoenixKitAgent, :disable_system, 0)
     end
   end
+
+  describe "callbacks" do
+    test "migration_module/0 is the module's own chain" do
+      assert PhoenixKitAgent.migration_module() == PhoenixKitAgent.Migrations
+    end
+
+    test "permission_metadata/0 declares agent and agent.manage — and no view_all" do
+      meta = PhoenixKitAgent.permission_metadata()
+
+      assert meta.key == "agent"
+      assert is_binary(meta.label) and is_binary(meta.icon) and is_binary(meta.description)
+      assert Enum.map(meta.sub_permissions, & &1.key) == ["manage"]
+      refute Enum.any?(meta.sub_permissions, &(&1.key == "view_all"))
+    end
+
+    test "settings_tabs/0 is one tab, Settings → Agent, under agent.manage" do
+      assert [tab] = PhoenixKitAgent.settings_tabs()
+
+      assert tab.parent == :admin_settings
+      assert tab.path == "agent"
+      assert tab.permission == "agent.manage"
+      assert tab.live_view == {PhoenixKitAgent.Web.SettingsLive, :index}
+    end
+
+    test "before_user_delete/1 is defined" do
+      assert function_exported?(PhoenixKitAgent, :before_user_delete, 1)
+    end
+  end
 end

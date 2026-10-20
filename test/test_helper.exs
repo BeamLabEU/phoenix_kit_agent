@@ -11,8 +11,9 @@
 #   createdb phoenix_kit_agent_test      # or: mix test.setup
 #
 # The schema is built from core's versioned migrations via
-# `PhoenixKit.Migration.ensure_current/2`, the same call a host app makes.
-# This module has no tables of its own yet.
+# `PhoenixKit.Migration.ensure_current/2`, the same call a host app makes, and
+# then from this module's own chain (`PhoenixKitAgent.Migrations`) through
+# `Ecto.Migrator`, as the host's generated migration runs it.
 #
 # The ONLY sanctioned way to run without a database is the explicit opt-in
 #
@@ -26,7 +27,14 @@ support_dir = Path.expand("support", __DIR__)
 
 [
   {PhoenixKitAgent.Test.Repo, "test_repo.ex"},
-  {PhoenixKitAgent.DataCase, "data_case.ex"}
+  {PhoenixKitAgent.Test.SchemaMigration, "schema_migration.ex"},
+  {PhoenixKitAgent.Test.Layouts, "test_layouts.ex"},
+  {PhoenixKitAgent.Test.Hooks, "hooks.ex"},
+  {PhoenixKitAgent.Test.Router, "test_router.ex"},
+  {PhoenixKitAgent.Test.Endpoint, "test_endpoint.ex"},
+  {PhoenixKitAgent.Fixtures, "fixtures.ex"},
+  {PhoenixKitAgent.DataCase, "data_case.ex"},
+  {PhoenixKitAgent.LiveCase, "live_case.ex"}
 ]
 |> Enum.each(fn {mod, file} ->
   Code.ensure_loaded?(mod) || Code.require_file(file, support_dir)
@@ -66,6 +74,17 @@ repo_available =
 
     {:ok, _} = TestRepo.start_link()
     PhoenixKit.Migration.ensure_current(TestRepo, log: false)
+
+    # Keyed on the chain version, so a bump re-applies; the chain is
+    # idempotent, so a re-run against an up-to-date database is a no-op.
+    Ecto.Migrator.run(
+      TestRepo,
+      [{PhoenixKitAgent.Migrations.current_version(), PhoenixKitAgent.Test.SchemaMigration}],
+      :up,
+      all: true,
+      log: false
+    )
+
     Ecto.Adapters.SQL.Sandbox.mode(TestRepo, :manual)
     true
   end
@@ -74,6 +93,23 @@ Application.put_env(:phoenix_kit_agent, :test_repo_available, repo_available)
 
 # Minimal PhoenixKit services needed by the Settings API.
 {:ok, _pid} = PhoenixKit.PubSub.Manager.start_link([])
+
+# Module discovery: permission keys, sub-keys and `Scope.can?/2` read the
+# registry (this module is found by its `@phoenix_kit_module` attribute).
+{:ok, _pid} = PhoenixKit.ModuleRegistry.start_link([])
+
+# `PhoenixKit.Users.Auth.register_user/2` goes through the Hammer-backed rate
+# limiter, which needs its ETS table.
+{:ok, _pid} = PhoenixKit.Users.RateLimiter.Backend.start_link([])
+
+# Admin paths are written with the default locale (`/en/admin/...`), which is
+# what the test router mounts.
+:persistent_term.put({PhoenixKit.Config, :url_prefix}, "/")
+
+if repo_available do
+  {:ok, _} = Phoenix.PubSub.Supervisor.start_link(name: PhoenixKitAgent.Test.PubSub)
+  {:ok, _} = PhoenixKitAgent.Test.Endpoint.start_link()
+end
 
 exclude = if skip_db?, do: [:integration], else: []
 ExUnit.start(exclude: exclude)
