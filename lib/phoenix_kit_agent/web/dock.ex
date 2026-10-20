@@ -42,16 +42,22 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   A chat that is locked by a turn lost with its node gets the notice "the
   answer was interrupted" when it is opened (`Turns.settle_interrupted/3`).
+  A notice is shown by its `error` code in the panel's language
+  (`PhoenixKitAgent.Web.Dock.Texts.notice/1`), else as it was stored.
   "New chat" only empties the panel: the chat is made with its first message
-  or file.
+  or file, and deleted again (`Conversations.delete_conversation/3`) when that
+  message or file is refused while nothing else is in it.
 
   ## Sending, stopping, files
 
   "Send" starts a turn (`Turns.start/6`) with the files that are ready, the
   page the browser is on (a path, for the model's context, spec §7.1 p.5) and
   the user's locale; an exception there is caught, logged as its class only,
-  and shown as a notice in the panel. A send while the turn runs is let go. A
-  chat busy with a turn of another tab shows that turn, with its "Stop".
+  and shown as a notice in the panel. A send while the panel shows a turn
+  first asks the chat's lock (`Turns.settle_interrupted/3`): while the turn
+  runs the send is let go; a turn whose end never reached the panel is let go
+  of, and the message goes. A chat busy with a turn of another tab shows that
+  turn, with its "Stop".
   "Stop" asks the turn to stop; when no task runs it here, the chat's lock
   says what to show (a turn lost but still within its time is said to be
   lost — the chat is free when its lock expires). The indicator says whether
@@ -62,7 +68,8 @@ defmodule PhoenixKitAgent.Web.Dock do
   of the user's settings) and are handed to `Attachments.add/4` with the path
   of LiveView's own temporary file (`consume_uploaded_entry/3`, kept until
   `add/4` is done, which runs off this process); the row is read again after
-  `add/4` (it may be settled already), and a failed one can be removed. An
+  `add/4` (it may be settled already) and shown only while its chat is the
+  one open, and a failed one can be removed. An
   upload can be cancelled while it is on its way, not once `add/4` has it; a
   cancel of an entry that is not there changes nothing. An exception in
   `add/4` is caught in its task and logged as its class only.
@@ -72,11 +79,20 @@ defmodule PhoenixKitAgent.Web.Dock do
   The panel opens with the class `pk-dock-open` on `<body>`
   (`PhoenixKitWeb.Components.AdminDock`), which survives a live redirect. Open
   or closed, the chosen chat and the width are kept in `localStorage` by the
-  `.DockState` hook and restored when the panel mounts again (another
-  `live_session`, a reload). The markup and the hooks are in
+  `.DockState` hook and restored (`restore`) when the panel mounts again
+  (another `live_session`, a reload) and when it joins again after a lost
+  connection, which mounts the LiveView afresh. A panel kept closed reads
+  nothing until a chat is opened; a remembered chat that is not the user's
+  active one any more is forgotten. The list opens from a focusable `div`
+  (Safari does not focus a clicked `<button>`, and the list is open while it
+  has the focus); choosing a chat moves the focus to the panel, "New chat" to
+  the input, so the list closes. The markup and the hooks are in
   `PhoenixKitAgent.Web.Dock.Panel`; the hooks are runtime colocated hooks, so
-  the host bundles nothing for them. The text being written stays the
-  browser's (`phx-update="ignore"`), so no re-render wipes it.
+  the host bundles nothing for them, but they are inline scripts: under a
+  Content-Security-Policy the page needs `script-src 'unsafe-inline'` (they
+  carry no nonce). The text being written stays the browser's
+  (`phx-update="ignore"`), so no re-render wipes it, and goes to the server
+  only with the form (`phx-debounce="blur"`).
 
   The tools get the user's locale, the endpoint's URL and, when the host's
   socket passes `:peer_data` / `:x_headers` in its `connect_info`, the client
@@ -86,6 +102,11 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   `log: false`: LiveView would log every event with its parameters — the
   user's text. No text of a message, an answer or a file name is logged here.
+  An exception in an event, a message of the chat, an upload's progress or a
+  finished task is caught (`guarded/2`), logged as its class only, and shown
+  as a notice: a crash report would hold the event's parameters (the draft)
+  and the whole state (the chats, the feed). Not covered: a crash in `mount`
+  or in `render` still ends the LiveView with such a report.
   """
 
   use Phoenix.LiveView, layout: false, log: false
@@ -130,7 +151,7 @@ defmodule PhoenixKitAgent.Web.Dock do
          ^user_uuid <- session["user_uuid"],
          {:ok, ^user_uuid} <- Conversations.authorize_session(ref, impersonated: impersonated?) do
       locale = locale(session["locale"])
-      if locale, do: Gettext.put_locale(PhoenixKitAgent.Gettext, locale)
+      if locale, do: put_locale(locale)
       settings = UserConfig.effective(user_uuid)
 
       socket
@@ -152,6 +173,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         error: nil,
         renaming: nil,
         instructions_form: nil,
+        fresh_uuid: nil,
         timeout_ms: Config.turn_deadline_s() * 1_000 + Monitor.stop_grace_ms() + @wait_margin_ms
       )
       |> allow_upload(:files,
@@ -167,6 +189,12 @@ defmodule PhoenixKitAgent.Web.Dock do
     else
       _not_this_session -> socket
     end
+  end
+
+  # The panel's own texts and core's components in it (the times of the list).
+  defp put_locale(locale) do
+    Gettext.put_locale(PhoenixKitAgent.Gettext, locale)
+    Gettext.put_locale(PhoenixKitWeb.Gettext, locale)
   end
 
   defp locale(locale) when is_binary(locale) do
@@ -197,28 +225,35 @@ defmodule PhoenixKitAgent.Web.Dock do
   def handle_event(_event, _params, %{assigns: %{active?: false}} = socket),
     do: {:noreply, socket}
 
-  # The browser's memory of the panel, when it mounts (`.DockState`).
-  def handle_event("restore", params, socket) do
-    socket = assign(socket, open?: params["open"] == true)
+  def handle_event(event, params, socket),
+    do: guarded(socket, fn -> event(event, params, socket) end)
+
+  # The browser's memory of the panel, when it mounts or joins again after a
+  # lost connection (`.DockState`). A panel kept closed reads nothing: its
+  # chat is opened from the list; a chat that is not the user's active one
+  # any more is forgotten.
+  defp event("restore", params, socket) do
+    open? = params["open"] == true
+    socket = assign(socket, open?: open?)
 
     case params["conversation_uuid"] do
-      uuid when is_binary(uuid) ->
-        case open_conversation(socket, uuid) do
+      uuid when is_binary(uuid) and open? ->
+        case open_conversation(socket, uuid, active_only: true) do
           {:ok, socket} -> {:noreply, socket}
           {:error, _reason, socket} -> {:noreply, store(socket)}
         end
 
-      _none ->
+      _none_or_closed ->
         {:noreply, socket}
     end
   end
 
-  def handle_event("panel_closed", _params, socket),
+  defp event("panel_closed", _params, socket),
     do: {:noreply, socket |> assign(open?: false) |> store()}
 
-  def handle_event("refresh_chats", _params, socket), do: {:noreply, load_chats(socket)}
+  defp event("refresh_chats", _params, socket), do: {:noreply, load_chats(socket)}
 
-  def handle_event("more_chats", _params, socket) do
+  defp event("more_chats", _params, socket) do
     case socket.assigns.next_cursor do
       nil ->
         {:noreply, socket}
@@ -240,7 +275,7 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   # An empty panel: the chat is made with its first message or file
   # (`ensure_conversation/1`), so a click alone leaves no empty chat behind.
-  def handle_event("new_chat", _params, socket) do
+  defp event("new_chat", _params, socket) do
     {:noreply,
      socket
      |> close_conversation()
@@ -248,7 +283,7 @@ defmodule PhoenixKitAgent.Web.Dock do
      |> store()}
   end
 
-  def handle_event("load_earlier", _params, socket) do
+  defp event("load_earlier", _params, socket) do
     with %{uuid: uuid} <- socket.assigns.conversation,
          first when is_binary(first) <- socket.assigns.first_uuid do
       opts = me(socket) ++ [before: first, limit: @messages_page]
@@ -271,24 +306,24 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  def handle_event("open_chat", %{"uuid" => uuid}, socket) when is_binary(uuid) do
+  defp event("open_chat", %{"uuid" => uuid}, socket) when is_binary(uuid) do
     case open_conversation(assign(socket, open?: true), uuid) do
       {:ok, socket} -> {:noreply, socket}
       {:error, reason, socket} -> {:noreply, refused(socket, reason)}
     end
   end
 
-  def handle_event("start_rename", %{"uuid" => uuid}, socket) when is_binary(uuid) do
+  defp event("start_rename", %{"uuid" => uuid}, socket) when is_binary(uuid) do
     if Enum.any?(socket.assigns.chats, &(&1.uuid == uuid)),
       do: {:noreply, assign(socket, renaming: uuid)},
       else: {:noreply, socket}
   end
 
-  def handle_event("cancel_rename", _params, socket),
+  defp event("cancel_rename", _params, socket),
     do: {:noreply, assign(socket, renaming: nil)}
 
-  def handle_event("rename_chat", %{"uuid" => uuid, "title" => title}, socket)
-      when is_binary(uuid) do
+  defp event("rename_chat", %{"uuid" => uuid, "title" => title}, socket)
+       when is_binary(uuid) do
     case Conversations.rename_conversation(socket.assigns.ref, uuid, title, me(socket)) do
       {:ok, conversation} ->
         {:noreply,
@@ -305,7 +340,7 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  def handle_event("archive_chat", %{"uuid" => uuid}, socket) when is_binary(uuid) do
+  defp event("archive_chat", %{"uuid" => uuid}, socket) when is_binary(uuid) do
     case Conversations.archive_conversation(socket.assigns.ref, uuid, me(socket)) do
       {:ok, conversation} ->
         socket =
@@ -322,30 +357,19 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  def handle_event("composer_change", _params, socket), do: {:noreply, socket}
+  defp event("composer_change", _params, socket), do: {:noreply, socket}
 
-  def handle_event("send", %{"message" => params}, socket) when is_map(params) do
-    cond do
+  defp event("send", %{"message" => params}, socket) when is_map(params) do
+    case sync_turn(socket) do
       # A second Enter (`requestSubmit()` passes the disabled button) while
       # the turn runs: there is nothing to say.
-      socket.assigns.turn_ref ->
-        {:noreply, socket}
-
-      not is_binary(params["text"]) or String.trim(params["text"]) == "" ->
-        {:noreply, refused(socket, :empty_message)}
-
-      Enum.any?(socket.assigns.unsent, &(&1.status == "pending")) or uploading?(socket) ->
-        {:noreply, refused(socket, :files_pending)}
-
-      true ->
-        case ensure_conversation(socket) do
-          {:ok, socket} -> {:noreply, start_turn(socket, params["text"], page(params["page"]))}
-          {:error, reason, socket} -> {:noreply, refused(socket, reason)}
-        end
+      {:running, socket} -> {:noreply, socket}
+      {:idle, socket} -> {:noreply, send_message(socket, params)}
+      {:error, reason, socket} -> {:noreply, refused(socket, reason)}
     end
   end
 
-  def handle_event("stop", _params, socket) do
+  defp event("stop", _params, socket) do
     with %{uuid: uuid} <- socket.assigns.conversation,
          turn_ref when is_binary(turn_ref) <- socket.assigns.turn_ref do
       case Turns.stop(socket.assigns.ref, socket.assigns.impersonated?, uuid, turn_ref) do
@@ -361,13 +385,13 @@ defmodule PhoenixKitAgent.Web.Dock do
   # Only an upload still on its way: a finished one is with
   # `Attachments.add/4` already, and an unknown ref (a second click, an entry
   # gone since) would make `cancel_upload/3` raise.
-  def handle_event("cancel_upload", %{"ref" => ref}, socket) when is_binary(ref) do
+  defp event("cancel_upload", %{"ref" => ref}, socket) when is_binary(ref) do
     if Enum.any?(socket.assigns.uploads.files.entries, &(&1.ref == ref and not &1.done?)),
       do: {:noreply, cancel_upload(socket, :files, ref)},
       else: {:noreply, socket}
   end
 
-  def handle_event("discard_attachment", %{"uuid" => uuid}, socket) when is_binary(uuid) do
+  defp event("discard_attachment", %{"uuid" => uuid}, socket) when is_binary(uuid) do
     case Attachments.discard(socket.assigns.ref, uuid, me(socket)) do
       :ok ->
         {:noreply, assign(socket, unsent: Enum.reject(socket.assigns.unsent, &(&1.uuid == uuid)))}
@@ -377,9 +401,9 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  def handle_event("dismiss_error", _params, socket), do: {:noreply, assign(socket, error: nil)}
+  defp event("dismiss_error", _params, socket), do: {:noreply, assign(socket, error: nil)}
 
-  def handle_event("toggle_instructions", _params, socket) do
+  defp event("toggle_instructions", _params, socket) do
     if socket.assigns.instructions_form do
       {:noreply, assign(socket, instructions_form: nil)}
     else
@@ -390,11 +414,11 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  def handle_event(
-        "save_instructions",
-        %{"instructions" => %{"personal_instructions" => text}},
-        socket
-      ) do
+  defp event(
+         "save_instructions",
+         %{"instructions" => %{"personal_instructions" => text}},
+         socket
+       ) do
     case UserConfig.put_personal_instructions(socket.assigns.ref, text, me(socket)) do
       {:ok, stored} ->
         {:noreply, assign(socket, instructions_form: instructions_form(stored), error: nil)}
@@ -408,7 +432,7 @@ defmodule PhoenixKitAgent.Web.Dock do
   end
 
   # A malformed event (forged, or of an older page) changes nothing.
-  def handle_event(_event, _params, socket), do: {:noreply, socket}
+  defp event(_event, _params, socket), do: {:noreply, socket}
 
   # ── chats ───────────────────────────────────────────────────────────
 
@@ -439,11 +463,12 @@ defmodule PhoenixKitAgent.Web.Dock do
   # Subscribes to the chat (after the ownership check), settles a turn lost
   # with its node, and reads its messages and its waiting files. The topic of
   # the chat shown before is left only once the new one is read.
-  defp open_conversation(socket, uuid) do
+  defp open_conversation(socket, uuid, opts \\ []) do
     %{ref: ref, impersonated?: impersonated?} = socket.assigns
     previous = current_uuid(socket)
 
     with {:ok, conversation} <- Conversations.owned_conversation(ref, uuid, me(socket)),
+         :ok <- openable(conversation, opts),
          :ok <- subscribe(socket, conversation.uuid, previous),
          {:ok, state} <- Turns.settle_interrupted(ref, impersonated?, conversation.uuid),
          {:ok, messages} <-
@@ -482,6 +507,11 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
+  defp openable(%{status: "active"}, _opts), do: :ok
+
+  defp openable(_put_away, opts),
+    do: if(opts[:active_only], do: {:error, :not_found}, else: :ok)
+
   # The chat shown now is subscribed to already.
   defp subscribe(_socket, uuid, uuid), do: :ok
 
@@ -511,11 +541,34 @@ defmodule PhoenixKitAgent.Web.Dock do
     case Conversations.create_conversation(socket.assigns.ref, %{}, me(socket)) do
       {:ok, conversation} ->
         socket
-        |> assign(chats: [conversation | socket.assigns.chats], open?: true)
+        |> assign(
+          chats: [conversation | socket.assigns.chats],
+          open?: true,
+          fresh_uuid: conversation.uuid
+        )
         |> open_conversation(conversation.uuid)
 
       {:error, reason} ->
         {:error, reason, socket}
+    end
+  end
+
+  # A chat the panel made for a first message or file that was then refused
+  # is deleted again while nothing is in it, so a failed start leaves no
+  # empty "New chat" behind (the refusal stays on the panel).
+  defp drop_fresh(socket, done_entry_ref \\ nil) do
+    %{fresh_uuid: fresh, last_uuid: last, unsent: unsent} = socket.assigns
+
+    if fresh && fresh == current_uuid(socket) && is_nil(last) && unsent == [] &&
+         not uploading?(socket, done_entry_ref) do
+      _ = Conversations.delete_conversation(socket.assigns.ref, fresh, me(socket))
+
+      socket
+      |> assign(fresh_uuid: nil, chats: Enum.reject(socket.assigns.chats, &(&1.uuid == fresh)))
+      |> close_conversation()
+      |> store()
+    else
+      socket
     end
   end
 
@@ -535,6 +588,43 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   # ── turns ───────────────────────────────────────────────────────────
 
+  # The turn the panel shows as running, as the chat's lock has it now: its
+  # end may never have reached this panel (a broadcast lost between nodes).
+  defp sync_turn(%{assigns: %{turn_ref: nil}} = socket), do: {:idle, socket}
+
+  defp sync_turn(socket) do
+    %{ref: ref, impersonated?: impersonated?} = socket.assigns
+
+    case Turns.settle_interrupted(ref, impersonated?, current_uuid(socket)) do
+      {:ok, {:running, turn_ref}} ->
+        {:running, assign(socket, turn_ref: turn_ref)}
+
+      {:ok, _idle_or_settled} ->
+        {:idle, socket |> assign(turn_ref: nil, activity: nil) |> reload_unsent()}
+
+      {:error, reason} ->
+        {:error, reason, socket}
+    end
+  end
+
+  defp send_message(socket, params) do
+    text = params["text"]
+
+    cond do
+      not is_binary(text) or String.trim(text) == "" ->
+        refused(socket, :empty_message)
+
+      Enum.any?(socket.assigns.unsent, &(&1.status == "pending")) or uploading?(socket) ->
+        refused(socket, :files_pending)
+
+      true ->
+        case ensure_conversation(socket) do
+          {:ok, socket} -> start_turn(socket, text, page(params["page"]))
+          {:error, reason, socket} -> refused(socket, reason)
+        end
+    end
+  end
+
   defp start_turn(socket, text, page) do
     %{ref: ref, impersonated?: impersonated?} = socket.assigns
     ready = for %{status: "ready", uuid: uuid} <- socket.assigns.unsent, do: uuid
@@ -552,6 +642,7 @@ defmodule PhoenixKitAgent.Web.Dock do
           turn_ref: turn_ref,
           activity: :thinking,
           error: nil,
+          fresh_uuid: nil,
           unsent: Enum.reject(socket.assigns.unsent, &(&1.uuid in ready))
         )
         |> push_event("pk-agent:sent", %{})
@@ -560,7 +651,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         socket |> refused(:conversation_busy) |> adopt_running_turn() |> reload_unsent()
 
       {:error, reason} ->
-        socket |> refused(reason) |> reload_unsent()
+        socket |> refused(reason) |> reload_unsent() |> drop_fresh()
     end
   end
 
@@ -633,11 +724,17 @@ defmodule PhoenixKitAgent.Web.Dock do
   # A valid upload is still on its way, or with `Attachments.add/4` (its
   # entry goes when `add/4` is done); one refused by LiveView waits only to be
   # cancelled.
-  defp uploading?(socket), do: Enum.any?(socket.assigns.uploads.files.entries, & &1.valid?)
+  # (LiveView drops a consumed entry only after the callback that consumed it:
+  # `except` is such an entry.)
+  defp uploading?(socket, except \\ nil),
+    do: Enum.any?(socket.assigns.uploads.files.entries, &(&1.valid? and &1.ref != except))
+
+  defp handle_progress(name, entry, socket),
+    do: guarded(socket, fn -> progress(name, entry, socket) end)
 
   # A finished upload goes to `Attachments.add/4` off this process; its
   # temporary file is kept (`:postpone`) until `add/4` is done with it.
-  defp handle_progress(:files, %{done?: true} = entry, %{assigns: %{active?: true}} = socket) do
+  defp progress(:files, %{done?: true} = entry, %{assigns: %{active?: true}} = socket) do
     case ensure_conversation(socket) do
       {:ok, socket} ->
         path = consume_uploaded_entry(socket, entry, fn %{path: path} -> {:postpone, path} end)
@@ -654,7 +751,7 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  defp handle_progress(:files, _entry, socket), do: {:noreply, socket}
+  defp progress(:files, _entry, socket), do: {:noreply, socket}
 
   # An exception in `add/4` would end the async task with a crash report that
   # holds its terms (a file name, a changeset): only its class is logged.
@@ -674,18 +771,22 @@ defmodule PhoenixKitAgent.Web.Dock do
   end
 
   @impl true
-  def handle_async({:attach, entry_ref}, result, socket) do
+  def handle_async(name, result, socket),
+    do: guarded(socket, fn -> attached(name, result, socket) end)
+
+  defp attached({:attach, entry_ref}, result, socket) do
     socket = drop_entry(socket, entry_ref)
 
     case result do
       {:ok, {:ok, attachment}} ->
-        {:noreply, socket |> assign(error: nil) |> refresh_attachment(attachment.uuid)}
+        {:noreply,
+         socket |> assign(error: nil, fresh_uuid: nil) |> refresh_attachment(attachment.uuid)}
 
       {:ok, {:error, reason}} ->
-        {:noreply, refused(socket, reason)}
+        {:noreply, socket |> refused(reason) |> drop_fresh(entry_ref)}
 
       {:exit, _reason} ->
-        {:noreply, refused(socket, :storage_unavailable)}
+        {:noreply, socket |> refused(:storage_unavailable) |> drop_fresh(entry_ref)}
     end
   end
 
@@ -701,13 +802,13 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  # The row as it is now; a settled row is never replaced by an older pending
-  # one (the processing may have ended before `add/4` returned).
+  # The row as it is now (`add/4` returns it as it was when the processing
+  # started, which may have ended since), in the chat it was added to only.
   defp refresh_attachment(socket, uuid) do
     case Attachments.get(socket.assigns.ref, uuid, me(socket)) do
       {:ok, %{message_uuid: nil} = attachment} ->
         if attachment.conversation_uuid == current_uuid(socket),
-          do: assign(socket, unsent: merge(socket.assigns.unsent, attachment)),
+          do: assign(socket, unsent: put_unsent(socket.assigns.unsent, attachment)),
           else: socket
 
       _sent_or_gone ->
@@ -715,19 +816,10 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  defp merge(unsent, attachment) do
-    case Enum.split_with(unsent, &(&1.uuid == attachment.uuid)) do
-      {[], rest} ->
-        rest ++ [attachment]
-
-      {[known], _rest} ->
-        newer =
-          if attachment.status == "pending" and known.status != "pending",
-            do: known,
-            else: attachment
-
-        Enum.map(unsent, &if(&1.uuid == attachment.uuid, do: newer, else: &1))
-    end
+  defp put_unsent(unsent, attachment) do
+    if Enum.any?(unsent, &(&1.uuid == attachment.uuid)),
+      do: Enum.map(unsent, &if(&1.uuid == attachment.uuid, do: attachment, else: &1)),
+      else: unsent ++ [attachment]
   end
 
   defp reload_unsent(socket) do
@@ -743,26 +835,27 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   @impl true
   def handle_info(_message, %{assigns: %{active?: false}} = socket), do: {:noreply, socket}
+  def handle_info(message, socket), do: guarded(socket, fn -> info(message, socket) end)
 
-  def handle_info({:agent_message_added, uuid, message_uuid}, socket) do
+  defp info({:agent_message_added, uuid, message_uuid}, socket) do
     if uuid == current_uuid(socket),
       do: {:noreply, add_messages(socket, uuid, message_uuid)},
       else: {:noreply, socket}
   end
 
-  def handle_info({:agent_turn_finished, uuid, turn_ref}, socket) do
+  defp info({:agent_turn_finished, uuid, turn_ref}, socket) do
     if uuid == current_uuid(socket) and turn_ref == socket.assigns.turn_ref,
       do: {:noreply, socket |> assign(turn_ref: nil, activity: nil) |> reload_unsent()},
       else: {:noreply, socket}
   end
 
-  def handle_info({:agent_attachment_processed, uuid, attachment_uuid}, socket) do
+  defp info({:agent_attachment_processed, uuid, attachment_uuid}, socket) do
     if uuid == current_uuid(socket),
       do: {:noreply, refresh_attachment(socket, attachment_uuid)},
       else: {:noreply, socket}
   end
 
-  def handle_info(_other, socket), do: {:noreply, socket}
+  defp info(_other, socket), do: {:noreply, socket}
 
   # The messages after the last one shown, and the announced one if it was
   # not among them (committed out of order).
@@ -824,6 +917,23 @@ defmodule PhoenixKitAgent.Web.Dock do
   # ── helpers ─────────────────────────────────────────────────────────
 
   defp refused(socket, reason), do: assign(socket, error: Texts.refusal(reason))
+
+  # An exception in an event, a chat message or a finished task would end the
+  # LiveView with a crash report that holds the event's parameters (the
+  # user's draft) and the whole state (the chats, the feed): it is caught
+  # here, logged as its class only, and the panel says that something went
+  # wrong. The socket is the one from before the callback.
+  defp guarded(socket, fun) do
+    fun.()
+  rescue
+    exception ->
+      Logger.warning("[PhoenixKitAgent] the chat panel failed: #{inspect(exception.__struct__)}")
+      {:noreply, refused(socket, :failed)}
+  catch
+    kind, _reason ->
+      Logger.warning("[PhoenixKitAgent] the chat panel failed: #{kind}")
+      {:noreply, refused(socket, :failed)}
+  end
 
   defp instructions_form(text) do
     %UserSettings{}

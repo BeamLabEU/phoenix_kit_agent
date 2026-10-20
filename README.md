@@ -41,11 +41,13 @@ the page; on a phone it takes the whole screen. The panel has the feed, the
 input with a paper clip for files, "Stop", an indicator of what the assistant
 is doing (thinking / calling a tool), and a small form for the user's own
 personal instructions. "New chat" empties the panel; the chat is made with its
-first message or file, and takes its title from that message. A long chat opens
-at its end, with "Earlier messages" above. Open or closed, the chosen chat and
-the width are kept in the browser (`localStorage`) and come back after a
-navigation or a reload; the text being written is never wiped by an update of
-the panel.
+first message or file, and takes its title from that message (a first message
+or file that is refused leaves no chat behind). A long chat opens at its end,
+with "Earlier messages" above. Open or closed, the chosen chat and the width are
+kept in the browser (`localStorage`) and come back after a navigation, a reload
+or a lost connection (a running answer comes back with its indicator and
+"Stop"); the text being written is never wiped by an update of the panel.
+Notices are shown in the user's language by their code.
 
 What the panel shows of a chat: the user's messages, the model's answers as
 markdown without anything that loads by itself — no `<img>` with an outside
@@ -62,9 +64,14 @@ own and not borrowed: it reads the session reference and the impersonation
 flag itself, and passes them with every call, so each one is checked against
 the session's scope at that moment; the static render shows nothing of the
 user. It does not log events (LiveView would log their parameters, the user's
-text). The panel's classes come from the module's sources (`css_sources/0`),
-and its browser hooks are runtime colocated hooks, so the host bundles nothing
-for it; it needs core's admin layout with header widgets and the dock column.
+text), and an exception in an event is caught and logged as its class only (a
+crash report would carry the draft). The panel's classes come from the
+module's sources (`css_sources/0`), and its browser hooks are runtime colocated
+hooks, so the host bundles nothing for it; it needs core's admin layout with
+header widgets and the dock column. The hooks are inline scripts without a
+nonce: a host with a Content-Security-Policy must allow `script-src
+'unsafe-inline'`, or the panel shows but does not remember its state, resize
+or send on Enter.
 The tools called from the panel get the user's locale and the endpoint's URL as
 their request context, and the client address only when the host's LiveView
 socket passes `:peer_data` and `:x_headers` in its `connect_info`.

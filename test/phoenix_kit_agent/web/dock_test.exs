@@ -127,22 +127,39 @@ defmodule PhoenixKitAgent.Web.DockTest do
     end)
   end
 
-  # Polls the view until `fun.(html)` holds (at most `timeout` ms).
-  defp eventually(view, fun, timeout \\ 3_000) do
-    html = render(view)
+  # The panel once every turn's task is gone: what a task broadcast (its
+  # messages) went out before it ended, so it is with the panel before the
+  # render asks for it (all on one node).
+  defp await_turn(view) do
+    await_children(PhoenixKitAgent.Turns.TaskSupervisor)
+    render(view)
+  end
 
-    cond do
-      fun.(html) ->
-        html
+  # The panel once the turn of `chat` has ended: the test hears the monitor's
+  # `:agent_turn_finished` (`listen/2` first), and once the monitor has
+  # handled its next request its broadcast has gone to the panel as well.
+  defp await_turn_end(view, chat) do
+    uuid = chat.uuid
+    assert_receive {:agent_turn_finished, ^uuid, _turn_ref}, 5_000
+    _ = :sys.get_state(PhoenixKitAgent.Turns.Monitor)
+    render(view)
+  end
 
-      timeout <= 0 ->
-        flunk("the panel never got there:\n" <> html)
+  defp listen(ctx, chat),
+    do: :ok = Conversations.subscribe(ctx.ref, chat.uuid, impersonated: false)
 
-      true ->
-        receive do
-        after
-          20 -> eventually(view, fun, timeout - 20)
-        end
+  # The panel once its files are added (`render_async/1`) and read: the
+  # processing tasks are gone, and their broadcasts are with the panel.
+  defp await_files(view) do
+    render_async(view)
+    await_children(PhoenixKitAgent.Attachments.TaskSupervisor)
+    render(view)
+  end
+
+  defp await_children(supervisor) do
+    for pid <- Task.Supervisor.children(supervisor) do
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 5_000
     end
   end
 
@@ -190,6 +207,52 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
   # The chat topics the panel's process listens to.
   defp subscriptions(view), do: Registry.keys(:phoenix_kit_internal_pubsub, view.pid)
+
+  # Holds the test database (the sandbox's one connection) in a transaction
+  # of another process until the returned function is called: whatever needs
+  # the database meanwhile — `Attachments.add/4` in the panel's task — waits.
+  defp hold_the_database do
+    test = self()
+
+    holder =
+      spawn(fn ->
+        Repo.transaction(fn ->
+          send(test, :holding)
+
+          receive do
+            :release -> :ok
+          end
+        end)
+
+        send(test, :released)
+      end)
+
+    assert_receive :holding
+
+    fn ->
+      send(holder, :release)
+      assert_receive :released
+    end
+  end
+
+  # The JS commands of an element's `phx-click`, as `[op, args]` pairs.
+  defp click_ops(view, selector) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query(selector)
+    |> LazyHTML.attribute("phx-click")
+    |> hd()
+    |> Jason.decode!()
+  end
+
+  defp hook_script(view, name) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query("script[data-phx-runtime-hook$='#{name}']")
+    |> LazyHTML.text()
+  end
 
   # ── the header widget ───────────────────────────────────────────────
 
@@ -329,7 +392,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
   # ── the list of chats ───────────────────────────────────────────────
 
-  describe "the list of chats" do
+  describe "the list of chats:" do
     test "newest first, 20 at a time, then more", ctx do
       chats =
         for n <- 1..23 do
@@ -362,7 +425,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       answer_next(text_answer("Hello."))
       send_text(view, "A fresh question")
-      eventually(view, &(&1 =~ "Hello."))
+      assert await_turn(view) =~ "Hello."
 
       assert [new] = Enum.filter(chats_of(ctx.user), &(&1.uuid != old.uuid))
       assert hd(chat_ids(render(view))) == "pk-agent-chat-#{new.uuid}"
@@ -385,7 +448,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
       open_chat(view, older)
       answer_next(text_answer("Fine."))
       send_text(view, "Back to this one")
-      eventually(view, &(&1 =~ "Fine."))
+      assert await_turn(view) =~ "Fine."
 
       assert chat_ids(render(view)) == [
                "pk-agent-chat-#{older.uuid}",
@@ -395,11 +458,19 @@ defmodule PhoenixKitAgent.Web.DockTest do
       view |> element("#pk-agent-new-chat") |> render_click()
       answer_next(text_answer("Sure."))
       send_text(view, "Name me by this")
-      eventually(view, &(&1 =~ "Sure."))
+      assert await_turn(view) =~ "Sure."
 
       assert has_element?(view, "#pk-agent-panel h2", "Name me by this")
       [top | _] = chat_ids(render(view))
       assert has_element?(view, "##{top}", "Name me by this")
+    end
+
+    test "the times of the list are in the user's language", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Two days"})
+      chat |> Ecto.Changeset.change(last_message_at: at(2 * 86_400 + 60)) |> Repo.update!()
+
+      view = dock(ctx, locale: "et")
+      assert has_element?(view, "#pk-agent-chat-time-#{chat.uuid}", "päeva tagasi")
     end
 
     test "renames and archives the user's own chat", ctx do
@@ -447,9 +518,126 @@ defmodule PhoenixKitAgent.Web.DockTest do
     end
   end
 
+  # ── the button, the list and the panel in the browser ──────────────
+
+  describe "the browser:" do
+    test "the list opens from a focusable element that is not a <button> (Safari)", ctx do
+      view = dock(ctx)
+
+      assert has_element?(view, "div#pk-agent-dock-button[role=button][tabindex='0']")
+      refute has_element?(view, "button#pk-agent-dock-button")
+      assert view |> element("#pk-agent-dock-button") |> render_click() =~ "pk-agent-new-chat"
+    end
+
+    test "choosing a chat or New chat takes the focus out of the list", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Focus"})
+      view = dock(ctx)
+
+      assert ["focus", %{"to" => "#pk-agent-input"}] in click_ops(view, "#pk-agent-new-chat")
+
+      assert ["focus", %{"to" => "#pk-agent-panel"}] in click_ops(
+               view,
+               "#pk-agent-chat-#{chat.uuid} [data-role=open]"
+             )
+
+      assert has_element?(view, "#pk-agent-panel[tabindex='-1']")
+    end
+
+    test "the draft goes to the server only when the field is left", ctx do
+      view = dock(ctx)
+      assert has_element?(view, "#pk-agent-input[phx-debounce=blur]")
+    end
+
+    test "the browser's memory is pushed on mount and again after a reconnect", ctx do
+      script = ctx |> dock() |> hook_script(".DockState")
+
+      assert script =~ ~r/mounted\(\)\s*\{[^`]*this\.restore\(\)\s*\},\s*reconnected\(\)/
+      assert script =~ ~r/reconnected\(\)\s*\{\s*this\.restore\(\)/
+      assert script =~ ~r/restore\(\)\s*\{[^}]*pushEvent\("restore"/
+    end
+
+    test "restore opens the user's own chat and remembers it, once", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Remembered"})
+      uuid = chat.uuid
+      view = dock(ctx)
+
+      render_hook(view, "restore", %{"open" => true, "conversation_uuid" => uuid})
+      assert has_element?(view, "#pk-agent-panel[data-conversation='#{uuid}']")
+      assert_push_event(view, "pk-agent:store", %{open: true, conversation_uuid: ^uuid})
+
+      # A second restore (a reconnect) neither doubles the subscription nor the feed.
+      turn_message!(chat, %{role: "notice", content: "Only once."})
+      render_hook(view, "restore", %{"open" => true, "conversation_uuid" => uuid})
+
+      assert subscriptions(view) == [Conversations.topic(uuid)]
+
+      assert view
+             |> render()
+             |> LazyHTML.from_fragment()
+             |> LazyHTML.query("#pk-agent-feed [data-role=notice]")
+             |> Enum.count() == 1
+    end
+
+    test "a chat of another user, an archived one or a malformed uuid is forgotten", ctx do
+      other = user_with(["agent"], "stranger")
+      theirs = conversation_fixture(other, %{title: "Their chat"})
+      archived = conversation_fixture(ctx.user, %{title: "Put away"})
+      {:ok, _} = Conversations.archive_conversation(ctx.ref, archived.uuid, impersonated: false)
+
+      view = dock(ctx)
+
+      for uuid <- [theirs.uuid, archived.uuid, "not-a-uuid"] do
+        render_hook(view, "restore", %{"open" => true, "conversation_uuid" => uuid})
+
+        assert_push_event(view, "pk-agent:store", %{open: true, conversation_uuid: nil})
+        refute has_element?(view, "#pk-agent-panel[data-conversation]")
+        refute has_element?(view, "#pk-agent-dock-error")
+        assert subscriptions(view) == []
+      end
+
+      refute render(view) =~ "Their chat"
+    end
+
+    test "a panel remembered as closed reads nothing until a chat is opened", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Closed"})
+      lost = UUIDv7.generate()
+      since = at(Config.turn_deadline_s() + 120)
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: since, busy_turn_ref: lost]
+      )
+
+      view = dock(ctx)
+      render_hook(view, "restore", %{"open" => false, "conversation_uuid" => chat.uuid})
+
+      refute has_element?(view, "#pk-agent-panel[data-conversation]")
+      assert subscriptions(view) == []
+      assert messages(chat) == []
+      assert {_since, ^lost} = lock_of(chat)
+
+      open_chat(view, chat)
+      assert [%Message{role: "notice", error: "interrupted"}] = messages(chat)
+    end
+
+    test "closing the panel and New chat are remembered", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Kept in mind"})
+      uuid = chat.uuid
+      view = dock(ctx)
+
+      open_chat(view, chat)
+      assert_push_event(view, "pk-agent:store", %{open: true, conversation_uuid: ^uuid})
+
+      view |> element("#pk-agent-close") |> render_click()
+      assert_push_event(view, "pk-agent:store", %{open: false, conversation_uuid: ^uuid})
+
+      view |> element("#pk-agent-new-chat") |> render_click()
+      assert_push_event(view, "pk-agent:store", %{open: true, conversation_uuid: nil})
+    end
+  end
+
   # ── a turn in the panel ─────────────────────────────────────────────
 
-  describe "sending" do
+  describe "sending:" do
     setup ctx do
       %{chat: conversation_fixture(ctx.user, %{title: "Work"})}
     end
@@ -457,6 +645,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
     test "starts a turn and the feed follows it over PubSub", ctx do
       view = dock(ctx)
       open_chat(view, ctx.chat)
+      listen(ctx, ctx.chat)
 
       answer_next(
         text_answer(
@@ -466,7 +655,8 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       send_text(view, "What is new?")
 
-      html = eventually(view, &(&1 =~ "it is"))
+      html = await_turn(view)
+      assert html =~ "it is"
 
       assert_received {:model_request, body}
       system = body["messages"] |> hd() |> Map.fetch!("content")
@@ -483,7 +673,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert LazyHTML.attribute(link, "rel") == ["noopener noreferrer nofollow"]
       assert has_element?(view, "#pk-agent-feed [data-link-domain]", "docs.example.org")
 
-      eventually(view, &(not (&1 =~ "pk-agent-waiting")))
+      refute await_turn_end(view, ctx.chat) =~ "pk-agent-waiting"
       assert [%Message{role: "user"}, %Message{role: "assistant"}] = messages(ctx.chat)
     end
 
@@ -497,7 +687,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
       answer_next(text_answer("Hi"))
 
       send_text(view, "Start somewhere")
-      eventually(view, &(&1 =~ "Start somewhere"))
+      assert await_turn(view) =~ "Start somewhere"
 
       assert Enum.any?(chats_of(ctx.user), &(&1.title == "Start somewhere"))
     end
@@ -529,7 +719,8 @@ defmodule PhoenixKitAgent.Web.DockTest do
       answer_next(text_answer("Three things."))
 
       send_text(view, "List them")
-      html = eventually(view, &(&1 =~ "Three things."))
+      html = await_turn(view)
+      assert html =~ "Three things."
 
       assert has_element?(view, "#pk-agent-feed [data-role=tool]", "agenttest.list_items")
       assert has_element?(view, "#pk-agent-feed [data-role=tool]", "3")
@@ -554,6 +745,80 @@ defmodule PhoenixKitAgent.Web.DockTest do
       # The turn that holds the chat is shown, so the Stop the text speaks of is there.
       assert has_element?(view, "#pk-agent-stop")
       assert has_element?(view, "#pk-agent-waiting")
+      # A chat that was there before stays, refused or not.
+      assert Repo.get!(Conversation, ctx.chat.uuid).status == "active"
+    end
+
+    test "a refused first message leaves no chat behind", ctx do
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", "")
+      view = dock(ctx)
+
+      send_text(view, "Hello there")
+
+      assert has_element?(view, "#pk-agent-dock-error", "No model is chosen")
+      refute has_element?(view, "#pk-agent-panel[data-conversation]")
+      assert chat_ids(render(view)) == [ctx.chat.uuid] |> Enum.map(&"pk-agent-chat-#{&1}")
+
+      assert [%Conversation{uuid: kept}] =
+               Enum.reject(chats_of(ctx.user), &(&1.status == "deleted"))
+
+      assert kept == ctx.chat.uuid
+
+      # The text is still the browser's: nothing told it to clear the field.
+      refute_push_event(view, "pk-agent:sent", %{})
+    end
+
+    test "a first message too long for the model leaves no chat behind", ctx do
+      view = dock(ctx)
+
+      send_text(view, String.duplicate("x", Config.history_chars() + 1))
+
+      assert has_element?(view, "#pk-agent-dock-error", "too long")
+
+      assert [%Conversation{uuid: kept}] =
+               Enum.reject(chats_of(ctx.user), &(&1.status == "deleted"))
+
+      assert kept == ctx.chat.uuid
+    end
+
+    test "a send after a turn whose end was never heard goes through", ctx do
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: UUIDv7.generate()]
+      )
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      assert has_element?(view, "#pk-agent-stop")
+
+      # The turn ended, but its broadcast never reached this panel.
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+        set: [busy_since: nil, busy_turn_ref: nil]
+      )
+
+      answer_next(text_answer("Through."))
+      send_text(view, "Again")
+
+      refute has_element?(view, "#pk-agent-dock-error")
+      assert await_turn(view) =~ "Through."
+      assert [%Message{role: "user", content: "Again"} | _] = messages(ctx.chat)
+    end
+
+    test "an exception in an event is a notice; nothing of the event is logged", ctx do
+      secret = "Secret-#{System.unique_integer([:positive])}"
+      view = dock(ctx)
+      monitor = Process.monitor(view.pid)
+
+      # Every new chat is refused by the database: the insert raises.
+      Repo.query!(
+        "ALTER TABLE phoenix_kit_agent_conversations ADD CONSTRAINT pk_agent_probe CHECK (false) NOT VALID"
+      )
+
+      {_, logs} = LogProbe.capture(fn -> send_text(view, "Ask-" <> secret) end)
+
+      assert has_element?(view, "#pk-agent-dock-error")
+      refute_received {:DOWN, ^monitor, :process, _, _}
+      assert Enum.any?(logs, &(&1 =~ "ConstraintError"))
+      for line <- logs, do: refute(line =~ secret, "leaked to the log: " <> line)
     end
 
     test "a second send while the turn runs is let go without a word", ctx do
@@ -576,7 +841,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
       answer_next(text_answer("Ok."))
 
       send_text(view, "Where am I?", "https://evil.example/phish")
-      eventually(view, &(&1 =~ "Ok."))
+      assert await_turn(view) =~ "Ok."
 
       assert_received {:model_request, body}
       refute Jason.encode!(body) =~ "evil.example"
@@ -605,7 +870,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert_receive {:agent_test_tool, "agenttest.list_items", _input, tool_ctx}, 3_000
       assert tool_ctx.language == "et"
       assert tool_ctx.base_url == Endpoint.url()
-      eventually(view, &(&1 =~ "Done."))
+      assert await_turn(view) =~ "Done."
     end
 
     test "a send while a file is still read waits for it, and makes no turn", ctx do
@@ -665,6 +930,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
     test "Stop ends the turn and the indicator goes away", ctx do
       view = dock(ctx)
       open_chat(view, ctx.chat)
+      listen(ctx, ctx.chat)
       hang_next()
 
       send_text(view, "Take your time")
@@ -673,7 +939,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       view |> element("#pk-agent-stop") |> render_click()
 
-      eventually(view, &(not (&1 =~ "pk-agent-waiting")), 5_000)
+      refute await_turn_end(view, ctx.chat) =~ "pk-agent-waiting"
       assert lock_of(ctx.chat) == {nil, nil}
       refute Enum.any?(messages(ctx.chat), &(&1.role == "assistant"))
     end
@@ -695,9 +961,9 @@ defmodule PhoenixKitAgent.Web.DockTest do
           ])
           |> render_upload(name)
 
-          eventually(view, &(&1 =~ ~s(data-status="ready")))
+          assert await_files(view) =~ ~s(data-status="ready")
           send_text(view, "Ask-" <> secret)
-          eventually(view, &(&1 =~ "Answer-" <> secret))
+          assert await_turn(view) =~ "Answer-" <> secret
         end)
 
       for line <- logs, do: refute(line =~ secret, "leaked to the log: " <> line)
@@ -763,7 +1029,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
   # ── attachments ────────────────────────────────────────────────────
 
-  describe "attachments" do
+  describe "attachments:" do
     setup ctx do
       %{chat: conversation_fixture(ctx.user, %{title: "Files"})}
     end
@@ -796,7 +1062,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       upload(view, "notes.txt", "Shelf height 2.1 m", "text/plain")
 
-      eventually(view, &(&1 =~ ~s(data-status="ready")))
+      assert await_files(view) =~ ~s(data-status="ready")
 
       assert [%Attachment{filename: "notes.txt", status: "ready"} = att] =
                attachments_of(ctx.chat)
@@ -805,7 +1071,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       answer_next(text_answer("Noted."))
       send_text(view, "Read the file")
-      eventually(view, &(&1 =~ "Noted."))
+      assert await_turn(view) =~ "Noted."
 
       assert_received {:model_request, body}
       assert Jason.encode!(body) =~ "Shelf height 2.1 m"
@@ -818,7 +1084,8 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       upload(view, "table.csv", <<0xFF, 0xFE, ?a, 0, ?b, 0>>, "text/csv")
 
-      html = eventually(view, &(&1 =~ "pk-agent-dock-error"))
+      html = render_async(view)
+      assert html =~ "pk-agent-dock-error"
       assert html =~ "UTF-8"
       refute html =~ "unsupported_encoding"
       assert attachments_of(ctx.chat) == []
@@ -859,12 +1126,76 @@ defmodule PhoenixKitAgent.Web.DockTest do
       {_, logs} =
         LogProbe.capture(fn ->
           upload(view, "File-#{secret}.txt", "text", "text/plain")
-          eventually(view, &(&1 =~ "pk-agent-dock-error"))
+          assert render_async(view) =~ "pk-agent-dock-error"
         end)
 
       refute_received {:DOWN, ^monitor, :process, _, _}
       for line <- logs, do: refute(line =~ secret, "leaked to the log: " <> line)
       refute Enum.any?(logs, &(&1 =~ "FunctionClauseError" and &1 =~ "Keyword"))
+    end
+
+    test "a file that is added after its chat was left stays with its chat", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      release = hold_the_database()
+      upload(view, "late.txt", "Late words", "text/plain")
+      # The panel moves on while `Attachments.add/4` waits for the database.
+      view |> element("#pk-agent-new-chat") |> render_click()
+      release.()
+      render_async(view)
+
+      refute has_element?(view, "#pk-agent-attachments")
+
+      assert [%Attachment{filename: "late.txt", message_uuid: nil} = att] =
+               attachments_of(ctx.chat)
+
+      open_chat(view, ctx.chat)
+      assert has_element?(view, "#pk-agent-att-#{att.uuid}")
+    end
+
+    test "a cancel of an upload that is with Attachments.add/4 already changes nothing", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      release = hold_the_database()
+      upload(view, "kept.txt", "Kept words", "text/plain")
+      [entry_ref] = view |> render() |> upload_refs()
+
+      render_click(view, "cancel_upload", %{"ref" => entry_ref})
+      assert has_element?(view, "#pk-agent-upload-#{entry_ref}")
+
+      release.()
+      render_async(view)
+      assert await_files(view) =~ ~s(data-status="ready")
+      assert [%Attachment{filename: "kept.txt", status: "ready"}] = attachments_of(ctx.chat)
+    end
+
+    test "a file for which no chat can be made is dropped from the uploads", ctx do
+      view = dock(ctx)
+      :ok = Permissions.revoke_permission(ctx.role.uuid, "agent")
+
+      upload(view, "orphan.txt", "No home", "text/plain")
+
+      assert has_element?(view, "#pk-agent-dock-error")
+      assert view |> render() |> upload_refs() == []
+      assert [%Conversation{uuid: uuid}] = chats_of(ctx.user)
+      assert uuid == ctx.chat.uuid
+    end
+
+    test "a refused file leaves no chat behind when it was the one to make it", ctx do
+      view = dock(ctx)
+
+      upload(view, "table.csv", <<0xFF, 0xFE, ?a, 0, ?b, 0>>, "text/csv")
+      render_async(view)
+
+      assert has_element?(view, "#pk-agent-dock-error", "UTF-8")
+      refute has_element?(view, "#pk-agent-panel[data-conversation]")
+
+      assert [%Conversation{uuid: kept}] =
+               Enum.reject(chats_of(ctx.user), &(&1.status == "deleted"))
+
+      assert kept == ctx.chat.uuid
     end
 
     test "a failed file is shown with its reason and can be discarded", ctx do
@@ -898,7 +1229,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
   # ── the feed and its chat ──────────────────────────────────────────
 
-  describe "the feed" do
+  describe "the feed:" do
     setup ctx do
       %{chat: conversation_fixture(ctx.user, %{title: "Here"})}
     end
@@ -956,7 +1287,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       shown = turn_message!(ctx.chat, %{role: "assistant", content: "Shown first"})
       send(view.pid, {:agent_message_added, ctx.chat.uuid, shown.uuid})
-      eventually(view, &(&1 =~ "Shown first"))
+      assert render(view) =~ "Shown first"
 
       # Written before the shown one, committed after it.
       late = turn_message!(ctx.chat, %{role: "assistant", content: "Late but here"})
@@ -966,7 +1297,77 @@ defmodule PhoenixKitAgent.Web.DockTest do
       )
 
       send(view.pid, {:agent_message_added, ctx.chat.uuid, late.uuid})
-      eventually(view, &(&1 =~ "Late but here"))
+      assert render(view) =~ "Late but here"
+    end
+
+    test "the end of a turn shows the files that wait for a message again", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      listen(ctx, ctx.chat)
+
+      # A file the panel has not heard of (taken off the message by the turn).
+      waiting =
+        Repo.insert!(%Attachment{
+          conversation_uuid: ctx.chat.uuid,
+          user_uuid: ctx.user.uuid,
+          filename: "back.txt",
+          content_type: "text/plain",
+          size_bytes: 4,
+          kind: "text",
+          status: "ready",
+          truncated: false
+        })
+
+      answer_next(text_answer("Answered."))
+      send_text(view, "Go")
+      html = await_turn_end(view, ctx.chat)
+      assert html =~ "Answered."
+      refute html =~ "pk-agent-waiting"
+
+      assert has_element?(view, "#pk-agent-att-#{waiting.uuid}")
+    end
+
+    test "a chat archived elsewhere does not come back to the list with a message", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      {:ok, _} = Conversations.archive_conversation(ctx.ref, ctx.chat.uuid, impersonated: false)
+      turn_message!(ctx.chat, %{role: "user", content: "From another tab"})
+
+      assert render(view) =~ "From another tab"
+      refute has_element?(view, "#pk-agent-chat-#{ctx.chat.uuid}")
+    end
+
+    test "the indicator says Stopping until the stopped turn has ended", ctx do
+      Application.put_env(:phoenix_kit_agent, :turn_stop_grace_ms, 10_000)
+      on_exit(fn -> Application.put_env(:phoenix_kit_agent, :turn_stop_grace_ms, 200) end)
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      hang_next()
+
+      send_text(view, "Slowly")
+      assert_receive {:model_waiting, _}, 3_000
+      view |> element("#pk-agent-stop") |> render_click()
+      assert has_element?(view, "#pk-agent-waiting[data-activity=stopping]")
+
+      # A last message of the turn arrives while it stops.
+      turn_message!(ctx.chat, %{role: "user", content: "Late words"})
+      assert render(view) =~ "Late words"
+
+      assert has_element?(view, "#pk-agent-waiting[data-activity=stopping]")
+    end
+
+    test "a notice is shown in the panel's words for its code", ctx do
+      turn_message!(ctx.chat, %{role: "notice", content: "Stored words", error: "interrupted"})
+      turn_message!(ctx.chat, %{role: "notice", content: "Words of its own", error: "api_error"})
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      assert has_element?(view, "#pk-agent-feed [data-role=notice]", "The answer was interrupted")
+      refute render(view) =~ "Stored words"
+      assert has_element?(view, "#pk-agent-feed [data-role=notice]", "Words of its own")
     end
 
     test "a long chat opens at its end; the earlier messages come on request", ctx do
@@ -1032,7 +1433,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
   # ── the user's own instructions ────────────────────────────────────
 
-  describe "personal instructions" do
+  describe "personal instructions:" do
     test "are read and written for the session's user", ctx do
       view = dock(ctx)
       view |> element("#pk-agent-instructions-toggle") |> render_click()

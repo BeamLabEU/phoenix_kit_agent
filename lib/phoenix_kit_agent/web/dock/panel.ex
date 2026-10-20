@@ -7,10 +7,15 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
 
   The hooks are runtime colocated hooks (the host bundles nothing for them),
   and live here because a colocated hook is named after the module that
-  renders the element using it:
+  renders the element using it. They run from inline `<script>` elements, so
+  under a Content-Security-Policy the page must allow `script-src
+  'unsafe-inline'`; the scripts carry no nonce. Without them the panel shows,
+  but forgets its state, does not resize, and Enter does not send:
 
     * `.DockState` — keeps the panel open or closed, the chosen chat and the
-      width in `localStorage`, and tells the LiveView on mount (`restore`);
+      width in `localStorage`, and tells the LiveView on mount and when it
+      joins again after a lost connection (`restore`): a re-join mounts the
+      LiveView afresh, while the hook's element stays and gets no `mounted`;
     * `.Feed` — keeps the feed scrolled to its end while the user is there;
     * `.Composer` — Enter sends, the page's path goes with the form, the text
       is cleared once the turn started (`pk-agent:sent`). The textarea is
@@ -66,12 +71,15 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       />
 
       <%!-- The panel: over the dock column from lg up, the whole screen below --%>
+      <%!-- Focusable, so that choosing a chat moves the focus here and the
+           list (open while it has the focus) closes --%>
       <section
         id="pk-agent-panel"
+        tabindex="-1"
         data-conversation={@conversation && @conversation.uuid}
         aria-label={gettext("AI assistant")}
         class={[
-          "hidden [.pk-dock-open_&]:flex flex-col",
+          "hidden [.pk-dock-open_&]:flex flex-col outline-none",
           "fixed top-16 bottom-0 right-0 z-40 w-[var(--pk-dock-width,25rem)]",
           "max-lg:left-0 max-lg:w-auto",
           "bg-base-100 border-l border-base-300 max-lg:border-l-0"
@@ -191,9 +199,11 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
   defp chat_list(assigns) do
     ~H"""
     <div class="dropdown dropdown-end">
-      <button
+      <%!-- Not a <button>: Safari does not focus a clicked one, so the
+           focus-based dropdown would never open (core's bell does the same) --%>
+      <div
         id="pk-agent-dock-button"
-        type="button"
+        role="button"
         tabindex="0"
         phx-click="refresh_chats"
         class="btn btn-ghost btn-circle"
@@ -201,7 +211,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         title={gettext("AI assistant")}
       >
         <.icon name="hero-sparkles" class="w-5 h-5" />
-      </button>
+      </div>
       <div
         id="pk-agent-chat-list"
         tabindex="0"
@@ -211,7 +221,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           <button
             id="pk-agent-new-chat"
             type="button"
-            phx-click={AdminDock.open() |> JS.push("new_chat")}
+            phx-click={AdminDock.open() |> JS.push("new_chat") |> JS.focus(to: "#pk-agent-input")}
             class="btn btn-primary btn-sm w-full"
           >
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New chat")}
@@ -247,7 +257,11 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
                 <button
                   type="button"
                   data-role="open"
-                  phx-click={AdminDock.open() |> JS.push("open_chat", value: %{uuid: chat.uuid})}
+                  phx-click={
+                    AdminDock.open()
+                    |> JS.push("open_chat", value: %{uuid: chat.uuid})
+                    |> JS.focus(to: "#pk-agent-panel")
+                  }
                   class="flex-1 min-w-0 text-left"
                 >
                   <span class="block truncate">{chat_title(chat)}</span>
@@ -339,6 +353,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         name="message[text]"
         phx-hook=".Composer"
         phx-update="ignore"
+        phx-debounce="blur"
         rows="2"
         placeholder={gettext("Write a message…")}
         aria-label={gettext("Message")}
@@ -384,14 +399,19 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             document.body.style.setProperty("--pk-dock-width", this.clamp(state.width) + "px")
           }
           if (state.open === true) document.body.classList.add("pk-dock-open")
-          this.pushEvent("restore", {
-            open: state.open === true,
-            conversation_uuid: typeof state.conversation_uuid === "string" ? state.conversation_uuid : null
-          })
           this.handleEvent("pk-agent:store", (patch) => this.write(patch))
           this.el.addEventListener("pointerdown", (event) => {
             const handle = event.target.closest("[data-pk-agent-resize]")
             if (handle) this.resize(event, handle)
+          })
+          this.restore()
+        },
+        reconnected() { this.restore() },
+        restore() {
+          const state = this.read()
+          this.pushEvent("restore", {
+            open: state.open === true,
+            conversation_uuid: typeof state.conversation_uuid === "string" ? state.conversation_uuid : null
           })
         },
         read() {

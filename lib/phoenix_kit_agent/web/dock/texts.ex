@@ -3,8 +3,9 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   What the chat panel (`PhoenixKitAgent.Web.Dock`) tells a person instead of a
   code: the refusals of `PhoenixKitAgent.Conversations`,
   `PhoenixKitAgent.Turns` and `PhoenixKitAgent.Attachments`, the codes of a
-  failed attachment (`PhoenixKitAgent.Attachments.Processor`) and the upload
-  errors of LiveView. A code this module does not know gets a general text,
+  failed attachment (`PhoenixKitAgent.Attachments.Processor`), the notices of
+  a turn (stored in English, shown by their code) and the upload errors of
+  LiveView. A code this module does not know gets a general text,
   never the code itself.
   """
 
@@ -119,6 +120,53 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
     do: gettext("The server was too busy to read it. Add it again.")
 
   def attachment_error(_crashed_or_unknown), do: gettext("It could not be read.")
+
+  @doc """
+  The text of a notice in the feed by its `error` code, in the panel's
+  language, or `nil` for a code whose stored text says more than the code (a
+  model error, which also tells whether the files were taken off the
+  message): that one is shown as it was written.
+  """
+  @spec notice(String.t() | nil) :: String.t() | nil
+  def notice(code) when code in ["interrupted", "lock_lost"],
+    do: gettext("The answer was interrupted. Try again.")
+
+  def notice("deadline"),
+    do:
+      gettext(
+        "The answer took longer than allowed and was stopped. Try again, or ask for less at once."
+      )
+
+  def notice("empty_answer"), do: gettext("The model gave no answer. Try again.")
+
+  def notice("max_tool_rounds"),
+    do: gettext("The assistant used all its tool rounds for this turn.")
+
+  def notice("daily_cost_limit"),
+    do:
+      gettext(
+        "You have reached your daily spending limit for the assistant. It resets at midnight."
+      )
+
+  def notice("monthly_cost_limit"),
+    do:
+      gettext(
+        "You have reached your monthly spending limit for the assistant. It resets on the first day of next month."
+      )
+
+  def notice("daily_turn_limit"),
+    do: gettext("You have used all your assistant turns for today. They reset at midnight.")
+
+  def notice(code)
+      when code in ["session_gone", "mismatch", "inactive", "unconfirmed", "referral_required"],
+      do: gettext("Your session has ended, so the assistant stopped.")
+
+  def notice("forbidden"), do: gettext("The assistant is no longer available to you.")
+  def notice("ai_disabled"), do: gettext("The AI module is switched off.")
+  def notice("rate_limited"), do: gettext("Too many requests at once; try again in a minute.")
+  def notice("not_found"), do: gettext("This chat is gone.")
+  def notice("budget_exceeded"), do: gettext("The AI budget is used up.")
+  def notice(_code_with_its_own_text), do: nil
 
   @doc "The text for an error of a LiveView upload entry."
   @spec upload_error(atom()) :: String.t()

@@ -104,7 +104,10 @@ and `Web.Markdown`).
   `rel="noopener noreferrer nofollow"`), a tool call only by its
   `tool_summary`. A refusal is shown through `Web.Dock.Texts`, never as a code.
   The LiveView runs with `log: false` (event parameters are the user's text);
-  an exception at a turn's start is caught and logged as its class only. The
+  every `handle_event` / `handle_info` / `handle_async` / upload progress goes
+  through `guarded/2`, which catches an exception and logs its class only (a
+  crash report carries the event and the whole state) — keep new callbacks
+  behind it; `mount` and `render` are not covered. The
   path given to `Attachments.add/4` is LiveView's own upload file
   (`consume_uploaded_entry/3` with `:postpone` until `add/4` is done), and
   `add/4` runs in its task under a guard that logs only the exception's class.
@@ -112,7 +115,12 @@ and `Web.Markdown`).
   dependency's extracted hooks would not reach the host's bundle; they live in
   `Web.Dock.Panel` with the elements that use them (a colocated hook is named
   after its module). An element a hook owns is `phx-update="ignore"` (the
-  composer's textarea).
+  composer's textarea). A re-join after a lost connection mounts the LiveView
+  afresh but calls the hook's `reconnected()`, not `mounted()`: state the
+  server must get back (`restore`) is pushed from both. They are inline
+  scripts: a host CSP needs `script-src 'unsafe-inline'`. A daisyUI focus
+  dropdown's trigger is a `div` with `tabindex="0"`, never a `<button>`
+  (Safari does not focus a clicked button).
 - **Prompt input from a browser** (`page:`, `locale:` of `Turns.start/6`) is
   untrusted: `PhoenixKitAgent.Prompt` drops a value with a control character and
   cuts a long one.
