@@ -37,6 +37,7 @@ defmodule PhoenixKitAgent do
 
   alias PhoenixKit.Dashboard.Tab
   alias PhoenixKit.Settings
+  alias PhoenixKitAgent.Turns.Runner
 
   @enabled_key "agent_enabled"
 
@@ -130,6 +131,17 @@ defmodule PhoenixKitAgent do
       )
     ]
   end
+
+  @impl PhoenixKit.Module
+  def children, do: [PhoenixKitAgent.Turns.Supervisor]
+
+  @doc """
+  The `phoenix_kit_ai` usage sink: a request row whose `attribution` names an
+  assistant message (`"agent_message_uuid"`) is linked to it
+  (`messages.ai_request_uuid`). See `PhoenixKitAgent.Turns.Runner`.
+  """
+  @spec handle_ai_usage(struct()) :: :ok
+  def handle_ai_usage(request), do: Runner.record_usage(request)
 
   @doc """
   Before a user row is deleted: removes their attachment files from the

@@ -157,17 +157,29 @@ defmodule PhoenixKitAgent.Conversations do
   @spec add_message(session_ref(), term(), map(), keyword()) ::
           {:ok, Message.t()} | {:error, refusal() | Ecto.Changeset.t()}
   def add_message(session_ref, conversation_uuid, attrs, opts) when is_map(attrs) do
+    with_user(session_ref, opts, fn user_uuid ->
+      add_turn_message(user_uuid, conversation_uuid, attrs)
+    end)
+  end
+
+  @doc false
+  # `add_message/4` without the session checks, for `PhoenixKitAgent.Turns`: the
+  # turn checked the session when it started and checks it again every round,
+  # and must still be able to write the notice that says the session is gone.
+  # The chat must belong to `user_uuid` (not deleted), as in `add_message/4`.
+  # `fields` are set on the struct, never cast: `:uuid` (given to the model
+  # call before the message exists) and `:ai_request_uuid`.
+  @spec add_turn_message(String.t(), term(), map(), keyword()) ::
+          {:ok, Message.t()} | {:error, :not_found | Ecto.Changeset.t()}
+  def add_turn_message(user_uuid, conversation_uuid, attrs, fields \\ []) when is_map(attrs) do
     result =
-      with_user(session_ref, opts, fn user_uuid ->
-        repo().transaction(fn ->
-          with {:ok, conversation} <-
-                 fetch_owned(user_uuid, conversation_uuid, lock: true),
-               {:ok, message} <- insert_message(conversation, attrs) do
-            message
-          else
-            {:error, reason} -> repo().rollback(reason)
-          end
-        end)
+      repo().transaction(fn ->
+        with {:ok, conversation} <- fetch_owned(user_uuid, conversation_uuid, lock: true),
+             {:ok, message} <- insert_message(conversation, attrs, fields) do
+          message
+        else
+          {:error, reason} -> repo().rollback(reason)
+        end
       end)
 
     with {:ok, %Message{} = message} <- result do
@@ -179,6 +191,15 @@ defmodule PhoenixKitAgent.Conversations do
 
     result
   end
+
+  @doc """
+  Checks 1-3 of the moduledoc for a session, without a chat: `{:ok,
+  user_uuid}` when the session may use the assistant now.
+  """
+  @spec authorize_session(session_ref(), keyword()) ::
+          {:ok, String.t()} | {:error, refusal()}
+  def authorize_session(session_ref, opts),
+    do: with_user(session_ref, opts, fn user_uuid -> {:ok, user_uuid} end)
 
   @doc """
   Subscribes the calling process to the chat's topic, but only after the
@@ -278,8 +299,14 @@ defmodule PhoenixKitAgent.Conversations do
   defp trim(title) when is_binary(title), do: String.trim(title)
   defp trim(title), do: title
 
-  defp insert_message(conversation, attrs) do
-    changeset = Message.changeset(%Message{conversation_uuid: conversation.uuid}, attrs)
+  defp insert_message(conversation, attrs, fields) do
+    message =
+      struct(
+        Message,
+        [conversation_uuid: conversation.uuid] ++ Keyword.take(fields, [:uuid, :ai_request_uuid])
+      )
+
+    changeset = Message.changeset(message, attrs)
 
     with {:ok, message} <- repo().insert(changeset) do
       touch(conversation, message)

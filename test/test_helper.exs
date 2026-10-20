@@ -33,6 +33,7 @@ support_dir = Path.expand("support", __DIR__)
   {PhoenixKitAgent.Test.Router, "test_router.ex"},
   {PhoenixKitAgent.Test.Endpoint, "test_endpoint.ex"},
   {PhoenixKitAgent.Fixtures, "fixtures.ex"},
+  {PhoenixKitAgent.Test.Tools, "agent_test_tools.ex"},
   {PhoenixKitAgent.DataCase, "data_case.ex"},
   {PhoenixKitAgent.LiveCase, "live_case.ex"}
 ]
@@ -107,6 +108,11 @@ Application.put_env(:phoenix_kit_agent, :test_repo_available, repo_available)
 :persistent_term.put({PhoenixKit.Config, :url_prefix}, "/")
 
 if repo_available do
+  # The module's own children (`PhoenixKitAgent.children/0`): the turn
+  # registry, monitor and task supervisor, as the host's PhoenixKit.Supervisor
+  # starts them.
+  {:ok, _} = Supervisor.start_link(PhoenixKitAgent.children(), strategy: :one_for_one)
+
   {:ok, _} = Phoenix.PubSub.Supervisor.start_link(name: PhoenixKitAgent.Test.PubSub)
   {:ok, _} = PhoenixKitAgent.Test.Endpoint.start_link()
 end
