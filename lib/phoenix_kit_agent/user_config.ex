@@ -201,14 +201,16 @@ defmodule PhoenixKitAgent.UserConfig do
   end
 
   # An upsert of the one column (and `updated_at`): a row an admin filled in,
-  # or one holding a live turn's lock, keeps everything else.
+  # or one holding a live turn's lock, keeps everything else. `log: false`:
+  # Ecto would print the bound values, the user's text among them.
   defp write_personal(user_uuid, text) do
     now = DateTime.utc_now()
 
     repo().insert!(
       %UserSettings{user_uuid: user_uuid, personal_instructions: text},
       on_conflict: [set: [personal_instructions: text, updated_at: now]],
-      conflict_target: :user_uuid
+      conflict_target: :user_uuid,
+      log: false
     )
 
     {:ok, text}
@@ -313,7 +315,8 @@ defmodule PhoenixKitAgent.UserConfig do
             do: changeset,
             else: Ecto.Changeset.put_change(changeset, :updated_by_uuid, actor_uuid)
 
-        case repo().update(changeset) do
+        # `log: false`: the bound values hold the admin's prompt.
+        case repo().update(changeset, log: false) do
           {:ok, saved} -> {saved, fields}
           {:error, changeset} -> repo().rollback(changeset)
         end

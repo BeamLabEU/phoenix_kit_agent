@@ -13,6 +13,7 @@ defmodule PhoenixKitAgent.UserConfigTest do
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
   alias PhoenixKitAgent.Schemas.UserSettings
+  alias PhoenixKitAgent.Test.LogProbe
   alias PhoenixKitAgent.UserConfig
 
   @me [impersonated: false]
@@ -254,6 +255,16 @@ defmodule PhoenixKitAgent.UserConfigTest do
       assert Repo.get(UserSettings, stranger.uuid) == nil
     end
 
+    test "the text never reaches the log, not even Ecto's debug lines", %{ref: ref} do
+      secret = "SecretPI-#{System.unique_integer([:positive])}"
+
+      {result, logs} =
+        LogProbe.capture(fn -> UserConfig.put_personal_instructions(ref, secret, @me) end)
+
+      assert {:ok, ^secret} = result
+      for line <- logs, do: refute(line =~ secret, "leaked to the log: " <> line)
+    end
+
     test "the missing impersonation flag raises", %{ref: ref} do
       assert_raise ArgumentError, fn -> UserConfig.put_personal_instructions(ref, "x", []) end
     end
@@ -321,6 +332,19 @@ defmodule PhoenixKitAgent.UserConfigTest do
       assert row.personal_instructions == "Mine"
       assert row.busy_turn_ref == "t1"
       assert row.daily_turn_limit == 9
+    end
+
+    test "the admin's prompt never reaches the log, not even Ecto's debug lines", %{user: user} do
+      scope = manager_scope()
+      secret = "SecretAP-#{System.unique_integer([:positive])}"
+
+      {result, logs} =
+        LogProbe.capture(fn ->
+          UserConfig.admin_update(scope, user.uuid, %{"system_prompt" => secret})
+        end)
+
+      assert {:ok, %UserSettings{system_prompt: ^secret}, [:system_prompt]} = result
+      for line <- logs, do: refute(line =~ secret, "leaked to the log: " <> line)
     end
 
     test "an invalid value is an error and writes nothing", %{user: user} do

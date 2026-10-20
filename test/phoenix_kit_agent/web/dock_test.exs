@@ -1458,5 +1458,26 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert {:ok, "Answer in Estonian."} =
                UserConfig.get_personal_instructions(ctx.ref, impersonated: false)
     end
+
+    test "a forged save whose text is not text changes nothing and takes nothing down", ctx do
+      secret = "SecretMap-#{System.unique_integer([:positive])}"
+      view = dock(ctx)
+      view |> element("#pk-agent-instructions-toggle") |> render_click()
+
+      {_, logs} =
+        LogProbe.capture(fn ->
+          for forged <- [%{"a" => secret}, [secret], 7, nil] do
+            render_hook(view, "save_instructions", %{
+              "instructions" => %{"personal_instructions" => forged}
+            })
+
+            assert has_element?(view, "#pk-agent-instructions-form")
+          end
+        end)
+
+      assert Process.alive?(view.pid)
+      assert {:ok, nil} = UserConfig.get_personal_instructions(ctx.ref, impersonated: false)
+      for line <- logs, do: refute(line =~ secret, "leaked to the log: " <> line)
+    end
   end
 end

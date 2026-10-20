@@ -414,11 +414,14 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
+  # Only text: anything else (a forged map or list) would come back into the
+  # form and could not be rendered.
   defp event(
          "save_instructions",
          %{"instructions" => %{"personal_instructions" => text}},
          socket
-       ) do
+       )
+       when is_binary(text) do
     case UserConfig.put_personal_instructions(socket.assigns.ref, text, me(socket)) do
       {:ok, stored} ->
         {:noreply, assign(socket, instructions_form: instructions_form(stored), error: nil)}
