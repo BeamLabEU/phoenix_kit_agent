@@ -37,7 +37,7 @@ defmodule PhoenixKitAgent do
 
   alias PhoenixKit.Dashboard.Tab
   alias PhoenixKit.Settings
-  alias PhoenixKitAgent.Attachments.{Bounds, Work}
+  alias PhoenixKitAgent.Attachments.Work
   alias PhoenixKitAgent.Models.Cache
   alias PhoenixKitAgent.Turns.Runner
 
@@ -205,9 +205,8 @@ defmodule PhoenixKitAgent do
     [
       PhoenixKitAgent.Turns.Supervisor,
       Cache,
-      {Task.Supervisor,
-       name: PhoenixKitAgent.Attachments.TaskSupervisor,
-       max_children: Bounds.get(:concurrent_jobs)},
+      PhoenixKitAgent.Attachments.Slots,
+      {Task.Supervisor, name: PhoenixKitAgent.Attachments.TaskSupervisor},
       {Task.Supervisor, name: PhoenixKitAgent.Attachments.WorkerSupervisor},
       Work.sweep_task()
     ]

@@ -78,8 +78,17 @@ nothing in the temporary directory: the copy of the file lives in a private
 directory (`Attachments.Work`) that the supervising process removes, and what
 is still left after a node crash is swept at start-up and when a new one is
 made. At most `concurrent_jobs` files (8) are processed at the same time on a
-node; more are refused as `unavailable`. A row that is still `pending` after
+node, of them at most `jobs_per_user` (3) one user's; the others wait for a
+place, in turn, up to `queue_wait_ms` (30 s), with at most `queued_jobs` (64)
+waiting on the node, and are refused as `unavailable` after that
+(`Attachments.Slots`). The limits are read at each decision. A workbook is
+unpacked within `sheet_unzipped_bytes` (40 MB), and a job holds its parts twice,
+so the binary memory a busy node may use for workbooks is about
+`concurrent_jobs × 2 × 40 MB`. A row that is still `pending` after the wait and
 the processing deadline (the node restarted) is read as `failed`/`timeout`.
+
+The `path` of an upload given to `Attachments.add/4` is trusted: it must be the
+temporary file of LiveView's own upload, never a value from the client.
 
 PDF processing needs poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and pictures
 need ImageMagick (`convert`, `identify`) on the host; without them such a file

@@ -22,7 +22,7 @@ defmodule PhoenixKitAgent.AttachmentsTest do
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.{Auth, Permissions, Roles}
   alias PhoenixKitAgent.{Attachments, Conversations, Library, Models, Turns}
-  alias PhoenixKitAgent.Attachments.{Bounds, Processor, Work}
+  alias PhoenixKitAgent.Attachments.{Bounds, Processor, Slots, Work}
   alias PhoenixKitAgent.Schemas.{Attachment, Message, UserSettings}
   alias PhoenixKitAgent.Test.{Files, LogProbe}
   alias PhoenixKitAI.Request
@@ -584,6 +584,30 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
       refute Enum.any?(logs, &(&1 =~ @secret))
     end
+  end
+
+  defp add!(ctx, binary, name) do
+    assert {:ok, attachment} = add(ctx, binary, name)
+    attachment
+  end
+
+  # A process that holds a processing place for `user` until it is sent the
+  # returned message.
+  defp hold_slot(user) do
+    test = self()
+
+    pid =
+      spawn_link(fn ->
+        :ok = Slots.acquire(user)
+        send(test, :slot_held)
+
+        receive do
+          :release_slot -> :ok
+        end
+      end)
+
+    assert_receive :slot_held, 5_000
+    {pid, :release_slot}
   end
 
   defp wait_for_children_to_end do
@@ -1233,31 +1257,83 @@ defmodule PhoenixKitAgent.AttachmentsTest do
     end
   end
 
+  describe "the user's cap of files waiting for a message" do
+    test "files of a deleted chat, which the user can no longer see or discard, do not count",
+         ctx do
+      with_limits(unsent_files: 1)
+
+      first = add_done!(ctx, "left behind", "a.txt")
+      assert {:error, :too_many} = add(ctx, "again", "b.txt")
+
+      assert {:ok, _} = Conversations.delete_conversation(ctx.ref, ctx.chat.uuid, @me)
+      assert {:error, :not_found} = Attachments.discard(ctx.ref, first.uuid, @me)
+      assert Repo.get(Attachment, first.uuid)
+
+      other_chat = conversation_fixture(ctx.user)
+      :ok = Conversations.subscribe(ctx.ref, other_chat.uuid, @me)
+      upload = Files.upload!("fresh", "c.txt")
+
+      assert {:ok, fresh} = Attachments.add(ctx.ref, other_chat.uuid, upload, @me)
+      assert fresh.conversation_uuid == other_chat.uuid
+      await_done(fresh)
+    end
+
+    test "files of an archived chat, which can be discarded, still count", ctx do
+      with_limits(unsent_files: 1)
+
+      first = add_done!(ctx, "kept", "a.txt")
+      assert {:ok, _} = Conversations.archive_conversation(ctx.ref, ctx.chat.uuid, @me)
+
+      other_chat = conversation_fixture(ctx.user)
+      :ok = Conversations.subscribe(ctx.ref, other_chat.uuid, @me)
+      upload = Files.upload!("fresh", "c.txt")
+      assert {:error, :too_many} = Attachments.add(ctx.ref, other_chat.uuid, upload, @me)
+
+      assert :ok = Attachments.discard(ctx.ref, first.uuid, @me)
+      assert {:ok, fresh} = Attachments.add(ctx.ref, other_chat.uuid, upload, @me)
+      assert fresh.status == "pending"
+      await_done(fresh)
+    end
+  end
+
   describe "the processing is bounded" do
-    test "files beyond what the node processes at once are 'unavailable', not queued", ctx do
-      wait_for_children_to_end()
-      supervisor = PhoenixKitAgent.Attachments.TaskSupervisor
+    test "files beyond what the node processes at once wait for a place and are then processed",
+         ctx do
+      with_limits(concurrent_jobs: 1, queue_wait_ms: 10_000)
+      {blocker, release} = hold_slot("someone-else")
 
-      blockers =
-        for _ <- 1..Bounds.get(:concurrent_jobs) do
-          {:ok, pid} =
-            Task.Supervisor.start_child(supervisor, fn ->
-              receive do
-                :stop -> :ok
-              end
-            end)
+      waiting = add!(ctx, "text", "a.txt")
+      assert waiting.status == "pending"
+      refute_receive {:agent_attachment_processed, _, _}, 200
+      assert Repo.get!(Attachment, waiting.uuid).status == "pending"
 
-          pid
-        end
+      send(blocker, release)
+      assert %{status: "ready"} = await_done(waiting)
+    end
+
+    test "a file that finds no place within queue_wait_ms is 'unavailable'", ctx do
+      with_limits(concurrent_jobs: 1, queue_wait_ms: 50)
+      {blocker, release} = hold_slot("someone-else")
 
       refused = add_done!(ctx, "text", "a.txt")
       assert refused.status == "failed"
       assert refused.error == "unavailable"
 
-      for pid <- blockers, do: send(pid, :stop)
-      wait_for_children_to_end()
-
+      send(blocker, release)
       assert %{status: "ready"} = add_done!(ctx, "again", "b.txt")
+    end
+
+    test "one user's files do not take the places of everyone: jobs_per_user", ctx do
+      with_limits(concurrent_jobs: 2, jobs_per_user: 1, queue_wait_ms: 10_000)
+      {blocker, release} = hold_slot(ctx.user.uuid)
+
+      mine = add!(ctx, "mine", "a.txt")
+      # A place is free, but it is not this user's to take.
+      refute_receive {:agent_attachment_processed, _, _}, 200
+      assert Repo.get!(Attachment, mine.uuid).status == "pending"
+
+      send(blocker, release)
+      assert %{status: "ready"} = await_done(mine)
     end
 
     @tag :imagemagick
@@ -1451,6 +1527,47 @@ defmodule PhoenixKitAgent.AttachmentsTest do
                )
 
       assert Repo.get!(Attachment, attachment.uuid).message_uuid == message.uuid
+    end
+
+    test "the link takes only the chat owner's files of that chat, whoever the caller names",
+         ctx do
+      mine_here = add_done!(ctx, "here", "a.txt")
+
+      other_chat = conversation_fixture(ctx.user)
+      :ok = Conversations.subscribe(ctx.ref, other_chat.uuid, @me)
+
+      mine_elsewhere =
+        await_done(
+          elem(Attachments.add(ctx.ref, other_chat.uuid, Files.upload!("there", "b.txt"), @me), 1)
+        )
+
+      stranger = user_fixture("stranger")
+      stranger_chat = conversation_fixture(stranger)
+
+      foreign =
+        %Attachment{conversation_uuid: stranger_chat.uuid, user_uuid: stranger.uuid}
+        |> Attachment.changeset(%{
+          filename: "c.txt",
+          content_type: "text/plain",
+          size_bytes: 1,
+          kind: "text",
+          status: "ready"
+        })
+        |> Repo.insert!()
+
+      uuids = [mine_here.uuid, mine_elsewhere.uuid, foreign.uuid]
+
+      assert {:ok, message} =
+               Conversations.add_user_turn_message(
+                 ctx.user.uuid,
+                 ctx.chat.uuid,
+                 %{role: "user", content: "x"},
+                 uuids
+               )
+
+      assert Repo.get!(Attachment, mine_here.uuid).message_uuid == message.uuid
+      assert Repo.get!(Attachment, mine_elsewhere.uuid).message_uuid == nil
+      assert Repo.get!(Attachment, foreign.uuid).message_uuid == nil
     end
 
     test "the files of one message share the history window between them", ctx do

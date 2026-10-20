@@ -141,7 +141,7 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert_received {:models_requested, "/api/v1/models"}
       refute_received {:models_requested, _}
 
-      # Forgotten, it is asked again; the same model on another key is another answer.
+      # Forgotten, it is asked again.
       Models.clear_cache()
       assert Models.image_input(sees.uuid) == :supported
       assert_received {:models_requested, "/api/v1/models"}
@@ -162,6 +162,22 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert Models.image_input(endpoint.uuid) == :unsupported
       {:ok, _} = PhoenixKitAI.update_endpoint(endpoint, %{model: "a/sees"})
       assert Models.image_input(endpoint.uuid) == :supported
+    end
+
+    test "image_input/1 does not keep an answer across a change of the endpoint's connection" do
+      Models.clear_cache()
+      endpoint = endpoint_fixture(%{model: "a/sees"})
+      serve_models([{"a/sees", [], %{"modality" => "text+image->text"}}], 2)
+
+      assert Models.image_input(endpoint.uuid) == :supported
+
+      {:ok, _} =
+        PhoenixKitAI.update_endpoint(endpoint, %{base_url: "https://proxy.example/api/v1"})
+
+      assert Models.image_input(endpoint.uuid) == :supported
+
+      assert_received {:models_requested, "/api/v1/models"}
+      assert_received {:models_requested, _}
     end
 
     test "image_input/1 answers for one endpoint by its uuid; no endpoint is unknown" do

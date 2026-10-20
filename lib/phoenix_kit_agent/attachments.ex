@@ -26,7 +26,7 @@ defmodule PhoenixKitAgent.Attachments do
     3. the chat has room: no more than `max_attachments_per_message` files that
        are not part of a message yet (a failed one takes no room there), and
        the user has no more than `unsent_files` (`Attachments.Bounds`) files of
-       any status waiting in all their chats — a failed one stays until it is
+       any status waiting in all their chats that are not deleted — a failed one stays until it is
        discarded, and counts here. The count and the row are made under a lock
        on the chat, so parallel uploads cannot pass it;
     4. the bytes are stored in the module's hidden Storage library, in the
@@ -93,6 +93,11 @@ defmodule PhoenixKitAgent.Attachments do
   @typedoc """
   The file as the Dock got it from `allow_upload`. A `content_type` the browser
   claims may be there; it is not looked at, the content tells what the file is.
+
+  **`path` is trusted.** It must be the temporary file of LiveView's upload
+  (`consume_uploaded_entries/3`) and nothing a client sent: whatever regular
+  file it names is read and stored in the user's chat. The `filename` is the
+  client's and is only kept as a label.
   """
   @type upload :: %{
           required(:path) => Path.t(),
@@ -130,7 +135,7 @@ defmodule PhoenixKitAgent.Attachments do
          :ok <- settle_stale(conversation.user_uuid),
          {:ok, attachment} <- reserve(conversation, source, detected, settings),
          {:ok, attachment} <- store(attachment, source, detected) do
-      :ok = Processor.start(attachment.uuid)
+      :ok = Processor.start(attachment.uuid, attachment.user_uuid)
       {:ok, attachment}
     end
   end
@@ -197,7 +202,11 @@ defmodule PhoenixKitAgent.Attachments do
         unsent =
           repo().aggregate(
             from(a in Attachment,
-              where: a.user_uuid == ^conversation.user_uuid and is_nil(a.message_uuid)
+              join: c in Conversation,
+              on: c.uuid == a.conversation_uuid,
+              where:
+                a.user_uuid == ^conversation.user_uuid and is_nil(a.message_uuid) and
+                  c.status != "deleted"
             ),
             :count
           )
@@ -311,7 +320,7 @@ defmodule PhoenixKitAgent.Attachments do
     cutoff =
       DateTime.add(
         DateTime.utc_now(),
-        -(Bounds.get(:process_deadline_ms) + @stale_margin_ms),
+        -(Bounds.get(:queue_wait_ms) + Bounds.get(:process_deadline_ms) + @stale_margin_ms),
         :millisecond
       )
 

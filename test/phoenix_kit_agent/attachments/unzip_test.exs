@@ -41,6 +41,31 @@ defmodule PhoenixKitAgent.Attachments.UnzipTest do
            }
   end
 
+  test "drawings, charts, themes and the other parts a workbook is not read from are left out" do
+    path =
+      tmp_zip!([
+        {"xl/workbook.xml", "wb"},
+        {"xl/worksheets/sheet1.xml", "sheet"},
+        {"xl/worksheets/_rels/sheet1.xml.rels", "rels"},
+        {"xl/drawings/drawing1.xml", "drawing"},
+        {"xl/charts/chart1.xml", "chart"},
+        {"xl/theme/theme1.xml", "theme"},
+        {"xl/media/image1.xml", "media"},
+        {"xl/embeddings/object1.xml", "object"},
+        {"xl/diagrams/data1.xml", "diagram"},
+        {"xl/printerSettings/printerSettings1.xml", "printer"}
+      ])
+
+    assert {:ok, parts} = Unzip.read(path, 1_000_000)
+
+    assert parts |> Enum.map(&elem(&1, 0)) |> Enum.sort() ==
+             [
+               "xl/workbook.xml",
+               "xl/worksheets/_rels/sheet1.xml.rels",
+               "xl/worksheets/sheet1.xml"
+             ]
+  end
+
   test "an archive that unpacks to more than the budget is too large, whatever it declares" do
     honest = Files.zip(bomb_files())
     assert {:error, :too_large} = Unzip.read(Files.tmp!(honest, "honest.xlsx"), 1_000)

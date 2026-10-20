@@ -40,6 +40,26 @@ defmodule PhoenixKitAgent.Attachments.JpegTest do
     assert dims == "60x40"
   end
 
+  describe "which segments go" do
+    # No ImageMagick needed: Jpeg walks the markers and nothing more.
+    defp segment(marker, payload),
+      do: <<0xFF, marker, byte_size(payload) + 2::16, payload::binary>>
+
+    test "APP1-APP13 and APP15 and the comment are dropped, JFIF, Adobe and the tables stay" do
+      scan = <<0xFF, 0xDA, 0, 4, 1, 2, 9, 9, 9, 0xFF, 0xD9>>
+      jfif = segment(0xE0, "JFIF")
+      adobe = segment(0xEE, "Adobe")
+      tables = segment(0xDB, "tables")
+      markers = Enum.to_list(0xE1..0xED) ++ [0xEF, 0xFE]
+      dropped = for marker <- markers, do: segment(marker, "META#{marker}")
+
+      jpeg = IO.iodata_to_binary([<<0xFF, 0xD8>>, jfif, dropped, adobe, tables, scan])
+
+      assert {:ok, bare} = Jpeg.strip_metadata(jpeg)
+      assert bare == IO.iodata_to_binary([<<0xFF, 0xD8>>, jfif, adobe, tables, scan])
+    end
+  end
+
   test "what is not a JPEG, or is cut inside its segments, is unreadable" do
     assert {:error, :unreadable} = Jpeg.strip_metadata("GIF89a")
     assert {:error, :unreadable} = Jpeg.strip_metadata(<<0xFF, 0xD8, 0xFF, 0xE1, 0xFF, 0xFF, 1>>)

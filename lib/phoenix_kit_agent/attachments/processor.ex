@@ -33,11 +33,12 @@ defmodule PhoenixKitAgent.Attachments.Processor do
   exception into a code; the codes are `unreadable`, `too_large`,
   `pdf_tools_missing`, `image_tools_missing`, `no_vision_model`,
   `limit_reached`, `budget_exceeded`, `model_error`, `timeout`, `crashed`,
-  `unavailable` (more files at once than `Bounds` `concurrent_jobs`, or no
+  `unavailable` (no place within `queue_wait_ms`, see `Attachments.Slots`, or no
   scratch space).
 
-  The work is two processes: a *job* under `TaskSupervisor` (at most
-  `concurrent_jobs`), which makes the scratch directory (`Attachments.Work`),
+  The work is two processes: a *job* under `TaskSupervisor`, which waits for
+  a place (at most `concurrent_jobs` jobs hold one, `jobs_per_user` of them
+  one user's), makes the scratch directory (`Attachments.Work`),
   and the *worker* under `WorkerSupervisor`, which reads the file in it. The
   job removes the directory when the worker is done or killed. The file's content, what a parser said
   about it and what the model answered never reach the log — not as a message,
@@ -50,7 +51,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.Attachments.{Bounds, Extract, Work}
+  alias PhoenixKitAgent.Attachments.{Bounds, Extract, Slots, Work}
   alias PhoenixKitAgent.{Config, Conversations, Models, UserConfig}
   alias PhoenixKitAgent.Limits, as: SpendLimits
   alias PhoenixKitAgent.Schemas.{Attachment, Message}
@@ -67,10 +68,14 @@ defmodule PhoenixKitAgent.Attachments.Processor do
   @typedoc "What the task found: the fields of the row to store."
   @type result :: {:ok, map()} | {:error, atom()}
 
-  @doc "Starts the processing of the pending attachment `uuid` and returns at once."
-  @spec start(String.t()) :: :ok
-  def start(uuid) do
-    case Task.Supervisor.start_child(@task_supervisor, fn -> supervise(uuid) end) do
+  @doc """
+  Starts the processing of the pending attachment `uuid` of the user
+  `user_uuid` and returns at once. The task waits for a place
+  (`PhoenixKitAgent.Attachments.Slots`) before it does any work.
+  """
+  @spec start(String.t(), String.t()) :: :ok
+  def start(uuid, user_uuid) do
+    case Task.Supervisor.start_child(@task_supervisor, fn -> supervise(uuid, user_uuid) end) do
       {:ok, _pid} -> :ok
       _not_started -> finish(uuid, {:error, :unavailable})
     end
@@ -80,20 +85,19 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   # The scratch directory is made, and removed, here and not in the worker:
   # a worker that is killed (the deadline, the heap) cannot clean up after itself.
-  defp supervise(uuid) do
-    case Work.create() do
-      {:ok, dir} ->
-        outcome =
-          try do
-            run_worker(uuid, dir)
-          after
-            Work.remove(dir)
-          end
+  defp supervise(uuid, user_uuid) do
+    with :ok <- Slots.acquire(user_uuid),
+         {:ok, dir} <- Work.create() do
+      outcome =
+        try do
+          run_worker(uuid, dir)
+        after
+          Work.remove(dir)
+        end
 
-        finish(uuid, outcome)
-
-      {:error, _reason} ->
-        finish(uuid, {:error, :unavailable})
+      finish(uuid, outcome)
+    else
+      {:error, _reason} -> finish(uuid, {:error, :unavailable})
     end
   end
 

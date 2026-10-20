@@ -307,7 +307,7 @@ defmodule PhoenixKitAgent.Conversations do
       repo().transaction(fn ->
         with {:ok, conversation} <- fetch_owned(user_uuid, conversation_uuid, lock: true),
              {:ok, message} <- insert_message(conversation, changeset_fun, fields) do
-          link_attachments(attachment_uuids, message)
+          link_attachments(attachment_uuids, conversation, message)
           message
         else
           {:error, reason} -> repo().rollback(reason)
@@ -324,11 +324,18 @@ defmodule PhoenixKitAgent.Conversations do
     result
   end
 
-  defp link_attachments([], _message), do: :ok
+  defp link_attachments([], _conversation, _message), do: :ok
 
-  defp link_attachments(uuids, %Message{} = message) do
+  # Only the chat owner's own unsent files of this chat, whatever the caller
+  # passes.
+  defp link_attachments(uuids, conversation, %Message{} = message) do
     repo().update_all(
-      from(a in Attachment, where: a.uuid in ^uuids and is_nil(a.message_uuid)),
+      from(a in Attachment,
+        where:
+          a.uuid in ^uuids and is_nil(a.message_uuid) and
+            a.user_uuid == ^conversation.user_uuid and
+            a.conversation_uuid == ^conversation.uuid
+      ),
       set: [message_uuid: message.uuid]
     )
 

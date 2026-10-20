@@ -78,7 +78,7 @@ defmodule PhoenixKitAgent.Models do
     case PhoenixKitAI.get_endpoint(endpoint_uuid) do
       %Endpoint{} = endpoint ->
         Cache.fetch(
-          {:image_input, endpoint.uuid, endpoint.model, connection_digest(endpoint)},
+          cache_key(endpoint),
           &ttl/1,
           fn -> endpoint |> List.wrap() |> image_input_support() |> Map.fetch!(endpoint.uuid) end
         )
@@ -94,13 +94,16 @@ defmodule PhoenixKitAgent.Models do
   @spec clear_cache() :: :ok
   defdelegate clear_cache, to: Cache, as: :clear
 
+  # What the answer depends on: the model and the connection it is listed
+  # through. Read from the endpoint's own row, so that the key is made without
+  # resolving the API key (a settings or integrations lookup) for each call.
+  defp cache_key(endpoint) do
+    {:image_input, endpoint.uuid, endpoint.model, endpoint.provider, endpoint.integration_uuid,
+     endpoint.base_url, endpoint.updated_at}
+  end
+
   defp ttl(:unknown), do: @unknown_ttl_ms
   defp ttl(_known), do: @known_ttl_ms
-
-  # What the answer depends on besides the model: the key and the base URL of
-  # the connection, as a digest (the key itself is not kept).
-  defp connection_digest(endpoint),
-    do: :crypto.hash(:sha256, :erlang.term_to_binary(connection(endpoint)))
 
   defp capability(endpoints, check) do
     {openrouter, others} = Enum.split_with(endpoints, &openrouter?/1)

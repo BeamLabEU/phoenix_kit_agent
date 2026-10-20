@@ -75,8 +75,9 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
   every temporary file or directory is made by `Attachments.Work` (private,
   random, removed by the supervising process, not the worker that may be
   killed). Storage is given a neutral file name (it logs names). Concurrency is
-  `Bounds.concurrent_jobs`, enforced by `max_children` of the job supervisor;
-  workers run under their own supervisor. A picture reaches the model as
+  `Bounds.concurrent_jobs` (and `jobs_per_user`), enforced by the waiting
+  queue `Attachments.Slots` (a place is held by the job process, free when it
+  ends); workers run under their own supervisor. A picture reaches the model as
   pixels in its own turn (`Attachments.model_parts/3`, used by `Turns.Runner`)
   or, for a model that cannot see, as a description kept in the row. Writes
   that bind a file name or its text use `log: false`. Tests that need poppler

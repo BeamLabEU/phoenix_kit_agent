@@ -10,14 +10,17 @@ defmodule PhoenixKitAgent.Attachments.Bounds do
   | `text_chars` | `16_000` | characters of one attachment's text (a PDF, a text file, a sheet, a description); in a message the attachments share `agent_history_chars` between them, so each gets at most that divided by their number |
   | `sheet_rows` | `200` | rows of each sheet or of a CSV file |
   | `sheets` | `10` | sheets of one workbook |
-  | `sheet_unzipped_bytes` | `100_000_000` | what a workbook may unpack to |
+  | `sheet_unzipped_bytes` | `40_000_000` | what a workbook may unpack to. Its parts are held in memory, and read a second time by the sheet reader: a job of this size takes up to about twice as much (80 MB) of binary memory outside the worker's heap limit |
   | `pdf_text_pages` | `50` | pages whose text is read |
   | `scan_pages` | `3` | pages of a scan that become pictures |
   | `min_pdf_text_chars` | `20` | below this a PDF has no text, it is a scan |
   | `process_deadline_ms` | `120_000` | the whole processing of one attachment |
   | `tool_timeout_s` | `60` | one run of `pdftotext`, `pdftoppm` or ImageMagick |
   | `worker_heap_words` | `32_000_000` | the heap of one worker, in words of 8 bytes (256 MB); over it the worker is killed and the file is `too_large` |
-  | `concurrent_jobs` | `8` | files processed at the same time on the node; more are `unavailable` |
+  | `concurrent_jobs` | `8` | files processed at the same time on the node; the others wait (`Attachments.Slots`). The memory ceiling of a node is this times the largest job: with workbooks, about `8 × 80 MB` of binaries |
+  | `jobs_per_user` | `3` | of those, how many one user's files may take; the rest of theirs wait |
+  | `queue_wait_ms` | `30_000` | how long a file waits for a place; then it is `unavailable` |
+  | `queued_jobs` | `64` | files waiting for a place on the node; more are `unavailable` at once |
   | `unsent_files` | `20` | files of one user that wait for a message (any status, a failed one included) |
 
   A picture is shrunk to `image_px/0` (1600) on its long side.
@@ -27,7 +30,7 @@ defmodule PhoenixKitAgent.Attachments.Bounds do
     text_chars: 16_000,
     sheet_rows: 200,
     sheets: 10,
-    sheet_unzipped_bytes: 100_000_000,
+    sheet_unzipped_bytes: 40_000_000,
     pdf_text_pages: 50,
     scan_pages: 3,
     min_pdf_text_chars: 20,
@@ -35,6 +38,9 @@ defmodule PhoenixKitAgent.Attachments.Bounds do
     tool_timeout_s: 60,
     worker_heap_words: 32_000_000,
     concurrent_jobs: 8,
+    jobs_per_user: 3,
+    queue_wait_ms: 30_000,
+    queued_jobs: 64,
     unsent_files: 20
   ]
 

@@ -170,10 +170,10 @@ defmodule PhoenixKitAgent.Attachments.Unzip do
   end
 
   defp feed(z, _io, _position, _left, _budget, acc, _produced) do
-    case :zlib.inflateEnd(z) do
-      :ok -> {:ok, acc |> Enum.reverse() |> IO.iodata_to_binary()}
-      _stream_not_complete -> {:error, :unreadable}
-    end
+    # An incomplete stream makes `inflateEnd/1` raise; the caller maps that to
+    # `:unreadable`.
+    :ok = :zlib.inflateEnd(z)
+    {:ok, acc |> Enum.reverse() |> IO.iodata_to_binary()}
   end
 
   defp drain(z, input, budget, acc, produced) do
