@@ -212,15 +212,22 @@ node shows "Stopping…" until its lock expires.
 # when exported with one argument, else `Mod.fun()`; returns a string or nil.
 # An exception or a result that is not a string skips the addendum.
 config :phoenix_kit_agent, prompt_addendum: {MyApp.Agent, :prompt}
+
+# Optional: what the host says of the page the chat panel is open on (the
+# number of the order shown there, say). `Mod.fun(path, scope)` — the page's
+# path and the scope of the user's browser session (the role it acts as);
+# returns a string (cut to 200 characters, on one line) or nil, and tells only
+# what that scope may see. An exception or a result that is not a string skips
+# it; the log names the reason only, never the path or the text.
+config :phoenix_kit_agent, page_context: {MyApp.Agent, :page_context}
 ```
 
 The system prompt of a turn is, in this order: the module's prompt (Settings →
 AI Agent), the host's addendum, the admin's prompt for the user, the user's
 personal instructions (marked as ranking below the rest), and the context of the
 session — the user's name, the role the session acts as, the locale, the date
-(not the time, so the prompt stays cacheable) in the site time zone and, if the
-host passes `page:` to
-`PhoenixKitAgent.Turns.start/6`, the page path (and an order number, if given).
+(not the time, so the prompt stays cacheable) in the site time zone, the path of
+the page the panel is open on and what the host's `page_context` says of it.
 
 The admin pages check every event against the scope of the browser session
 as it is now — the role it acts as, a logout — not the user's default role. An

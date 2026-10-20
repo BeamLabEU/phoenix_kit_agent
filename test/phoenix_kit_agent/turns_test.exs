@@ -18,12 +18,13 @@ defmodule PhoenixKitAgent.TurnsTest do
   alias PhoenixKit.ModuleRegistry
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.Settings
-  alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.{ActiveRole, Auth}
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Users.Permissions
   alias PhoenixKit.Users.Roles
   alias PhoenixKitAgent.{Config, Conversations}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message, UserSettings}
-  alias PhoenixKitAgent.Test.{Addenda, LogProbe}
+  alias PhoenixKitAgent.Test.{Addenda, LogProbe, PageContexts}
   alias PhoenixKitAgent.Test.Tools
   alias PhoenixKitAgent.{Turns, UserConfig}
   alias PhoenixKitAgent.Turns.Monitor
@@ -804,7 +805,12 @@ defmodule PhoenixKitAgent.TurnsTest do
     test "the system prompt: the module, the host, the admin, the user, then the context", ctx do
       {:ok, _} = Config.put_system_prompt("MODULE-PROMPT", [])
       Application.put_env(:phoenix_kit_agent, :prompt_addendum, {Addenda, :plain})
-      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :prompt_addendum) end)
+      Application.put_env(:phoenix_kit_agent, :page_context, {PageContexts, :order})
+
+      on_exit(fn ->
+        Application.delete_env(:phoenix_kit_agent, :prompt_addendum)
+        Application.delete_env(:phoenix_kit_agent, :page_context)
+      end)
 
       {:ok, _, _} =
         UserConfig.admin_update(scope_of(owner_fixture()), ctx.user.uuid, %{
@@ -815,8 +821,7 @@ defmodule PhoenixKitAgent.TurnsTest do
 
       answer_next(text_answer("ok"))
 
-      turn_ref =
-        start!(ctx, "Hi", page: %{path: "/admin/orders/5", order_number: "A-5"}, locale: "et")
+      turn_ref = start!(ctx, "Hi", page: "/admin/orders/5", locale: "et")
 
       await_end(ctx.chat, turn_ref)
 
@@ -832,13 +837,52 @@ defmodule PhoenixKitAgent.TurnsTest do
               "PERSONAL-NOTE",
               "Locale: et",
               "Page: /admin/orders/5",
-              "Order: A-5"
+              "Page context: Order A-2026-77 (/admin/orders/5)"
             ] do
           {at, _} = :binary.match(system, part)
           at
         end
 
       assert positions == Enum.sort(positions)
+    end
+
+    test "the host's page context gets the session's scope, not the user's default role", ctx do
+      {:ok, _} = Settings.update_setting("role_switcher_enabled", "true")
+
+      {:ok, second} =
+        Roles.create_role(%{name: "AgentTurnsSecond#{System.unique_integer([:positive])}"})
+
+      for key <- ["agent", "dashboard"],
+          do: {:ok, _} = Permissions.grant_permission(second.uuid, key)
+
+      {:ok, _} = Roles.assign_role(ctx.user, second.name)
+
+      # What a scope built from the user alone acts as; the session acts as the other.
+      default = Scope.active_role(scope_of(ctx.user))
+      assert %{uuid: _} = default
+      target = if default.uuid == second.uuid, do: ctx.role, else: second
+      session_user = Auth.get_user_by_session_token(ctx.token)
+      {:ok, _} = ActiveRole.switch(session_user, ctx.token, target.uuid)
+
+      Application.put_env(:phoenix_kit_agent, :test_page_context_listener, self())
+      Application.put_env(:phoenix_kit_agent, :page_context, {PageContexts, :recorded})
+
+      on_exit(fn ->
+        Application.delete_env(:phoenix_kit_agent, :page_context)
+        Application.delete_env(:phoenix_kit_agent, :test_page_context_listener)
+      end)
+
+      answer_next(text_answer("ok"))
+      await_end(ctx.chat, start!(ctx, "Hi", page: "/admin/orders/5"))
+
+      assert_received {:page_context, "/admin/orders/5", scope}
+      assert scope.user.uuid == ctx.user.uuid
+      assert Scope.active_role(scope).uuid == target.uuid
+      refute Scope.active_role(scope).uuid == default.uuid
+
+      assert_received {:model_request, body}
+      assert [%{"role" => "system", "content" => system}, _] = body["messages"]
+      assert system =~ "Page context: HOST-PAGE-CONTEXT"
     end
 
     test "without options the context still names the user's locale and no page", ctx do

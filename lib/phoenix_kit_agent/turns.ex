@@ -98,8 +98,9 @@ defmodule PhoenixKitAgent.Turns do
       `:hosts`, `:currency`, `:ip`; `:request_id` defaults to the turn ref;
     * `:deadline_ms` — a shorter deadline than `agent_turn_deadline_s`; it can
       only shorten it;
-    * `:page` — where the user is, for the model's context: a path, or
-      `%{path:, order_number:}` (the order number only if the host knows it);
+    * `:page` — where the user is, for the model's context: the page's path
+      (what the host says of it comes from its `page_context` hook, called
+      with this session's scope — `PhoenixKitAgent.Prompt`);
     * `:locale` — the user's locale; else the `:language` of the request
       context, else the process's Gettext locale. Both come from a browser and
       are checked by `PhoenixKitAgent.Prompt`.

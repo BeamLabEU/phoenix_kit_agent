@@ -25,10 +25,10 @@ the per-user settings (`PhoenixKitAgent.UserConfig`: `effective/1` is the one
 place a turn reads them — user value, else module default; `admin_update/4`
 for an admin with `agent.manage`, which logs field names to Activity;
 `put_personal_instructions/3` for the user's own text), the system prompt
-(`PhoenixKitAgent.Prompt`, spec §7.1, with the host's `prompt_addendum`), the
-endpoint choice (`PhoenixKitAgent.Models`: only `phoenix_kit_ai` endpoints that
-chat, marked for tool support), the spending read from the AI journal
-(`PhoenixKitAgent.Spend`), Admin → AI Agent → Users
+(`PhoenixKitAgent.Prompt`, spec §7.1, with the host's `prompt_addendum` and
+`page_context`), the endpoint choice (`PhoenixKitAgent.Models`: only
+`phoenix_kit_ai` endpoints that chat, marked for tool support), the spending
+read from the AI journal (`PhoenixKitAgent.Spend`), Admin → AI Agent → Users
 (`PhoenixKitAgent.Web.UsersLive`), the limits and their notices
 (`PhoenixKitAgent.Limits`: checked by `Turns.start/6` under the turn's locks;
 one notice per limit and period through `phoenix_kit_agent_limit_events`;
@@ -152,7 +152,10 @@ and `Web.Markdown`).
   (Safari does not focus a clicked button).
 - **Prompt input from a browser** (`page:`, `locale:` of `Turns.start/6`) is
   untrusted: `PhoenixKitAgent.Prompt` drops a value with a control character and
-  cuts a long one.
+  cuts a long one. The host's `page_context: {Mod, :fun}` hook is called as
+  `Mod.fun(path, scope)` with the session's scope (the one `Turns.start/6` got
+  from `SessionRef.scope_for_session/2`, never `Scope.for_user/1`); its text is
+  put on one line and cut to 200 characters; a failure logs the reason only.
 - **Boundaries:** nothing about orders, customers or other host domain data
   lives here — the module only knows "tools from the registry". Model calls,
   budget and the request journal stay in `phoenix_kit_ai`.

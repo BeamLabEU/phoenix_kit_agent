@@ -18,14 +18,30 @@ defmodule PhoenixKitAgent.Prompt do
        role the session acts as, the locale, the date in the site time zone
        (not the time of day: the system message opens every request, and a
        prefix that changes by the minute defeats the providers' prompt
-       caching) and — when the host passed them to
-       `PhoenixKitAgent.Turns.start/6` — the page's path and the order number.
+       caching), the page's path when the host passed it to
+       `PhoenixKitAgent.Turns.start/6`, and what the host says of that page
+       (below).
 
-  The page, the order number and the locale come from a browser, so they are
-  not trusted: a value with a control or line-separator character, or one that
-  is not shaped like a path / a locale, is left out whole; a long one is cut.
-  The page is reduced to its path (no query, no fragment: those may hold what
-  the user typed into a search).
+  The page and the locale come from a browser, so they are not trusted: a
+  value with a control or line-separator character, or one that is not shaped
+  like a path / a locale, is left out whole; a long one is cut. The page is
+  reduced to its path (no query, no fragment: those may hold what the user
+  typed into a search).
+
+  ## The host's page context
+
+  `config :phoenix_kit_agent, page_context: {Mod, :fun}` lets the host say
+  what the page is — the number of the order open there, say (spec §7.1 point
+  5). With a page path, `Mod.fun(path, scope)` is called: `path` is the
+  page's path as above, `scope` the scope of the user's **browser session**
+  (`PhoenixKit.Users.Auth.SessionRef.scope_for_session/2`: the role the
+  session acts as), not one built from the user alone. The host decides what
+  to tell, and tells only what that scope may see. The result is a string —
+  put on one line (control and line-separator characters become spaces),
+  trimmed and cut to 200 characters — or `nil`. An exception, an exit, a
+  result that is not a string or a function that does not exist skips it with
+  a warning that names the reason only — never the path or the content. No
+  hook, or no page: the context has the path only.
   """
 
   require Logger
@@ -37,13 +53,12 @@ defmodule PhoenixKitAgent.Prompt do
 
   @name_max 120
   @path_max 200
-  @order_max 64
+  @page_context_max 200
   @locale ~r/\A[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})*\z/
   @unsafe ~r/[\p{C}\p{Zl}\p{Zp}]/u
 
-  @typedoc "The page the user is on, as the host passes it."
-  @type page ::
-          String.t() | %{optional(:path) => String.t(), optional(:order_number) => String.t()}
+  @typedoc "The page the user is on, as the browser says it is: a path."
+  @type page :: String.t()
 
   @type ctx :: %{
           required(:user_uuid) => String.t(),
@@ -123,14 +138,16 @@ defmodule PhoenixKitAgent.Prompt do
   # ── 5. the session ────────────────────────────────────────────────────
 
   defp context(scope, locale, page, now) do
+    path = path(page)
+
     lines =
       [
         line("User", one_line(Scope.user_full_name(scope), @name_max)),
         line("Role", role(scope)),
         line("Locale", locale),
         line("Date", today(now)),
-        line("Page", page |> page_field(:path) |> path()),
-        line("Order", page |> page_field(:order_number) |> one_line(@order_max))
+        line("Page", path),
+        line("Page context", page_context(path, scope))
       ]
       |> Enum.reject(&is_nil/1)
 
@@ -175,11 +192,52 @@ defmodule PhoenixKitAgent.Prompt do
       ":" <> String.pad_leading(Integer.to_string(rem(minutes, 60)), 2, "0")
   end
 
-  # ── untrusted input ───────────────────────────────────────────────────
+  # ── the host's page context ───────────────────────────────────────────
 
-  defp page_field(page, key) when is_map(page), do: Map.get(page, key)
-  defp page_field(page, :path) when is_binary(page), do: page
-  defp page_field(_page, _key), do: nil
+  defp page_context(nil, _scope), do: nil
+
+  defp page_context(path, scope) do
+    case Application.get_env(:phoenix_kit_agent, :page_context) do
+      nil -> nil
+      {mod, fun} when is_atom(mod) and is_atom(fun) -> call_page_context(mod, fun, path, scope)
+      _invalid -> page_context_skipped(:invalid_config)
+    end
+  end
+
+  defp call_page_context(mod, fun, path, scope) do
+    _ = Code.ensure_loaded(mod)
+
+    if function_exported?(mod, fun, 2) do
+      case apply(mod, fun, [path, scope]) do
+        nil -> nil
+        text when is_binary(text) -> host_line(text, @page_context_max)
+        _not_a_string -> page_context_skipped(:not_a_string)
+      end
+    else
+      page_context_skipped(:undefined)
+    end
+  catch
+    kind, _reason -> page_context_skipped(kind)
+  end
+
+  defp page_context_skipped(reason) do
+    Logger.warning("[PhoenixKitAgent] page context skipped: #{reason}")
+    nil
+  end
+
+  # The host's text on one line: what would start a line of its own becomes a
+  # space; `nil` when nothing is left.
+  defp host_line(text, max) do
+    text
+    |> String.replace(~r/[\p{C}\p{Zl}\p{Zp}\s]+/u, " ")
+    |> String.trim()
+    |> case do
+      "" -> nil
+      line -> String.slice(line, 0, max)
+    end
+  end
+
+  # ── untrusted input ───────────────────────────────────────────────────
 
   defp path(value) when is_binary(value) do
     with path when is_binary(path) <- value |> one_line(2_000) |> uri_path(),
