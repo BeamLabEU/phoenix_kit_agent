@@ -66,31 +66,45 @@ defmodule PhoenixKitAgent.MixProject do
     ]
   end
 
-  # phoenix_kit deps resolve from Hex by default. For cross-repo work against a
-  # local checkout, export <APP>_PATH — e.g. PHOENIX_KIT_PATH=../phoenix_kit or
-  # PHOENIX_KIT_AI_PATH=../phoenix_kit_ai. Unset => the published pin, so
-  # mix hex.publish is unaffected.
-  defp pk_dep(app, requirement, opts \\ []) do
+  # phoenix_kit deps resolve from their pin (Hex requirement or git source). For
+  # cross-repo work against a local checkout, export <APP>_PATH — e.g.
+  # PHOENIX_KIT_PATH=../phoenix_kit or PHOENIX_KIT_AI_PATH=../phoenix_kit_ai.
+  # Unset => the pin.
+  defp pk_dep(app, requirement_or_source, opts \\ []) do
     env_var = String.upcase(Atom.to_string(app)) <> "_PATH"
 
     case System.get_env(env_var) do
-      nil when opts == [] -> {app, requirement}
-      nil -> {app, requirement, opts}
+      nil when is_list(requirement_or_source) -> {app, requirement_or_source ++ opts}
+      nil when opts == [] -> {app, requirement_or_source}
+      nil -> {app, requirement_or_source, opts}
       path -> {app, [path: path, override: true] ++ opts}
     end
   end
 
   defp deps do
     [
-      # PhoenixKit provides the Module behaviour and the Settings API.
-      # 2.62.2 is the core this module is specified and verified against.
-      # Bounded as `>= floor and < 3.0.0` (not a three-segment `~>`) so every
-      # later 2.x core minor stays admissible for hosts running this module.
-      pk_dep(:phoenix_kit, ">= 2.62.2 and < 3.0.0"),
+      # PhoenixKit provides the Module behaviour, the Settings API, the API
+      # Executor (execute_as/visible_for), SessionRef and hidden Storage
+      # libraries.
+      # Integration pin until release: the timujinne fork's
+      # integration/andi-2026-10 branch (upstream + #946, #948, #949, #950).
+      # Hex 2.63.0 does not carry these functions; switch back to a Hex
+      # requirement once they ship.
+      pk_dep(:phoenix_kit,
+        git: "https://github.com/timujinne/phoenix_kit.git",
+        ref: "b15e87409388c1d48eda5d46198a9335b8aacb02",
+        override: true
+      ),
 
       # Model calls, endpoints, credentials, budget and the request journal
       # come from phoenix_kit_ai; this module only adds the chat layer.
-      pk_dep(:phoenix_kit_ai, "~> 0.25"),
+      # Integration pin until release: the timujinne fork's
+      # integration/andi-2026-10 branch (upstream + #38, tool calling).
+      pk_dep(:phoenix_kit_ai,
+        git: "https://github.com/timujinne/phoenix_kit_ai.git",
+        ref: "06cc9ff9c8030e73bac47748cb07350617aa14f6",
+        override: true
+      ),
 
       # LiveView is needed for the admin pages (Phase 1).
       {:phoenix_live_view, "~> 1.1"},

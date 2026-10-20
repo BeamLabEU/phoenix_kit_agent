@@ -14,8 +14,10 @@ endpoint and router (`config/` exists only for tests).
 enable/disable switch) exists. Migrations, permissions, tables and UI come in
 the next phase.
 
-- **Depends on:** `phoenix_kit` (Hex, `>= 2.62.2 and < 3.0.0`), `phoenix_kit_ai`
-  (`~> 0.25`), `phoenix_live_view`.
+- **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins to the
+  `timujinne` forks' `integration/andi-2026-10` branches (the session-actor API,
+  hidden Storage libraries and tool calling are not on Hex yet), and
+  `phoenix_live_view`.
 - **Module key** `"agent"`; settings prefix `agent_`; tables will be
   `phoenix_kit_agent_*`.
 - **Boundaries:** nothing about orders, customers or other host domain data
@@ -34,10 +36,10 @@ mix precommit                # compile --warnings-as-errors + format + credo --s
 Test database settings come from `PGHOST`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`
 (defaults: `localhost`, `postgres`, `postgres`, `phoenix_kit_agent_test`).
 
-`phoenix_kit*` deps resolve from Hex. To run against a local checkout, export
-`<APP>_PATH` (the dep's app name upper-cased plus `_PATH`, e.g.
-`PHOENIX_KIT_PATH=../phoenix_kit`); `pk_dep/3` in `mix.exs` swaps the Hex pin
-for a `path:` dep at resolve time. Never commit a hand-edited `path:` tuple.
+`phoenix_kit*` deps resolve from their pin in `mix.exs`. To run against a local
+checkout, export `<APP>_PATH` (the dep's app name upper-cased plus `_PATH`, e.g.
+`PHOENIX_KIT_PATH=../phoenix_kit`); `pk_dep/3` in `mix.exs` swaps the pin for a
+`path:` dep at resolve time. Never commit a hand-edited `path:` tuple.
 
 ## Conventions
 
