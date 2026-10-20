@@ -538,7 +538,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
                 id="agent-user-attachment-mb"
                 name="user_settings[max_attachment_mb]"
                 label={gettext("Largest attachment")}
-                unit="MB"
+                unit={pgettext("unit", "MB")}
                 value={@editing.params["max_attachment_mb"]}
                 errors={errors(@editing, :max_attachment_mb)}
                 placeholder={gettext("module default")}

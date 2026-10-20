@@ -304,7 +304,7 @@ defmodule PhoenixKitAgent.LimitsTest do
       assert [mine] = notifications(ctx.user)
 
       assert mine.metadata["notification_text"] ==
-               "Oled täna kasutanud ära kõik oma 1 AI-assistendi päringut."
+               "Oled täna kasutanud ära kõik oma 1 AI-assistendi vestlusringi."
 
       assert [theirs] = notifications(ctx.owner)
 

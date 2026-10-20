@@ -11,20 +11,20 @@ msgstr ""
 "Language: et\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: lib/phoenix_kit_agent/limits.ex:374
+#: lib/phoenix_kit_agent/limits.ex:382
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the daily AI assistant spending limit ($%{limit})."
 msgstr "%{email} on jõudnud AI-assistendi päevase kululimiidini ($%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:383
+#: lib/phoenix_kit_agent/limits.ex:391
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the monthly AI assistant spending limit ($%{limit})."
 msgstr "%{email} on jõudnud AI-assistendi kuist kululimiidini ($%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:365
+#: lib/phoenix_kit_agent/limits.ex:373
 #, elixir-autogen, elixir-format
 msgid "%{email} has used all %{limit} AI assistant turns for today."
-msgstr "%{email} on kasutanud täna ära kõik %{limit} AI-assistendi päringut."
+msgstr "%{email} on täna kasutanud ära kõik %{limit} AI-assistendi vestlusringi."
 
 #: lib/phoenix_kit_agent/web/dock/components.ex:121
 #, elixir-autogen, elixir-format
@@ -48,14 +48,14 @@ msgstr "Mudelit ei saanud salvestada: see pole enam saadaval. Vali uuesti."
 msgid "A title cannot be empty or longer than 200 characters."
 msgstr "Pealkiri ei tohi olla tühi ega pikem kui 200 tähemärki."
 
-#: lib/phoenix_kit_agent/limits.ex:311
+#: lib/phoenix_kit_agent/limits.ex:312
 #, elixir-autogen, elixir-format
 msgid "A user"
 msgstr "Kasutaja"
 
 #: lib/phoenix_kit_agent.ex:105
 #: lib/phoenix_kit_agent.ex:127
-#: lib/phoenix_kit_agent.ex:195
+#: lib/phoenix_kit_agent.ex:197
 #: lib/phoenix_kit_agent/web/settings_live.ex:68
 #: lib/phoenix_kit_agent/web/spending_live.ex:35
 #: lib/phoenix_kit_agent/web/users_live.ex:84
@@ -201,7 +201,7 @@ msgstr "Muuda mooduli vaikeväärtusi ja teiste kasutajate assistendi sätteid n
 #: lib/phoenix_kit_agent/web/settings_live.ex:530
 #, elixir-autogen, elixir-format
 msgid "Goes first into every request of every user, before the site's own part, the prompt an administrator sets for a user and the user's own instructions."
-msgstr "Läheb iga kasutaja iga päringu algusesse, enne saidi enda osa, administraatori kasutajale seatud juhist ja kasutaja enda juhiseid."
+msgstr "Läheb iga kasutaja iga päringu algusesse, enne saidi enda osa, administraatori kasutajale seatud promptit ja kasutaja enda juhiseid."
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:508
 #, elixir-autogen, elixir-format
@@ -368,7 +368,7 @@ msgstr "Ühe tööriista tulemus, tähemärki"
 #: lib/phoenix_kit_agent/web/settings_live.ex:495
 #, elixir-autogen, elixir-format
 msgid "One turn"
-msgstr "Üks päring"
+msgstr "Üks vestlusring"
 
 #: lib/phoenix_kit_agent/web/users_live.ex:337
 #, elixir-autogen, elixir-format
@@ -395,7 +395,7 @@ msgstr "Pilte ei saa lugeda: pilte nägevat mudelit pole seadistatud."
 #: lib/phoenix_kit_agent/web/users_live.ex:498
 #, elixir-autogen, elixir-format
 msgid "Prompt for this user"
-msgstr "Selle kasutaja juhis (prompt)"
+msgstr "Selle kasutaja prompt"
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:135
 #, elixir-autogen, elixir-format
@@ -465,7 +465,7 @@ msgstr "Midagi läks valesti. Proovi hetke pärast uuesti."
 #: lib/phoenix_kit_agent/web/spending_live.ex:33
 #, elixir-autogen, elixir-format
 msgid "Spending"
-msgstr "Kulu"
+msgstr "Kulud"
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:471
 #: lib/phoenix_kit_agent/web/users_live.ex:514
@@ -499,11 +499,6 @@ msgstr "Välja lülitatud"
 #, elixir-autogen, elixir-format
 msgid "Tell the watchers when this user reaches a limit"
 msgstr "Teavita jälgijaid, kui see kasutaja jõuab limiidini"
-
-#: lib/phoenix_kit_agent/limits.ex:392
-#, elixir-autogen, elixir-format
-msgid "The AI budget (%{scope}) refused the AI assistant of %{email}."
-msgstr "AI eelarve (%{scope}) keeldus kasutaja %{email} AI-assistendist."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:132
 #, elixir-autogen, elixir-format
@@ -569,22 +564,22 @@ msgstr "Assistent vastab selles vestluses veel. Oota või vajuta nuppu Peata."
 #: lib/phoenix_kit_agent/web/dock/texts.ex:161
 #, elixir-autogen, elixir-format
 msgid "The assistant used all its tool rounds for this turn."
-msgstr "Assistent kasutas selle päringu jaoks ära kõik tööriistaringid."
+msgstr "Assistent kasutas selle vestlusringi jaoks ära kõik tööriistaringid."
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:528
 #, elixir-autogen, elixir-format
 msgid "The assistant's prompt"
-msgstr "Assistendi juhis (prompt)"
+msgstr "Assistendi prompt"
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:304
 #, elixir-autogen, elixir-format
 msgid "The assistant's prompt saved."
-msgstr "Assistendi juhis (prompt) on salvestatud."
+msgstr "Assistendi prompt on salvestatud."
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:464
 #, elixir-autogen, elixir-format
 msgid "The default model does not report what a call costs: money is not counted, only the turn limit applies."
-msgstr "Vaikemudel ei teata, mis kutse maksab: raha ei arvestata, kehtib ainult päringute limiit."
+msgstr "Vaikemudel ei teata, kui palju üks AI-päring maksab: raha ei arvestata, kehtib ainult vestlusringide limiit."
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:369
 #, elixir-autogen, elixir-format
@@ -715,7 +710,7 @@ msgstr "Seda liiki faili ei toetata. Saada pilt, PDF, xlsx- või csv-tabel või 
 #: lib/phoenix_kit_agent/web/users_live.ex:505
 #, elixir-autogen, elixir-format
 msgid "This model does not report what a call costs: money is not counted, only the turn limit applies."
-msgstr "See mudel ei teata, mis kutse maksab: raha ei arvestata, kehtib ainult päringute limiit."
+msgstr "See mudel ei teata, kui palju üks AI-päring maksab: raha ei arvestata, kehtib ainult vestlusringide limiit."
 
 #: lib/phoenix_kit_agent/web/spending_live.ex:97
 #: lib/phoenix_kit_agent/web/spending_live.ex:113
@@ -767,23 +762,23 @@ msgstr "Liiga palju päringuid korraga; proovi minuti pärast uuesti."
 #: lib/phoenix_kit_agent/web/settings_live.ex:499
 #, elixir-autogen, elixir-format
 msgid "Tool rounds per turn"
-msgstr "Tööriistaringe päringu kohta"
+msgstr "Tööriistaringe vestlusringi kohta"
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:503
 #, elixir-autogen, elixir-format
 msgid "Turn deadline"
-msgstr "Päringu tähtaeg"
+msgstr "Vestlusringi tähtaeg"
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:479
 #: lib/phoenix_kit_agent/web/users_live.ex:532
 #, elixir-autogen, elixir-format
 msgid "Turns per day"
-msgstr "Päringuid päevas"
+msgstr "Vestlusringe päevas"
 
 #: lib/phoenix_kit_agent/web/spending_live.ex:114
 #, elixir-autogen, elixir-format
 msgid "Turns today"
-msgstr "Päringuid täna"
+msgstr "Vestlusringe täna"
 
 #: lib/phoenix_kit_agent.ex:107
 #, elixir-autogen, elixir-format
@@ -879,7 +874,7 @@ msgstr "Sul puudub juurdepääs AI-assistendi kulude andmetele."
 msgid "You do not have access to the AI assistant users."
 msgstr "Sul puudub juurdepääs AI-assistendi kasutajatele."
 
-#: lib/phoenix_kit_agent/limits.ex:345
+#: lib/phoenix_kit_agent/limits.ex:346
 #, elixir-autogen, elixir-format
 msgid "You have reached your daily spending limit for the AI assistant ($%{limit})."
 msgstr "Oled jõudnud AI-assistendi päevase kululimiidini ($%{limit})."
@@ -894,7 +889,7 @@ msgstr "Oled jõudnud assistendi päevase kululimiidini."
 msgid "You have reached your daily spending limit for the assistant. It resets at midnight."
 msgstr "Oled jõudnud assistendi päevase kululimiidini. See nullitakse südaööl."
 
-#: lib/phoenix_kit_agent/limits.ex:351
+#: lib/phoenix_kit_agent/limits.ex:352
 #, elixir-autogen, elixir-format
 msgid "You have reached your monthly spending limit for the AI assistant ($%{limit})."
 msgstr "Oled jõudnud AI-assistendi kuise kululimiidini ($%{limit})."
@@ -909,35 +904,35 @@ msgstr "Oled jõudnud assistendi kuise kululimiidini."
 msgid "You have reached your monthly spending limit for the assistant. It resets on the first day of next month."
 msgstr "Oled jõudnud assistendi kuise kululimiidini. See nullitakse järgmise kuu esimesel päeval."
 
-#: lib/phoenix_kit_agent/limits.ex:319
+#: lib/phoenix_kit_agent/limits.ex:320
 #, elixir-autogen, elixir-format
 msgid "You have used %{used} of your %{limit} AI assistant turns for today."
-msgstr "Oled täna kasutanud %{used} oma %{limit} AI-assistendi päringust."
+msgstr "Oled täna kasutanud %{used} oma %{limit} AI-assistendi vestlusringist."
 
-#: lib/phoenix_kit_agent/limits.ex:326
+#: lib/phoenix_kit_agent/limits.ex:327
 #, elixir-autogen, elixir-format
 msgid "You have used 80% of your daily spending limit for the AI assistant ($%{used} of $%{limit})."
 msgstr "Oled kasutanud 80% oma AI-assistendi päevasest kululimiidist ($%{used} / $%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:334
+#: lib/phoenix_kit_agent/limits.ex:335
 #, elixir-autogen, elixir-format
 msgid "You have used 80% of your monthly spending limit for the AI assistant ($%{used} of $%{limit})."
 msgstr "Oled kasutanud 80% oma AI-assistendi kuisest kululimiidist ($%{used} / $%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:341
+#: lib/phoenix_kit_agent/limits.ex:342
 #, elixir-autogen, elixir-format
 msgid "You have used all your %{limit} AI assistant turns for today."
-msgstr "Oled täna kasutanud ära kõik oma %{limit} AI-assistendi päringut."
+msgstr "Oled täna kasutanud ära kõik oma %{limit} AI-assistendi vestlusringi."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:62
 #, elixir-autogen, elixir-format
 msgid "You have used all your assistant turns for today."
-msgstr "Oled täna kasutanud ära kõik oma assistendi päringud."
+msgstr "Oled täna kasutanud ära kõik oma assistendi vestlusringid."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:176
 #, elixir-autogen, elixir-format
 msgid "You have used all your assistant turns for today. They reset at midnight."
-msgstr "Oled täna kasutanud ära kõik oma assistendi päringud. Need nullitakse südaööl."
+msgstr "Oled täna kasutanud ära kõik oma assistendi vestlusringid. Need nullitakse südaööl."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:126
 #, elixir-autogen, elixir-format
@@ -1030,7 +1025,7 @@ msgstr "mooduli vaikeväärtus"
 #: lib/phoenix_kit_agent/web/users_live.ex:630
 #, elixir-autogen, elixir-format
 msgid "money is not counted — only the turn limit applies"
-msgstr "raha ei arvestata — kehtib ainult päringute limiit"
+msgstr "raha ei arvestata — kehtib ainult vestlusringide limiit"
 
 #: lib/phoenix_kit_agent/web/users_live.ex:620
 #, elixir-autogen, elixir-format
@@ -1062,4 +1057,52 @@ msgstr "tööriistade tugi teadmata"
 #: lib/phoenix_kit_agent/web/users_live.ex:623
 #, elixir-autogen, elixir-format
 msgid "turns"
-msgstr "päringut"
+msgstr "vestlusringi"
+
+#: lib/phoenix_kit_agent.ex:181
+#, elixir-autogen, elixir-format
+msgid "AI assistant limits"
+msgstr "AI-assistendi limiidid"
+
+#: lib/phoenix_kit_agent.ex:183
+#, elixir-autogen, elixir-format
+msgid "Someone reached a spending or turn limit of the AI assistant, or the AI budget refused it"
+msgstr "Keegi jõudis AI-assistendi kulu- või vestlusringide limiidini või AI eelarve keeldus tema päringust"
+
+#: lib/phoenix_kit_agent/limits.ex:406
+#, elixir-autogen, elixir-format
+msgid "The AI budget of the endpoint refused the AI assistant of %{email}."
+msgstr "Lõpp-punkti AI eelarve keeldus kasutaja %{email} AI-assistendist."
+
+#: lib/phoenix_kit_agent/limits.ex:414
+#, elixir-autogen, elixir-format
+msgid "The AI budget of the user refused the AI assistant of %{email}."
+msgstr "Kasutaja AI eelarve keeldus kasutaja %{email} AI-assistendist."
+
+#: lib/phoenix_kit_agent/limits.ex:428
+#, elixir-autogen, elixir-format
+msgid "The AI budget refused the AI assistant of %{email}."
+msgstr "AI eelarve keeldus kasutaja %{email} AI-assistendist."
+
+#: lib/phoenix_kit_agent/limits.ex:420
+#, elixir-autogen, elixir-format
+msgid "The AI call limit of the user refused the AI assistant of %{email}."
+msgstr "Kasutaja AI kõnede limiit keeldus kasutaja %{email} AI-assistendist."
+
+#: lib/phoenix_kit_agent/limits.ex:400
+#, elixir-autogen, elixir-format
+msgid "The overall AI budget refused the AI assistant of %{email}."
+msgstr "AI üldeelarve keeldus kasutaja %{email} AI-assistendist."
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:483
+#: lib/phoenix_kit_agent/web/users_live.ex:541
+#, elixir-autogen, elixir-format
+msgctxt "unit"
+msgid "MB"
+msgstr "MB"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:504
+#, elixir-autogen, elixir-format
+msgctxt "unit"
+msgid "s"
+msgstr "s"

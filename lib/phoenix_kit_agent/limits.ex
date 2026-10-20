@@ -66,9 +66,10 @@ defmodule PhoenixKitAgent.Limits do
 
   alias PhoenixKit.Notifications
   alias PhoenixKit.RepoHelper
+  alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Roles
-  alias PhoenixKit.Utils.Routes
+  alias PhoenixKit.Utils.{RecipientLocale, Routes}
   alias PhoenixKitAgent.{Config, Models, Spend, UserConfig}
   alias PhoenixKitAgent.Schemas.{LimitEvent, UserSettings}
 
@@ -355,8 +356,15 @@ defmodule PhoenixKitAgent.Limits do
   # The watchers are other people than the one whose process this is, and one
   # text goes to all of them: it is written in the site's default language.
   defp for_watchers(fun) do
-    locale = PhoenixKit.Config.default_locale() |> String.split("-") |> hd()
-    Gettext.with_locale(PhoenixKitAgent.Gettext, locale, fun)
+    language = Settings.get_content_language() || PhoenixKit.Config.default_locale()
+
+    RecipientLocale.in_locale(language, fn ->
+      Gettext.with_locale(
+        PhoenixKitAgent.Gettext,
+        Gettext.get_locale(PhoenixKitWeb.Gettext),
+        fun
+      )
+    end)
   end
 
   defp watcher_text(email, %{kind: :daily_turns, limit: limit}),
@@ -386,19 +394,39 @@ defmodule PhoenixKitAgent.Limits do
         )
       end)
 
-  defp budget_text(email, scope),
+  defp budget_text(email, :global),
     do:
       for_watchers(fn ->
-        gettext("The AI budget (%{scope}) refused the AI assistant of %{email}.",
-          scope: budget_scope(scope),
+        gettext("The overall AI budget refused the AI assistant of %{email}.", email: email)
+      end)
+
+  defp budget_text(email, :endpoint),
+    do:
+      for_watchers(fn ->
+        gettext("The AI budget of the endpoint refused the AI assistant of %{email}.",
           email: email
         )
       end)
 
-  defp budget_scope(scope) when scope in [:global, :endpoint, :user, :user_calls],
-    do: Atom.to_string(scope)
+  defp budget_text(email, :user),
+    do:
+      for_watchers(fn ->
+        gettext("The AI budget of the user refused the AI assistant of %{email}.", email: email)
+      end)
 
-  defp budget_scope(_other), do: "limit"
+  defp budget_text(email, :user_calls),
+    do:
+      for_watchers(fn ->
+        gettext("The AI call limit of the user refused the AI assistant of %{email}.",
+          email: email
+        )
+      end)
+
+  defp budget_text(email, _other),
+    do:
+      for_watchers(fn ->
+        gettext("The AI budget refused the AI assistant of %{email}.", email: email)
+      end)
 
   # A notice is never worth a turn: a failure is logged as its class only.
   defp safely(fun) do

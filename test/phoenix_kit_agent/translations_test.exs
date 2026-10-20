@@ -39,6 +39,13 @@ defmodule PhoenixKitAgent.TranslationsTest do
     assert dirs == Enum.sort(@languages)
   end
 
+  # Texts that read the same in a language: a unit, a name.
+  @same %{
+    "et" => ["MB", "s"],
+    "de" => ["MB", "s", "Limits"],
+    "fr" => ["s", "Message", "Assistant"]
+  }
+
   test "the template has messages" do
     assert length(template()) > 150
   end
@@ -54,6 +61,16 @@ defmodule PhoenixKitAgent.TranslationsTest do
         for %Message.Singular{msgid: id} <- template() do
           msgstr = translated |> Map.fetch!(text(id)) |> Map.fetch!(:msgstr) |> text()
           assert msgstr != "", "#{unquote(language)}: empty translation of #{inspect(text(id))}"
+        end
+      end
+
+      test "has no message left in English" do
+        same = Map.get(@same, unquote(language), [])
+
+        for %Message.Singular{msgid: id, msgstr: msgstr} <- catalogue(unquote(language)),
+            unquote(language) != "en",
+            text(id) == text(msgstr) do
+          assert text(id) in same, "#{unquote(language)}: #{inspect(text(id))} is not translated"
         end
       end
 
@@ -115,6 +132,18 @@ defmodule PhoenixKitAgent.TranslationsTest do
         Gettext.dgettext(PhoenixKitAgent.Gettext, "default", "Spending")
       end)
 
-    assert et == "Kulu"
+    assert et == "Kulud"
+  end
+
+  test "the type of the limit notification is translated where it is read" do
+    for {locale, expected} <- [{"et", "AI-assistendi limiidid"}, {"ru", "Лимиты AI-ассистента"}] do
+      label =
+        Gettext.with_locale(PhoenixKitAgent.Gettext, locale, fn ->
+          [%{label: label}] = PhoenixKitAgent.notification_types()
+          label
+        end)
+
+      assert label == expected
+    end
   end
 end

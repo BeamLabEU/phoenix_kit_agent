@@ -49,6 +49,7 @@ defmodule PhoenixKitAgent.MixProject do
       precommit: [
         "format",
         "compile --force --warnings-as-errors",
+        "gettext.extract --check-up-to-date",
         "deps.unlock --check-unused",
         # Scan for retired Hex deps. Run via `cmd` so Hex bootstraps in a fresh
         # process — the hex.* archive tasks aren't resolvable via Mix.Task.run

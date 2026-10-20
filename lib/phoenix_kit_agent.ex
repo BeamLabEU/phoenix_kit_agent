@@ -178,9 +178,11 @@ defmodule PhoenixKitAgent do
     [
       %{
         key: "agent_limit",
-        label: "AI assistant limits",
+        label: gettext("AI assistant limits"),
         description:
-          "Someone reached a spending or turn limit of the AI assistant, or the AI budget refused it",
+          gettext(
+            "Someone reached a spending or turn limit of the AI assistant, or the AI budget refused it"
+          ),
         actions: [],
         default: true
       }

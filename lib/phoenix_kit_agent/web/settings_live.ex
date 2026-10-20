@@ -480,7 +480,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
               <.decimal_input
                 field={@form[:max_attachment_mb]}
                 label={gettext("Largest attachment")}
-                unit="MB"
+                unit={pgettext("unit", "MB")}
               />
               <.decimal_input
                 field={@form[:max_attachments_per_message]}
@@ -501,7 +501,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
               <.decimal_input
                 field={@form[:turn_deadline_s]}
                 label={gettext("Turn deadline")}
-                unit="s"
+                unit={pgettext("unit", "s")}
               />
               <.decimal_input
                 field={@form[:history_chars]}
