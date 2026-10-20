@@ -11,17 +11,17 @@ msgstr ""
 "Language: fr\n"
 "Plural-Forms: nplurals=2; plural=(n>1);\n"
 
-#: lib/phoenix_kit_agent/limits.ex:382
+#: lib/phoenix_kit_agent/limits.ex:383
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the daily AI assistant spending limit ($%{limit})."
 msgstr "%{email} a atteint la limite de dépenses quotidienne de l'assistant IA ($%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:391
+#: lib/phoenix_kit_agent/limits.ex:392
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the monthly AI assistant spending limit ($%{limit})."
 msgstr "%{email} a atteint la limite de dépenses mensuelle de l'assistant IA ($%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:373
+#: lib/phoenix_kit_agent/limits.ex:374
 #, elixir-autogen, elixir-format
 msgid "%{email} has used all %{limit} AI assistant turns for today."
 msgstr "%{email} a épuisé aujourd'hui ses %{limit} échanges avec l'assistant IA."
@@ -1069,27 +1069,27 @@ msgstr "Limites de l'assistant IA"
 msgid "Someone reached a spending or turn limit of the AI assistant, or the AI budget refused it"
 msgstr "Quelqu'un a atteint une limite de dépenses ou d'échanges de l'assistant IA, ou le budget IA l'a refusé"
 
-#: lib/phoenix_kit_agent/limits.ex:406
+#: lib/phoenix_kit_agent/limits.ex:407
 #, elixir-autogen, elixir-format
 msgid "The AI budget of the endpoint refused the AI assistant of %{email}."
 msgstr "Le budget IA de l'endpoint a refusé l'assistant IA de %{email}."
 
-#: lib/phoenix_kit_agent/limits.ex:414
+#: lib/phoenix_kit_agent/limits.ex:415
 #, elixir-autogen, elixir-format
 msgid "The AI budget of the user refused the AI assistant of %{email}."
 msgstr "Le budget IA de l'utilisateur a refusé l'assistant IA de %{email}."
 
-#: lib/phoenix_kit_agent/limits.ex:428
+#: lib/phoenix_kit_agent/limits.ex:429
 #, elixir-autogen, elixir-format
 msgid "The AI budget refused the AI assistant of %{email}."
 msgstr "Le budget IA a refusé l'assistant IA de %{email}."
 
-#: lib/phoenix_kit_agent/limits.ex:420
+#: lib/phoenix_kit_agent/limits.ex:421
 #, elixir-autogen, elixir-format
 msgid "The AI call limit of the user refused the AI assistant of %{email}."
 msgstr "La limite d'appels IA de l'utilisateur a refusé l'assistant IA de %{email}."
 
-#: lib/phoenix_kit_agent/limits.ex:400
+#: lib/phoenix_kit_agent/limits.ex:401
 #, elixir-autogen, elixir-format
 msgid "The overall AI budget refused the AI assistant of %{email}."
 msgstr "Le budget IA global a refusé l'assistant IA de %{email}."

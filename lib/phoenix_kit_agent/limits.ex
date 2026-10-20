@@ -354,7 +354,8 @@ defmodule PhoenixKitAgent.Limits do
       )
 
   # The watchers are other people than the one whose process this is, and one
-  # text goes to all of them: it is written in the site's default language.
+  # text goes to all of them: it is written in the site's content language
+  # (`Settings.get_content_language/0`, the primary one), else the default locale.
   defp for_watchers(fun) do
     language = Settings.get_content_language() || PhoenixKit.Config.default_locale()
 

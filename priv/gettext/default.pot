@@ -11,17 +11,17 @@
 msgid ""
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:382
+#: lib/phoenix_kit_agent/limits.ex:383
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the daily AI assistant spending limit ($%{limit})."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:391
+#: lib/phoenix_kit_agent/limits.ex:392
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the monthly AI assistant spending limit ($%{limit})."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:373
+#: lib/phoenix_kit_agent/limits.ex:374
 #, elixir-autogen, elixir-format
 msgid "%{email} has used all %{limit} AI assistant turns for today."
 msgstr ""
@@ -1069,27 +1069,27 @@ msgstr ""
 msgid "Someone reached a spending or turn limit of the AI assistant, or the AI budget refused it"
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:406
+#: lib/phoenix_kit_agent/limits.ex:407
 #, elixir-autogen, elixir-format
 msgid "The AI budget of the endpoint refused the AI assistant of %{email}."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:414
+#: lib/phoenix_kit_agent/limits.ex:415
 #, elixir-autogen, elixir-format
 msgid "The AI budget of the user refused the AI assistant of %{email}."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:428
+#: lib/phoenix_kit_agent/limits.ex:429
 #, elixir-autogen, elixir-format
 msgid "The AI budget refused the AI assistant of %{email}."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:420
+#: lib/phoenix_kit_agent/limits.ex:421
 #, elixir-autogen, elixir-format
 msgid "The AI call limit of the user refused the AI assistant of %{email}."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:400
+#: lib/phoenix_kit_agent/limits.ex:401
 #, elixir-autogen, elixir-format
 msgid "The overall AI budget refused the AI assistant of %{email}."
 msgstr ""

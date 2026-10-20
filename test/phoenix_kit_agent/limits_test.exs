@@ -424,5 +424,36 @@ defmodule PhoenixKitAgent.LimitsTest do
       :ok = Limits.ai_budget_reached(other.uuid, :global)
       assert length(notifications(ctx.owner)) == 2
     end
+
+    for {locale, word} <- [{"et", "keeldus"}, {"ru", "отказ"}] do
+      test "each scope of the budget has its own sentence in the site's language (#{locale})",
+           ctx do
+        Application.put_env(:phoenix_kit, :default_locale, unquote(locale))
+        on_exit(fn -> Application.delete_env(:phoenix_kit, :default_locale) end)
+
+        before = {Gettext.get_locale(PhoenixKitAgent.Gettext), Gettext.get_locale()}
+
+        texts =
+          for scope <- [:global, :endpoint, :user, :user_calls, :other] do
+            who = user_with(["agent"], "budget#{unquote(locale)}#{scope}")
+            :ok = Limits.ai_budget_reached(who.uuid, scope)
+
+            text =
+              ctx.owner
+              |> notifications()
+              |> Enum.map(& &1.metadata["notification_text"])
+              |> Enum.find(&(&1 =~ who.email))
+
+            bare = String.replace(text, who.email, "")
+            refute bare =~ ~r/global|endpoint|user_calls/
+            assert bare =~ unquote(word)
+            refute bare =~ "refused"
+            text
+          end
+
+        assert length(Enum.uniq(texts)) == 5
+        assert {Gettext.get_locale(PhoenixKitAgent.Gettext), Gettext.get_locale()} == before
+      end
+    end
   end
 end
