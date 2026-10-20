@@ -115,6 +115,11 @@ defmodule PhoenixKitAgent.MixProject do
       {:xlsx_reader, "~> 0.8"},
       {:nimble_csv, "~> 1.2"},
 
+      # The chat panel renders model answers from the markdown tree, so no
+      # picture or raw HTML reaches the page. Already in the tree (phoenix_kit's);
+      # named here because the module calls it itself.
+      {:mdex, "~> 0.13"},
+
       # The module's own gettext backend for its admin pages.
       {:gettext, "~> 1.0"},
 
