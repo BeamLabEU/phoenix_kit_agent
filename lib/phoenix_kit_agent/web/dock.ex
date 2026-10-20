@@ -62,7 +62,13 @@ defmodule PhoenixKitAgent.Web.Dock do
   says what to show (a turn lost but still within its time is said to be
   lost — the chat is free when its lock expires). The indicator says whether
   the model thinks or a tool is called; in the browser it gives up after the
-  deadline of a turn and its grace period (`Monitor.stop_grace_ms/0`).
+  deadline of a turn and its grace period (`Monitor.stop_grace_ms/0`),
+  counted again for each turn and after a lost connection is found again.
+  The indicator follows the server only: while a turn is shown as running,
+  the panel reads the chat's lock again every `:turn_check_ms` (application
+  environment, default 5 s), so a turn whose end never reached it — it came
+  between the read of the chat and the subscription, or was lost between
+  nodes — is let go of, with the messages it left.
 
   Files come through `allow_upload` (the kinds and the size of §9, the number
   of the user's settings) and are handed to `Attachments.add/4` with the path
@@ -81,7 +87,10 @@ defmodule PhoenixKitAgent.Web.Dock do
   or closed, the chosen chat and the width are kept in `localStorage` by the
   `.DockState` hook and restored (`restore`) when the panel mounts again
   (another `live_session`, a reload) and when it joins again after a lost
-  connection, which mounts the LiveView afresh. A panel kept closed reads
+  connection, which mounts the LiveView afresh; the turn shown then is the
+  one the chat's lock holds now, and every restore patches the whole panel,
+  so nothing the browser kept from before the connection was lost stays. A
+  panel kept closed reads
   nothing until a chat is opened; a remembered chat that is not the user's
   active one any more is forgotten. The list opens from a focusable `div`
   (Safari does not focus a clicked `<button>`, and the list is open while it
@@ -129,6 +138,9 @@ defmodule PhoenixKitAgent.Web.Dock do
   # What the browser waits beyond a turn's deadline and its stop grace period
   # (`Monitor.stop_grace_ms/0`) before it says that no answer is coming.
   @wait_margin_ms 15_000
+  # How often the panel reads again the state of the turn it shows
+  # (`:turn_check_ms`).
+  @turn_check_ms 5_000
 
   # ── mount ───────────────────────────────────────────────────────────
 
@@ -174,6 +186,8 @@ defmodule PhoenixKitAgent.Web.Dock do
         renaming: nil,
         instructions_form: nil,
         fresh_uuid: nil,
+        turn_check: nil,
+        restored: 0,
         timeout_ms: Config.turn_deadline_s() * 1_000 + Monitor.stop_grace_ms() + @wait_margin_ms
       )
       |> allow_upload(:files,
@@ -232,9 +246,14 @@ defmodule PhoenixKitAgent.Web.Dock do
   # lost connection (`.DockState`). A panel kept closed reads nothing: its
   # chat is opened from the list; a chat that is not the user's active one
   # any more is forgotten.
+  #
+  # Every restore changes `restored`, so its answer always patches the panel:
+  # whatever the browser kept from before the connection was lost (a copy of
+  # the panel it held while an event was waiting for its answer) is replaced by
+  # what the server shows now.
   defp event("restore", params, socket) do
     open? = params["open"] == true
-    socket = assign(socket, open?: open?)
+    socket = assign(socket, open?: open?, restored: socket.assigns.restored + 1)
 
     case params["conversation_uuid"] do
       uuid when is_binary(uuid) and open? ->
@@ -840,6 +859,24 @@ defmodule PhoenixKitAgent.Web.Dock do
   def handle_info(_message, %{assigns: %{active?: false}} = socket), do: {:noreply, socket}
   def handle_info(message, socket), do: guarded(socket, fn -> info(message, socket) end)
 
+  # The turn shown as running, read again (`watch_turn/1`): its end may never
+  # reach this panel — it came between the read of the chat and the
+  # subscription, or was lost between nodes. The answers it left are read too.
+  defp info(:pk_agent_check_turn, socket) do
+    socket = assign(socket, turn_check: nil)
+
+    case sync_turn(socket) do
+      {:running, socket} ->
+        {:noreply, socket}
+
+      {:idle, %{assigns: %{turn_ref: nil}} = socket} ->
+        {:noreply, catch_up(socket)}
+
+      {:error, reason, socket} ->
+        {:noreply, socket |> assign(turn_ref: nil, activity: nil) |> refused(reason)}
+    end
+  end
+
   defp info({:agent_message_added, uuid, message_uuid}, socket) do
     if uuid == current_uuid(socket),
       do: {:noreply, add_messages(socket, uuid, message_uuid)},
@@ -859,6 +896,19 @@ defmodule PhoenixKitAgent.Web.Dock do
   end
 
   defp info(_other, socket), do: {:noreply, socket}
+
+  # The messages after the last one shown that the panel did not hear of.
+  defp catch_up(socket) do
+    with uuid when is_binary(uuid) <- current_uuid(socket),
+         opts = me(socket) ++ [after: socket.assigns.last_uuid, limit: @messages_page],
+         {:ok, messages} <- Conversations.list_messages(socket.assigns.ref, uuid, opts) do
+      socket
+      |> assign(last_uuid: last_uuid(messages, socket.assigns.last_uuid))
+      |> insert_messages(messages)
+    else
+      _no_chat_or_refused -> socket
+    end
+  end
 
   # The messages after the last one shown, and the announced one if it was
   # not among them (committed out of order).
@@ -927,7 +977,10 @@ defmodule PhoenixKitAgent.Web.Dock do
   # here, logged as its class only, and the panel says that something went
   # wrong. The socket is the one from before the callback.
   defp guarded(socket, fun) do
-    fun.()
+    case fun.() do
+      {:noreply, socket} -> {:noreply, watch_turn(socket)}
+      other -> other
+    end
   rescue
     exception ->
       Logger.warning("[PhoenixKitAgent] the chat panel failed: #{inspect(exception.__struct__)}")
@@ -937,6 +990,32 @@ defmodule PhoenixKitAgent.Web.Dock do
       Logger.warning("[PhoenixKitAgent] the chat panel failed: #{kind}")
       {:noreply, refused(socket, :failed)}
   end
+
+  # While a turn is shown as running, its state is read again every
+  # `:turn_check_ms` (`info(:pk_agent_check_turn, _)`); once none is, the check
+  # is called off.
+  defp watch_turn(%{assigns: %{active?: true}} = socket) do
+    case {socket.assigns.turn_ref, socket.assigns.turn_check} do
+      {nil, nil} ->
+        socket
+
+      {nil, timer} ->
+        Process.cancel_timer(timer)
+        assign(socket, turn_check: nil)
+
+      {_turn_ref, nil} ->
+        timer = Process.send_after(self(), :pk_agent_check_turn, turn_check_ms())
+        assign(socket, turn_check: timer)
+
+      {_turn_ref, _timer} ->
+        socket
+    end
+  end
+
+  defp watch_turn(socket), do: socket
+
+  defp turn_check_ms,
+    do: Application.get_env(:phoenix_kit_agent, :turn_check_ms, @turn_check_ms)
 
   defp instructions_form(text) do
     %UserSettings{}
@@ -966,6 +1045,7 @@ defmodule PhoenixKitAgent.Web.Dock do
       activity={@activity}
       timeout_ms={@timeout_ms}
       turn_ref={@turn_ref}
+      restored={@restored}
       error={@error}
       instructions_form={@instructions_form}
       unsent={@unsent}

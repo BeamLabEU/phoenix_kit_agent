@@ -1027,6 +1027,127 @@ defmodule PhoenixKitAgent.Web.DockTest do
     end
   end
 
+  # ── a connection lost and found again ──────────────────────────────
+
+  describe "the panel after a reconnect" do
+    setup ctx do
+      Application.put_env(:phoenix_kit_agent, :turn_check_ms, 30)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :turn_check_ms) end)
+      %{chat: conversation_fixture(ctx.user, %{title: "Work"})}
+    end
+
+    # The next model call waits for `:go` before it answers with `answer`.
+    defp gate_next(answer) do
+      test = self()
+
+      Req.Test.expect(@stub, fn conn ->
+        send(test, {:model_gate, self()})
+
+        receive do
+          :go -> Req.Test.json(conn, answer)
+        end
+      end)
+    end
+
+    # The panel's own checks of the turn it shows, until it lets the turn go.
+    defp await_let_go(view, tries \\ 50)
+    defp await_let_go(_view, 0), do: flunk("the panel kept showing the turn")
+
+    defp await_let_go(view, tries) do
+      pid = view.pid
+      assert_receive {:trace, ^pid, :receive, :pk_agent_check_turn}, 2_000
+      _ = render(view)
+      if has_element?(view, "#pk-agent-waiting"), do: await_let_go(view, tries - 1), else: :ok
+    end
+
+    test "a turn that ended before the panel mounted again is not shown as running", ctx do
+      first = dock(ctx)
+      open_chat(first, ctx.chat)
+      listen(ctx, ctx.chat)
+      gate_next(text_answer("Finished meanwhile."))
+
+      send_text(first, "A long one")
+      assert_receive {:model_gate, model}, 3_000
+      assert has_element?(first, "#pk-agent-stop")
+
+      # The connection is lost; the turn ends while there is none.
+      send(model, :go)
+      uuid = ctx.chat.uuid
+      assert_receive {:agent_turn_finished, ^uuid, _turn_ref}, 5_000
+
+      # The browser joins again: a fresh panel, restored from its memory.
+      second = dock(ctx)
+      render_hook(second, "restore", %{"open" => true, "conversation_uuid" => uuid})
+
+      refute has_element?(second, "#pk-agent-waiting")
+      refute has_element?(second, "#pk-agent-stop")
+      assert has_element?(second, "#pk-agent-feed [data-role=assistant]", "Finished meanwhile.")
+    end
+
+    test "a turn whose end the panel did not hear after it mounted again is let go of", ctx do
+      lost = UUIDv7.generate()
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: lost]
+      )
+
+      view = dock(ctx)
+      :erlang.trace(view.pid, true, [:receive])
+      render_hook(view, "restore", %{"open" => true, "conversation_uuid" => ctx.chat.uuid})
+      assert has_element?(view, "#pk-agent-waiting")
+      assert has_element?(view, "#pk-agent-stop")
+
+      # The turn answers and ends, but neither its answer nor its end reaches
+      # the panel (they came between its read of the chat and its listening,
+      # or were lost on the way).
+      Repo.insert!(%Message{
+        conversation_uuid: ctx.chat.uuid,
+        turn_ref: lost,
+        role: "assistant",
+        content: "Answered unheard."
+      })
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+        set: [busy_since: nil, busy_turn_ref: nil]
+      )
+
+      :ok = await_let_go(view)
+
+      refute has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-feed [data-role=assistant]", "Answered unheard.")
+
+      # Nothing more to check once the turn is let go of.
+      pid = view.pid
+      refute_receive {:trace, ^pid, :receive, :pk_agent_check_turn}, 200
+    end
+
+    test "every restore patches the panel, so nothing the browser kept from before stays", ctx do
+      view = dock(ctx)
+      uuid = ctx.chat.uuid
+
+      render_hook(view, "restore", %{"open" => true, "conversation_uuid" => uuid})
+      assert has_element?(view, "#pk-agent-panel[data-restored='1']")
+
+      # The same state again: still a change for the browser to apply.
+      render_hook(view, "restore", %{"open" => true, "conversation_uuid" => uuid})
+      assert has_element?(view, "#pk-agent-panel[data-restored='2']")
+    end
+
+    test "the indicator's own timeout starts again after a reconnect and for each turn", ctx do
+      view = dock(ctx)
+      script = hook_script(view, ".Waiting")
+
+      assert script =~ ~r/reconnected\(\)\s*\{\s*this\.arm\(\)/
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: "turn-1"]
+      )
+
+      open_chat(view, ctx.chat)
+      assert has_element?(view, "#pk-agent-waiting[data-turn='turn-1']")
+    end
+  end
+
   # ── attachments ────────────────────────────────────────────────────
 
   describe "attachments:" do

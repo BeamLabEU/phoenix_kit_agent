@@ -22,7 +22,8 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       `phx-update="ignore"`: the browser owns the draft, so a re-render (a
       file uploading, a message arriving) never wipes it;
     * `.Waiting` — the indicator gives up after the deadline of a turn and
-      its grace period.
+      its grace period, counted again for each turn (`data-turn`) and after a
+      lost connection is found again (`reconnected`).
   """
 
   use Phoenix.Component
@@ -49,6 +50,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
   attr(:activity, :any, required: true)
   attr(:timeout_ms, :integer, required: true)
   attr(:turn_ref, :string, default: nil)
+  attr(:restored, :integer, default: 0, doc: "how many times the browser restored the panel")
   attr(:error, :string, default: nil)
   attr(:instructions_form, :any, default: nil)
   attr(:unsent, :list, required: true)
@@ -77,6 +79,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         id="pk-agent-panel"
         tabindex="-1"
         data-conversation={@conversation && @conversation.uuid}
+        data-restored={@restored}
         aria-label={gettext("AI assistant")}
         class={[
           "hidden [.pk-dock-open_&]:flex flex-col outline-none",
@@ -175,6 +178,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           phx-hook=".Waiting"
           phx-mounted={JS.ignore_attributes(["data-timed-out"])}
           data-timeout-ms={@timeout_ms}
+          data-turn={@turn_ref}
           data-activity={activity_key(@activity)}
           class="group flex items-center gap-2 px-4 pb-2 text-xs opacity-70"
         >
@@ -490,6 +494,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       {
         mounted() { this.arm() },
         updated() { this.arm() },
+        reconnected() { this.arm() },
         destroyed() { clearTimeout(this.timer) },
         arm() {
           clearTimeout(this.timer)
