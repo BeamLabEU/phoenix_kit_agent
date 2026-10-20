@@ -1,8 +1,13 @@
 defmodule PhoenixKitAgent.Turns.Tools do
   @moduledoc """
   How the tools of a round are shown to the model, and how what it sends back
-  is taken (spec §6.1 b, f; §6.4).
+  is taken (spec §6.1 b, f; §6.2, §6.4).
 
+    * Only read tools: `for_model/1` drops every tool that is not marked
+      `read_only` (`PhoenixKit.API.ControlFields.write_tool?/1`), whatever
+      list it is given. Core's `visible_for(..., allow: :read)` already
+      leaves them out; this is the module's own first layer of §6.2, so a
+      regression in core cannot show a write tool to the model.
     * Names: the model sees `PhoenixKit.API.MCP.Names.to_mcp/1` of the registry
       name (`catalogue.list_products` → `catalogue_list_products`); a name that
       is not 1-64 characters of `[a-zA-Z0-9_-]` (what model APIs accept) is
@@ -36,6 +41,7 @@ defmodule PhoenixKitAgent.Turns.Tools do
   def for_model(tools) when is_list(tools) do
     by_name =
       tools
+      |> Enum.reject(&ControlFields.write_tool?/1)
       |> Names.dedupe()
       |> Enum.map(&{Names.to_mcp(&1.name), &1})
       |> Enum.filter(fn {name, _tool} -> Regex.match?(@model_name, name) end)

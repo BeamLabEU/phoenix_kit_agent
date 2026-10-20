@@ -7,7 +7,6 @@ defmodule PhoenixKitAgent.Turns.ToolsTest do
 
   use ExUnit.Case, async: true
 
-  alias PhoenixKit.API.Executor
   alias PhoenixKit.API.Tool
   alias PhoenixKitAgent.Turns.Tools
 
@@ -35,14 +34,30 @@ defmodule PhoenixKitAgent.Turns.ToolsTest do
   end
 
   describe "for_model/1" do
-    test "a write tool's schema loses the control fields core adds to it" do
+    test "only read-only tools are shown, whatever the list it is given" do
+      read = tool("agenttest.list_items", %{read_only: true})
       write = tool("agenttest.write_item", %{read_only: false})
+      unmarked = tool("agenttest.touch_item", %{})
 
-      # Core does add them for a write tool — what the model must not see.
-      core = Executor.input_schema(write)
-      assert Enum.all?(["dry_run", "confirm_token"], &Map.has_key?(core["properties"], &1))
+      # Core's `visible_for(..., allow: :read)` already leaves write tools
+      # out; this is the second line if it ever did not.
+      {definitions, by_name} = Tools.for_model([write, read, unmarked])
 
-      {[definition], by_name} = Tools.for_model([write])
+      assert Enum.map(definitions, & &1["function"]["name"]) == ["agenttest_list_items"]
+      assert by_name == %{"agenttest_list_items" => read}
+    end
+
+    test "a write tool does not shadow a read tool of the same model name" do
+      write = tool("agenttest.a_b", %{read_only: false})
+      read = tool("agenttest_a.b", %{read_only: true})
+
+      assert {[_], %{"agenttest_a_b" => ^read}} = Tools.for_model([write, read])
+    end
+
+    test "a read tool's schema is shown as core gives it, without control fields" do
+      read = tool("agenttest.list_items", %{read_only: true})
+
+      {[definition], by_name} = Tools.for_model([read])
       parameters = definition["function"]["parameters"]
 
       for field <- @control do
@@ -52,8 +67,9 @@ defmodule PhoenixKitAgent.Turns.ToolsTest do
 
       assert parameters["properties"]["name"] == %{"type" => "string"}
       assert parameters["required"] == ["name"]
-      assert definition["function"]["name"] == "agenttest_write_item"
-      assert by_name == %{"agenttest_write_item" => write}
+      assert definition["function"]["name"] == "agenttest_list_items"
+      assert definition["function"]["description"] == "About agenttest.list_items."
+      assert by_name == %{"agenttest_list_items" => read}
     end
 
     test "a name a model API cannot take is left out; one MCP name, the first tool" do
