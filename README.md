@@ -20,10 +20,36 @@ session's own read tools, stop and deadline), the per-user settings
 (`PhoenixKitAgent.UserConfig` — the user's own value, else the module default:
 the model, the admin's prompt, the limits, the on/off switch and the personal
 instructions), the system prompt put together in the order of priority
-(`PhoenixKitAgent.Prompt`) and Admin → AI Agent → Users, where an admin with
-`agent.manage` sees every user's model, limits and spending and sets them. Not
-built yet: the chat panel (Dock), enforcing the spending and turn limits and
-the notices about them, and attachment processing.
+(`PhoenixKitAgent.Prompt`), Admin → AI Agent → Users, where an admin with
+`agent.manage` sees every user's model, limits and spending and sets them, the
+spending and turn limits (`PhoenixKitAgent.Limits` — checked before each turn,
+with a notice in the chat and notifications to the user and the watchers) and
+Admin → AI Agent → Spending, what everyone spent today and this month. Not
+built yet: the chat panel (Dock) and attachment processing.
+
+## Limits
+
+Per user, the user's own value else the module default (Settings → AI Agent):
+money per day and per month and turns per day. Money is what the AI request
+journal of `phoenix_kit_ai` recorded for the user's assistant calls
+(`metadata.source = "agent"`, attachment descriptions included), in
+micro-dollars (`$1 = 1_000_000`); a turn is one message the user sent. The day
+and the month are those of the site time zone. Money counts only on an endpoint
+that reports what a call cost (today OpenRouter); on another only the turn
+limit applies, and the admin pages say so.
+
+The limits are checked when a turn starts; a turn that started under them runs
+to its end. A limit used up refuses the turn with a notice in the chat. The
+user is told in the app at 80 % of a limit and when it is reached; the
+watchers (setting `agent_limit_watchers`, empty meaning every Owner, plus the
+user's own `notify_user_uuids`) get a notification of type `agent_limit` when
+the user's `notify_on_limit` is on, and whenever the `phoenix_kit_ai` budget
+refuses the user's assistant — each at most once per limit and period.
+
+"Stop" and the turn deadline ask the turn to stop between its steps, so a model
+call under way finishes and its cost reaches the journal; a turn still running
+after the grace period (`config :phoenix_kit_agent, turn_stop_grace_ms:`,
+default 30 000) is killed.
 
 ## Configuration
 

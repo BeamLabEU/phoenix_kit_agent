@@ -28,9 +28,13 @@ for an admin with `agent.manage`, which logs field names to Activity;
 (`PhoenixKitAgent.Prompt`, spec §7.1, with the host's `prompt_addendum`), the
 endpoint choice (`PhoenixKitAgent.Models`: only `phoenix_kit_ai` endpoints that
 chat, marked for tool support), the spending read from the AI journal
-(`PhoenixKitAgent.Spend`) and Admin → AI Agent → Users
-(`PhoenixKitAgent.Web.UsersLive`). Not built yet: the chat panel (Dock),
-enforcing the limits and the notices about them, attachment processing.
+(`PhoenixKitAgent.Spend`), Admin → AI Agent → Users
+(`PhoenixKitAgent.Web.UsersLive`), the limits and their notices
+(`PhoenixKitAgent.Limits`: checked by `Turns.start/6` under the turn's locks;
+one notice per limit and period through `phoenix_kit_agent_limit_events`;
+notification type `agent_limit` from `notification_types/0`) and Admin → AI
+Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`). Not built yet: the chat
+panel (Dock), attachment processing.
 
 - **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins to the
   `timujinne` forks' `integration/andi-2026-10` branches (the session-actor API,
@@ -48,6 +52,14 @@ enforcing the limits and the notices about them, attachment processing.
   an Admin holds — for `agent_capture_ai_content`. A form takes only the fields
   it offers; the user being edited is the one the server opened, never a
   submitted uuid.
+- **Money and turns:** money only from the AI journal (`user_uuid` +
+  `metadata.source = "agent"`), never from the module's own messages; every
+  model call of the module passes `user_uuid:` and `source: "agent"`. Turns
+  from the `user` messages with a `turn_ref`. The limit check runs under the
+  locks, so the previous turn's spending is in. A turn is never killed
+  outright: "Stop" and the deadline ask it to stop between steps
+  (`Turns.Monitor.check_stop/0`), and only after `turn_stop_grace_ms` is it
+  killed.
 - **Prompt input from a browser** (`page:`, `locale:` of `Turns.start/6`) is
   untrusted: `PhoenixKitAgent.Prompt` drops a value with a control character and
   cuts a long one.
