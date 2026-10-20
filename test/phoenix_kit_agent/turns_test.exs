@@ -20,10 +20,12 @@ defmodule PhoenixKitAgent.TurnsTest do
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Permissions
   alias PhoenixKit.Users.Roles
-  alias PhoenixKitAgent.Conversations
+  alias PhoenixKitAgent.{Config, Conversations}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message, UserSettings}
+  alias PhoenixKitAgent.Test.LogProbe
   alias PhoenixKitAgent.Test.Tools
   alias PhoenixKitAgent.Turns
+  alias PhoenixKitAgent.Turns.Monitor
 
   @stub __MODULE__
   @me [impersonated: false]
@@ -190,6 +192,37 @@ defmodule PhoenixKitAgent.TurnsTest do
     monitor
   end
 
+  # Polls `fun` until it is true (at most `timeout` ms).
+  defp wait_until(fun, timeout \\ 2_000) do
+    cond do
+      fun.() ->
+        :ok
+
+      timeout <= 0 ->
+        flunk("the condition was never met")
+
+      true ->
+        receive do
+        after
+          10 -> wait_until(fun, timeout - 10)
+        end
+    end
+  end
+
+  # The task supervisor of the turns is unreachable by its name, as while it
+  # restarts, until the end of the test.
+  defp hide_task_supervisor do
+    name = PhoenixKitAgent.Turns.TaskSupervisor
+    pid = Process.whereis(name)
+    true = Process.unregister(name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) and Process.whereis(name) == nil, do: Process.register(pid, name)
+    end)
+
+    {name, pid}
+  end
+
   defp stop_all_turns do
     for pid <- Task.Supervisor.children(PhoenixKitAgent.Turns.TaskSupervisor) do
       ref = Process.monitor(pid)
@@ -291,7 +324,7 @@ defmodule PhoenixKitAgent.TurnsTest do
 
     test "the module's prompt and the admin's prompt for the user are the system message",
          ctx do
-      {:ok, _} = PhoenixKitAgent.Config.put_system_prompt("You help with furniture.", [])
+      {:ok, _} = Config.put_system_prompt("You help with furniture.", [])
 
       Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, system_prompt: "Answer in Estonian."})
 
@@ -493,7 +526,7 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert outcomes ==
                Enum.map(1..10, &{"c#{&1}", "ok"}) ++ [{"c11", "denied"}, {"c12", "denied"}]
 
-      for i <- 1..10, do: assert_received({:agent_test_tool, _, %{"query" => "q" <> _}, _})
+      for _i <- 1..10, do: assert_received({:agent_test_tool, _, %{"query" => "q" <> _}, _})
       refute_received {:agent_test_tool, _, _, _}
     end
 
@@ -839,9 +872,16 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert_receive {:model_waiting, stub}, 5_000
       [{task, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
 
+      # The monitor has armed the deadline (the task told it so before the
+      # model call); the deadline then passes while it cannot act on it.
+      monitor = Process.whereis(PhoenixKitAgent.Turns.Monitor)
+      _ = :sys.get_state(monitor)
       monitor = suspend_monitor()
-      # The deadline passes while the monitor cannot act on it.
-      Process.sleep(300)
+
+      wait_until(fn ->
+        {:messages, queued} = Process.info(monitor, :messages)
+        Enum.any?(queued, &match?({:deadline, _}, &1))
+      end)
 
       down = Process.monitor(task)
       send(stub, :answer)
@@ -894,7 +934,7 @@ defmodule PhoenixKitAgent.TurnsTest do
 
       monitor = suspend_monitor()
 
-      assert {:error, {:monitor_unavailable, _}} =
+      assert {:error, {:monitor_unavailable, :timeout}} =
                Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
 
       assert unlocked?(ctx)
@@ -914,6 +954,9 @@ defmodule PhoenixKitAgent.TurnsTest do
       chat_uuid = ctx.chat.uuid
       assert_receive {:agent_turn_finished, ^chat_uuid, _turn_ref}, 2_000
       refute_received {:model_waiting, _}
+      # The task's ready message went to an alias that was given up: the
+      # caller's mailbox never sees it.
+      refute_received {:turn_ready, _}
       assert messages(ctx.chat) == []
       assert unlocked?(ctx)
 
@@ -951,7 +994,10 @@ defmodule PhoenixKitAgent.TurnsTest do
 
     defp answer!(ctx) do
       {:ok, message} =
-        Conversations.add_message(ctx.ref, ctx.chat.uuid, %{role: "assistant", content: "x"}, @me)
+        Conversations.add_turn_message(ctx.user.uuid, ctx.chat.uuid, %{
+          role: "assistant",
+          content: "x"
+        })
 
       message
     end
@@ -1034,6 +1080,349 @@ defmodule PhoenixKitAgent.TurnsTest do
 
       assert messages(ctx.chat) == []
       assert unlocked?(ctx)
+    end
+  end
+
+  # ── a start that fails after the locks (continued) ──────────────────
+
+  describe "the deadline and the start" do
+    test "the deadline of a task that never got its go-ahead writes nothing", ctx do
+      # go_wait is 200 ms, the deadline 50 ms: before, the deadline killed the
+      # orphan task first and wrote a `deadline` notice under its ref.
+      Application.put_env(:phoenix_kit_agent, :turn_handshake_ms, 100)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :turn_handshake_ms) end)
+
+      monitor = suspend_monitor()
+
+      assert {:error, {:monitor_unavailable, :timeout}} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi", [], deadline_ms: 50)
+
+      hang_next()
+      :ok = :sys.resume(monitor)
+      _ = :sys.get_state(monitor)
+
+      for pid <- Task.Supervisor.children(PhoenixKitAgent.Turns.TaskSupervisor) do
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :not_started}}, 2_000
+      end
+
+      chat_uuid = ctx.chat.uuid
+      assert_receive {:agent_turn_finished, ^chat_uuid, _turn_ref}, 2_000
+      _ = :sys.get_state(monitor)
+
+      assert messages(ctx.chat) == []
+      assert unlocked?(ctx)
+    end
+  end
+
+  describe "the task supervisor while it restarts" do
+    test "a start is refused and leaves nothing; the monitor stays up", ctx do
+      monitor = Process.whereis(PhoenixKitAgent.Turns.Monitor)
+      {name, pid} = hide_task_supervisor()
+
+      assert {:error, {:not_started, :noproc}} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+
+      assert unlocked?(ctx)
+      assert messages(ctx.chat) == []
+      assert Process.whereis(PhoenixKitAgent.Turns.Monitor) == monitor
+
+      true = Process.register(pid, name)
+      answer_next(text_answer("Back."))
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+    end
+
+    test "a turn that ends then is still ended: notice, locks freed, monitor up", ctx do
+      monitor = Process.whereis(PhoenixKitAgent.Turns.Monitor)
+
+      hang_next()
+      turn_ref = start!(ctx, "Hi")
+      assert_receive {:model_waiting, _pid}, 5_000
+      [{task, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
+
+      {name, pid} = hide_task_supervisor()
+      Process.exit(task, :kill)
+      await_end(ctx.chat, turn_ref)
+      true = Process.register(pid, name)
+
+      assert Process.whereis(PhoenixKitAgent.Turns.Monitor) == monitor
+      assert %Message{role: "notice", error: "interrupted"} = List.last(messages(ctx.chat))
+      assert unlocked?(ctx)
+    end
+  end
+
+  # ── a chat deleted while its turn runs ──────────────────────────────
+
+  describe "a chat deleted mid-turn" do
+    test "the turn ends quietly: no notice, no further model call", ctx do
+      answer_next(tool_answer([call("c1", "agenttest_list_items", %{})]), fn ->
+        Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+          set: [status: "deleted"]
+        )
+      end)
+
+      {turn_ref, logs} =
+        LogProbe.capture(fn ->
+          turn_ref = start!(ctx, "Hi")
+          await_end(ctx.chat, turn_ref)
+          turn_ref
+        end)
+
+      assert is_binary(turn_ref)
+      assert_received {:model_request, _}
+      refute_received {:model_request, _}
+      refute_received {:agent_test_tool, _, _, _}
+
+      assert [%Message{role: "user"}] = messages(ctx.chat)
+      assert unlocked?(ctx)
+      refute Enum.any?(logs, &(&1 =~ "terminating"))
+    end
+  end
+
+  # ── what the model answers ──────────────────────────────────────────
+
+  describe "the model's answer" do
+    test "a tool call without a name is not run, stored or replayed", ctx do
+      nameless = %{"id" => "n1", "type" => "function", "function" => %{"arguments" => "{}"}}
+      blank = call("n2", " ", %{})
+
+      answer_next(
+        tool_answer([nameless, blank, call("c1", "agenttest_list_items", %{"query" => "q"})])
+      )
+
+      answer_next(text_answer("Done."))
+
+      turn_ref = start!(ctx, "List")
+      await_end(ctx.chat, turn_ref)
+
+      assert_received {:model_request, _}
+      assert_received {:model_request, second}
+
+      assistant = Enum.find(second["messages"], &(&1["role"] == "assistant"))
+      assert Enum.map(assistant["tool_calls"], & &1["id"]) == ["c1"]
+      refute Enum.any?(assistant["tool_calls"], &(&1["function"]["name"] in ["", nil]))
+
+      assert Enum.map(
+               Enum.filter(second["messages"], &(&1["role"] == "tool")),
+               & &1["tool_call_id"]
+             ) ==
+               ["c1"]
+
+      call_msg = Enum.find(messages(ctx.chat), &(&1.role == "assistant" and &1.tool_calls))
+      assert Enum.map(call_msg.tool_calls, & &1["id"]) == ["c1"]
+
+      assert [%Message{tool_call_id: "c1"}] =
+               Enum.filter(messages(ctx.chat), &(&1.role == "tool"))
+    end
+
+    test "an answer with neither text nor a named tool call is a notice, not an empty answer",
+         ctx do
+      empty = %{
+        "model" => @model,
+        "choices" => [%{"message" => %{"role" => "assistant", "content" => nil}}],
+        "usage" => %{"prompt_tokens" => 7, "completion_tokens" => 0, "total_tokens" => 7}
+      }
+
+      answer_next(empty)
+      first = start!(ctx, "Hi")
+      await_end(ctx.chat, first)
+
+      assert [%Message{role: "user"}, %Message{role: "notice", error: "empty_answer"} = notice] =
+               messages(ctx.chat)
+
+      assert is_binary(notice.ai_request_uuid)
+      assert notice.input_tokens == 7
+
+      nameless = %{"id" => "n1", "type" => "function", "function" => %{"arguments" => "{}"}}
+      answer_next(tool_answer([nameless]))
+      second = start!(ctx, "Again")
+      await_end(ctx.chat, second)
+
+      assert %Message{role: "notice", error: "empty_answer"} = List.last(messages(ctx.chat))
+      refute Enum.any?(messages(ctx.chat), &(&1.role == "assistant"))
+      assert unlocked?(ctx)
+    end
+
+    test "NUL characters in the text, the answer or a tool result are cut before storing",
+         ctx do
+      answer_next(tool_answer([call("c1", "agenttest_list_items", %{"say" => "ch\u0000air"})]))
+      answer_next(text_answer("Fo\u0000und."))
+
+      turn_ref = start!(ctx, "Li\u0000st")
+      await_end(ctx.chat, turn_ref)
+
+      assert [user_msg, _call, tool_msg, answer_msg] = messages(ctx.chat)
+      assert user_msg.content == "List"
+      assert tool_msg.tool_result == %{"items" => ["chair"]}
+      assert answer_msg.content == "Found."
+      assert unlocked?(ctx)
+    end
+  end
+
+  # ── the size of one turn (spec §6.4) ────────────────────────────────
+
+  describe "the transcript of one turn" do
+    test "older results of the turn give way to a stub once the turn's results pass the budget",
+         ctx do
+      # One result is at most 500 characters, so the turn keeps at most
+      # 10 × 500 characters of results; the newest round is always whole.
+      {:ok, _} = Settings.update_setting("agent_tool_result_chars", "500")
+
+      round = fn tag ->
+        tool_answer(
+          for i <- 1..10, do: call("#{tag}#{i}", "agenttest_list_items", %{"size" => 400})
+        )
+      end
+
+      answer_next(round.("a"))
+      answer_next(round.("b"))
+      answer_next(text_answer("Done."))
+
+      turn_ref = start!(ctx, "Big")
+      await_end(ctx.chat, turn_ref)
+
+      assert_received {:model_request, _}
+      assert_received {:model_request, _}
+      assert_received {:model_request, third}
+
+      results = Enum.filter(third["messages"], &(&1["role"] == "tool"))
+      assert length(results) == 20
+
+      {older, newest} = Enum.split(results, 10)
+      kept = Enum.reject(older, &Map.has_key?(Jason.decode!(&1["content"]), "omitted"))
+      stubbed = older -- kept
+
+      assert stubbed != []
+      assert hd(older) in stubbed
+      assert Enum.all?(newest, &(Jason.decode!(&1["content"])["items"] != nil))
+
+      for stub <- stubbed do
+        assert %{"omitted" => true, "hint" => _} = Jason.decode!(stub["content"])
+      end
+
+      assert (kept ++ newest) |> Enum.map(&String.length(&1["content"])) |> Enum.sum() <= 5_000
+
+      # The database keeps every result as it was.
+      assert 20 ==
+               messages(ctx.chat)
+               |> Enum.filter(&(&1.role == "tool"))
+               |> Enum.count(&is_list(&1.tool_result["items"]))
+    end
+  end
+
+  # ── nothing of a turn reaches the log (spec §8.2) ───────────────────
+
+  describe "the log" do
+    @secret "S3CRET-7F2A"
+
+    defp refute_leak(logs, result \\ nil) do
+      for line <- logs, do: refute(line =~ @secret, "leaked to the log: " <> line)
+      refute inspect(result, limit: :infinity, printable_limit: :infinity) =~ @secret
+    end
+
+    # phoenix_kit_ai itself logs the provider's error message (a warning in
+    # `PhoenixKitAI.Completion.handle_error_status/2`); a provider that echoed
+    # the prompt there would leak it — that is phoenix_kit_ai's to fix.
+    test "a model error logs nothing of the user's text", ctx do
+      error_next(500)
+
+      {_, logs} =
+        LogProbe.capture(fn ->
+          turn_ref = start!(ctx, "Find " <> @secret)
+          await_end(ctx.chat, turn_ref)
+        end)
+
+      refute_leak(logs)
+      assert %Message{role: "notice", error: "api_error"} = List.last(messages(ctx.chat))
+    end
+
+    test "an answer the database refuses logs no part of it, and no crash report", ctx do
+      bad = put_in(text_answer("Answer " <> @secret), ["usage", "prompt_tokens"], -1)
+      answer_next(bad)
+
+      {_, logs} =
+        LogProbe.capture(fn ->
+          turn_ref = start!(ctx, "Ask " <> @secret)
+          await_end(ctx.chat, turn_ref)
+        end)
+
+      refute_leak(logs)
+      refute Enum.any?(logs, &(&1 =~ "terminating"))
+      assert %Message{role: "notice", error: "interrupted"} = List.last(messages(ctx.chat))
+      assert unlocked?(ctx)
+    end
+
+    test "a crash while a tool result is stored logs no part of it", ctx do
+      Repo.query!("""
+      CREATE FUNCTION pg_temp.agent_refuse_tool_rows() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.role = 'tool' THEN RAISE EXCEPTION 'no tool rows here'; END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER agent_refuse_tool_rows BEFORE INSERT ON phoenix_kit_agent_messages
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.agent_refuse_tool_rows()
+      """)
+
+      answer_next(tool_answer([call("c1", "agenttest_list_items", %{"say" => @secret})]))
+
+      {_, logs} =
+        LogProbe.capture(fn ->
+          turn_ref = start!(ctx, "Ask " <> @secret)
+          await_end(ctx.chat, turn_ref)
+        end)
+
+      refute_leak(logs)
+      refute Enum.any?(logs, &(&1 =~ "terminating"))
+      assert Enum.any?(logs, &(&1 =~ "Postgrex.Error"))
+      assert %Message{role: "notice", error: "interrupted"} = List.last(messages(ctx.chat))
+      assert unlocked?(ctx)
+    end
+
+    test "a monitor that does not answer in time: the refusal and the log hold no turn data",
+         ctx do
+      Application.put_env(:phoenix_kit_agent, :turn_handshake_ms, 100)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :turn_handshake_ms) end)
+      {:ok, _} = Config.put_system_prompt("Prompt " <> @secret, [])
+
+      monitor = suspend_monitor()
+
+      {result, logs} =
+        LogProbe.capture(fn ->
+          result = Turns.start(ctx.ref, false, ctx.chat.uuid, "Ask " <> @secret)
+          :ok = :sys.resume(monitor)
+          _ = :sys.get_state(monitor)
+
+          for pid <- Task.Supervisor.children(PhoenixKitAgent.Turns.TaskSupervisor) do
+            ref = Process.monitor(pid)
+            assert_receive {:DOWN, ^ref, :process, ^pid, _}, 2_000
+          end
+
+          _ = :sys.get_state(monitor)
+          result
+        end)
+
+      assert result == {:error, {:monitor_unavailable, :timeout}}
+      refute_leak(logs, result)
+    end
+
+    test "the monitor's crash report would show no turn data" do
+      turn = %{turn_ref: "t1", text: @secret, history: [%{content: @secret}]}
+      message = {:"$gen_call", {self(), make_ref()}, {:start, turn, 1_000, [self()], make_ref()}}
+
+      status = %{
+        message: message,
+        state: %{},
+        reason: {%MatchError{term: @secret}, [{Mod, :fun, [@secret], []}]},
+        log: [message]
+      }
+
+      formatted = Monitor.format_status(status)
+      refute inspect(formatted, limit: :infinity, printable_limit: :infinity) =~ @secret
+      assert inspect(formatted) =~ "t1"
     end
   end
 end

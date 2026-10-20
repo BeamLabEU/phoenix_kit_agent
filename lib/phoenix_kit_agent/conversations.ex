@@ -34,17 +34,39 @@ defmodule PhoenixKitAgent.Conversations do
   (`status: "deleted"`) is gone for every function here; an archived one is
   left out of `list_conversations/2` only, and can still be opened and
   written to (a turn in flight when the user archives the chat must still be
-  able to save its answer).
+  able to save its answer). Renaming, archiving and deleting are one
+  conditional `UPDATE` each (the owner's chat, not deleted), so a concurrent
+  archive cannot bring a deleted chat back.
+
+  ## Writing
+
+  A session writes only its user's text: `add_message/4` stores a `user`
+  message with `content` and ignores every other attribute. Model answers,
+  tool calls and results, notices and their tokens and cost are written by
+  the turn loop (`PhoenixKitAgent.Turns`) alone.
+
+  ## Reading: what a client gets of a message
+
+  `get_conversation/3`, `get_message/4` and `list_messages/3` never hand out
+  what a tool returned, nor the arguments the model gave a tool (customer data
+  read under the rights the session had then): a `tool` message comes with
+  `tool_result: nil` and `tool_summary: %{name:, outcome:, count:,
+  truncated:}` (`count` — how many items it found, when the result has one
+  list or a `count`/`total`; `nil` otherwise), and the `tool_calls` of an
+  `assistant` message keep only `"id"` and `"name"`. The turn loop reads the
+  full rows on its own (spec §6.6).
 
   ## Events
 
-  `add_message/4` broadcasts `{:agent_message_added, conversation_uuid,
-  message_uuid}` on `topic/1` (`"agent:conv:<uuid>"`) after the message is
-  stored. The event carries uuids, not the message: a listener reads the chat
-  again through `get_conversation/3`, with a fresh scope. `subscribe/3`
-  subscribes only after the checks above. PubSub is in-process and anyone in
-  the VM can subscribe to a topic directly; the check guards the code that
-  serves a user's browser, not hostile code in the node.
+  Every stored message is broadcast as `{:agent_message_added,
+  conversation_uuid, message_uuid}` on `topic/1` (`"agent:conv:<uuid>"`)
+  after it is committed. The event carries uuids, not the message: a listener
+  reads it through `get_message/4` (or `list_messages/3` with `after:`), with
+  a fresh scope. `subscribe/3` subscribes only after the checks above;
+  `unsubscribe/1` undoes it (subscribing twice delivers every event twice).
+  PubSub is in-process and anyone in the VM can subscribe to a topic
+  directly; the check guards the code that serves a user's browser, not
+  hostile code in the node.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -57,6 +79,8 @@ defmodule PhoenixKitAgent.Conversations do
 
   @page_size 20
   @max_page_size 50
+  @messages_page_size 50
+  @max_messages_page_size 200
   @title_from_message 60
 
   @typedoc "`{session_token_uuid, user_uuid}` from `SessionRef.from_session/1`."
@@ -64,6 +88,14 @@ defmodule PhoenixKitAgent.Conversations do
 
   @typedoc "Where the next page of the list starts; opaque, taken from `list_conversations/2`."
   @type cursor :: {DateTime.t(), String.t()}
+
+  @typedoc "What a client learns of a tool call's result (see the moduledoc)."
+  @type tool_summary :: %{
+          name: String.t() | nil,
+          outcome: String.t() | nil,
+          count: non_neg_integer() | nil,
+          truncated: boolean()
+        }
 
   @typedoc "Why a call was refused."
   @type refusal ::
@@ -83,10 +115,12 @@ defmodule PhoenixKitAgent.Conversations do
   @spec create_conversation(session_ref(), map(), keyword()) ::
           {:ok, Conversation.t()} | {:error, refusal() | Ecto.Changeset.t()}
   def create_conversation(session_ref, attrs, opts) when is_map(attrs) do
+    title = Map.get(attrs, :title, Map.get(attrs, "title"))
+
     with_user(session_ref, opts, fn user_uuid ->
       %Conversation{user_uuid: user_uuid, last_message_at: DateTime.utc_now()}
-      |> Conversation.changeset(Map.take(attrs, [:title, "title"]))
-      |> repo().insert()
+      |> Conversation.changeset(%{title: trim(title)})
+      |> repo().insert(log: false)
     end)
   end
 
@@ -109,13 +143,66 @@ defmodule PhoenixKitAgent.Conversations do
     end)
   end
 
-  @doc "The user's chat with all its messages, oldest first."
+  @doc """
+  The user's chat with all its messages, oldest first, as a client sees them
+  (see "Reading" in the moduledoc).
+  """
   @spec get_conversation(session_ref(), term(), keyword()) ::
           {:ok, Conversation.t()} | {:error, refusal()}
   def get_conversation(session_ref, conversation_uuid, opts) do
     with_owned(session_ref, conversation_uuid, opts, fn conversation ->
       messages = from(m in Message, order_by: [asc: m.inserted_at, asc: m.uuid])
-      {:ok, repo().preload(conversation, messages: messages)}
+      conversation = repo().preload(conversation, messages: messages)
+      {:ok, %{conversation | messages: Enum.map(conversation.messages, &for_client/1)}}
+    end)
+  end
+
+  @doc """
+  One message of the user's chat, as a client sees it (see "Reading" in the
+  moduledoc) — what a listener of `{:agent_message_added, conversation_uuid,
+  message_uuid}` reads. A message of another chat, or none, is
+  `{:error, :not_found}`.
+  """
+  @spec get_message(session_ref(), term(), term(), keyword()) ::
+          {:ok, Message.t()} | {:error, refusal()}
+  def get_message(session_ref, conversation_uuid, message_uuid, opts) do
+    with_owned(session_ref, conversation_uuid, opts, fn conversation ->
+      with {:ok, uuid} <- Ecto.UUID.cast(message_uuid),
+           %Message{} = message <-
+             repo().one(
+               from(m in Message,
+                 where: m.uuid == ^uuid and m.conversation_uuid == ^conversation.uuid
+               )
+             ) do
+        {:ok, for_client(message)}
+      else
+        _unknown -> {:error, :not_found}
+      end
+    end)
+  end
+
+  @doc """
+  The messages of the user's chat, oldest first, as a client sees them (see
+  "Reading" in the moduledoc).
+
+  Options (besides `impersonated:`): `:after` — the uuid of a message of this
+  chat; only the messages after it come (anything else is
+  `{:error, :invalid_cursor}`); `:limit` — default 50, at most 200. The next
+  page starts after the last message of this one.
+  """
+  @spec list_messages(session_ref(), term(), keyword()) ::
+          {:ok, [Message.t()]} | {:error, refusal() | :invalid_cursor}
+  def list_messages(session_ref, conversation_uuid, opts) do
+    with_owned(session_ref, conversation_uuid, opts, fn conversation ->
+      with {:ok, query} <- messages_after(conversation, Keyword.get(opts, :after)) do
+        size = messages_page_size(Keyword.get(opts, :limit))
+
+        messages =
+          from(m in query, order_by: [asc: m.inserted_at, asc: m.uuid], limit: ^size)
+          |> repo().all()
+
+        {:ok, Enum.map(messages, &for_client/1)}
+      end
     end)
   end
 
@@ -132,10 +219,14 @@ defmodule PhoenixKitAgent.Conversations do
           {:ok, Conversation.t()} | {:error, refusal() | Ecto.Changeset.t()}
   def rename_conversation(session_ref, conversation_uuid, title, opts) do
     with_owned(session_ref, conversation_uuid, opts, fn conversation ->
-      conversation
-      |> Conversation.changeset(%{title: trim(title)})
-      |> Ecto.Changeset.validate_required([:title])
-      |> repo().update()
+      changeset =
+        conversation
+        |> Conversation.changeset(%{title: trim(title)})
+        |> Ecto.Changeset.validate_required([:title])
+
+      if changeset.valid?,
+        do: update_owned(conversation, title: Ecto.Changeset.get_field(changeset, :title)),
+        else: {:error, %{changeset | action: :update}}
     end)
   end
 
@@ -155,35 +246,45 @@ defmodule PhoenixKitAgent.Conversations do
     do: set_status(session_ref, conversation_uuid, "deleted", opts)
 
   @doc """
-  Adds a message to the user's chat and updates the chat in the same
-  transaction: the message count, the token and cost totals, `last_message_at`
-  and — when the chat has no title yet — the title, the first 60 characters of
-  the first `user` message. The chat is taken from the argument, never from
-  `attrs`. After the commit the chat's topic hears
-  `{:agent_message_added, conversation_uuid, message_uuid}`.
+  Adds the user's text to their chat, as a `user` message: only `content`
+  (`:content` or `"content"`, not blank) is taken from `attrs`, never a role,
+  tool fields, tokens or cost (see "Writing" in the moduledoc). The chat is
+  updated in the same transaction: the message count, `last_message_at` and —
+  when the chat has no title yet — the title, the first 60 characters of the
+  text. After the commit the chat's topic hears `{:agent_message_added,
+  conversation_uuid, message_uuid}`.
   """
   @spec add_message(session_ref(), term(), map(), keyword()) ::
           {:ok, Message.t()} | {:error, refusal() | Ecto.Changeset.t()}
   def add_message(session_ref, conversation_uuid, attrs, opts) when is_map(attrs) do
+    content = Map.get(attrs, :content, Map.get(attrs, "content"))
+
     with_user(session_ref, opts, fn user_uuid ->
-      add_turn_message(user_uuid, conversation_uuid, attrs)
+      store(user_uuid, conversation_uuid, &Message.user_changeset(&1, %{content: content}), [])
     end)
   end
 
   @doc false
-  # `add_message/4` without the session checks, for `PhoenixKitAgent.Turns`: the
-  # turn checked the session when it started and checks it again every round,
-  # and must still be able to write the notice that says the session is gone.
-  # The chat must belong to `user_uuid` (not deleted), as in `add_message/4`.
-  # `fields` are set on the struct, never cast: `:uuid` (given to the model
-  # call before the message exists) and `:ai_request_uuid`.
+  # The turn loop's write (`PhoenixKitAgent.Turns`): any role, every field of
+  # `Message.changeset/2`, and the totals follow the message's tokens and
+  # cost. No session checks: the turn checked the session when it started and
+  # checks it again every round, and must still be able to write the notice
+  # that says the session is gone. The chat must belong to `user_uuid` (not
+  # deleted). `fields` are set on the struct, never cast: `:uuid` (given to
+  # the model call before the message exists) and `:ai_request_uuid`. Never
+  # call it from a client's event, nor inside an outer transaction (the event
+  # would go out before that transaction commits).
   @spec add_turn_message(String.t(), term(), map(), keyword()) ::
           {:ok, Message.t()} | {:error, :not_found | Ecto.Changeset.t()}
   def add_turn_message(user_uuid, conversation_uuid, attrs, fields \\ []) when is_map(attrs) do
+    store(user_uuid, conversation_uuid, &Message.changeset(&1, attrs), fields)
+  end
+
+  defp store(user_uuid, conversation_uuid, changeset_fun, fields) do
     result =
       repo().transaction(fn ->
         with {:ok, conversation} <- fetch_owned(user_uuid, conversation_uuid, lock: true),
-             {:ok, message} <- insert_message(conversation, attrs, fields) do
+             {:ok, message} <- insert_message(conversation, changeset_fun, fields) do
           message
         else
           {:error, reason} -> repo().rollback(reason)
@@ -220,6 +321,11 @@ defmodule PhoenixKitAgent.Conversations do
       PubSub.subscribe(topic(conversation.uuid))
     end)
   end
+
+  @doc "Unsubscribes the calling process from the chat's topic; no checks are needed."
+  @spec unsubscribe(String.t()) :: :ok
+  def unsubscribe(conversation_uuid) when is_binary(conversation_uuid),
+    do: PubSub.unsubscribe(topic(conversation_uuid))
 
   # ── the gate ────────────────────────────────────────────────────
 
@@ -300,27 +406,110 @@ defmodule PhoenixKitAgent.Conversations do
 
   defp set_status(session_ref, conversation_uuid, status, opts) do
     with_owned(session_ref, conversation_uuid, opts, fn conversation ->
-      conversation |> Conversation.changeset(%{status: status}) |> repo().update()
+      update_owned(conversation, status: status)
     end)
   end
 
-  defp trim(title) when is_binary(title), do: String.trim(title)
+  # One statement that changes the chat only while it is the owner's and not
+  # deleted: a chat deleted after `with_owned/4` read it stays deleted.
+  defp update_owned(conversation, changes) do
+    query =
+      from(c in owned_query(conversation.uuid, conversation.user_uuid), select: c)
+
+    case repo().update_all(query, [set: changes ++ [updated_at: DateTime.utc_now()]], log: false) do
+      {1, [updated]} -> {:ok, updated}
+      {0, _} -> {:error, :not_found}
+    end
+  end
+
+  defp trim(title) when is_binary(title), do: title |> Message.strip_nul() |> String.trim()
   defp trim(title), do: title
 
-  defp insert_message(conversation, attrs, fields) do
+  defp insert_message(conversation, changeset_fun, fields) do
     message =
       struct(
         Message,
         [conversation_uuid: conversation.uuid] ++ Keyword.take(fields, [:uuid, :ai_request_uuid])
       )
 
-    changeset = Message.changeset(message, attrs)
-
-    with {:ok, message} <- repo().insert(changeset) do
+    # `log: false`: the bound values are the user's text, the model's answer
+    # and tool results, which must not reach the query log.
+    with {:ok, message} <- message |> changeset_fun.() |> repo().insert(log: false) do
       touch(conversation, message)
       {:ok, message}
     end
   end
+
+  # What a client gets of a message (see "Reading" in the moduledoc).
+  defp for_client(%Message{role: "tool"} = message) do
+    %{
+      message
+      | tool_result: nil,
+        tool_summary: %{
+          name: message.tool_name,
+          outcome: message.tool_outcome,
+          count: found_count(message.tool_result),
+          truncated: truncated?(message.tool_result)
+        }
+    }
+  end
+
+  defp for_client(%Message{tool_calls: calls} = message) when is_list(calls) do
+    %{message | tool_calls: Enum.map(calls, &Map.take(&1, ["id", "name"]))}
+  end
+
+  defp for_client(message), do: message
+
+  defp truncated?(%{"truncated" => true}), do: true
+  defp truncated?(_result), do: false
+
+  # How many items a result found: its only list, else its `count` / `total`.
+  defp found_count(%{"truncated" => true}), do: nil
+
+  defp found_count(result) when is_map(result) do
+    case Enum.filter(Map.values(result), &is_list/1) do
+      [list] ->
+        length(list)
+
+      _none_or_several ->
+        Enum.find_value(["count", "total"], fn key ->
+          case result[key] do
+            n when is_integer(n) and n >= 0 -> n
+            _ -> nil
+          end
+        end)
+    end
+  end
+
+  defp found_count(_result), do: nil
+
+  defp messages_after(conversation, nil),
+    do: {:ok, from(m in Message, where: m.conversation_uuid == ^conversation.uuid)}
+
+  defp messages_after(conversation, after_uuid) do
+    with {:ok, uuid} <- Ecto.UUID.cast(after_uuid),
+         %DateTime{} = at <-
+           repo().one(
+             from(m in Message,
+               where: m.uuid == ^uuid and m.conversation_uuid == ^conversation.uuid,
+               select: m.inserted_at
+             )
+           ) do
+      {:ok,
+       from(m in Message,
+         where:
+           m.conversation_uuid == ^conversation.uuid and
+             (m.inserted_at > ^at or (m.inserted_at == ^at and m.uuid > ^uuid))
+       )}
+    else
+      _not_a_message_here -> {:error, :invalid_cursor}
+    end
+  end
+
+  defp messages_page_size(limit) when is_integer(limit),
+    do: limit |> max(1) |> min(@max_messages_page_size)
+
+  defp messages_page_size(_default), do: @messages_page_size
 
   # The chat's totals follow the message. `COALESCE` keeps a title that is
   # already there (set by hand or by the first user message).
@@ -343,7 +532,7 @@ defmodule PhoenixKitAgent.Conversations do
         ]
       ]
     )
-    |> repo().update_all([])
+    |> repo().update_all([], log: false)
   end
 
   defp title_from(%Message{role: "user", content: content}) when is_binary(content) do

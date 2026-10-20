@@ -13,7 +13,8 @@ defmodule PhoenixKitAgent.Test.Tools do
   Every handler sends `{:agent_test_tool, name, input, ctx}` to the process in
   `Application.get_env(:phoenix_kit_agent, :test_tool_listener)`.
   `agenttest.write_item` also really writes: the setting `agenttest_written`.
-  `agenttest.list_items` with `"size" => n` answers about `n` characters.
+  `agenttest.list_items` with `"size" => n` answers about `n` characters, and
+  with `"say" => text` answers `text` as its only item.
   """
 
   alias PhoenixKit.API.Tool
@@ -29,7 +30,8 @@ defmodule PhoenixKitAgent.Test.Tools do
     [
       tool(:list_items, "agenttest.items:read", "dashboard", @read, %{
         "query" => %{"type" => "string"},
-        "size" => %{"type" => "integer", "minimum" => 0}
+        "size" => %{"type" => "integer", "minimum" => 0},
+        "say" => %{"type" => "string"}
       }),
       tool(:secret_items, "agenttest.secret:read", "users", @read, %{}),
       tool(:write_item, "agenttest.items:write", "dashboard", @write, %{
@@ -43,6 +45,7 @@ defmodule PhoenixKitAgent.Test.Tools do
 
     case input do
       %{"size" => size} -> {:ok, %{"items" => [String.duplicate("x", size)]}}
+      %{"say" => text} -> {:ok, %{"items" => [text]}}
       _ -> {:ok, %{"items" => ["chair", "table", "lamp"], "query" => input["query"]}}
     end
   end

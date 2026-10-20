@@ -35,11 +35,32 @@ defmodule PhoenixKitAgent.ConversationsTest do
     conversation
   end
 
-  defp say!(ref, conversation, content, role \\ "user") do
+  defp say!(ref, conversation, content) do
+    {:ok, message} = Conversations.add_message(ref, conversation.uuid, %{content: content}, @me)
+    message
+  end
+
+  # A message the turn loop writes (any role, every field), as `Turns` does.
+  defp turn_say!(conversation, attrs) do
     {:ok, message} =
-      Conversations.add_message(ref, conversation.uuid, %{role: role, content: content}, @me)
+      Conversations.add_turn_message(conversation.user_uuid, conversation.uuid, attrs)
 
     message
+  end
+
+  defp titles(ref) do
+    {:ok, %{conversations: list}} = Conversations.list_conversations(ref, @me)
+    Enum.map(list, & &1.title)
+  end
+
+  defp uuids(list), do: MapSet.new(list, & &1.uuid)
+
+  defp collect(ref, cursor, acc) do
+    {:ok, %{conversations: list, next_cursor: next}} =
+      Conversations.list_conversations(ref, @me ++ [limit: 2, cursor: cursor])
+
+    acc = acc ++ Enum.map(list, & &1.uuid)
+    if next, do: collect(ref, next, acc), else: acc
   end
 
   # Every operation of the context, for the tests that must hold for all of
@@ -49,6 +70,10 @@ defmodule PhoenixKitAgent.ConversationsTest do
       list: fn ref, opts -> Conversations.list_conversations(ref, opts) end,
       create: fn ref, opts -> Conversations.create_conversation(ref, %{}, opts) end,
       get: fn ref, opts -> Conversations.get_conversation(ref, chat_uuid, opts) end,
+      get_message: fn ref, opts ->
+        Conversations.get_message(ref, chat_uuid, Ecto.UUID.generate(), opts)
+      end,
+      list_messages: fn ref, opts -> Conversations.list_messages(ref, chat_uuid, opts) end,
       rename: fn ref, opts -> Conversations.rename_conversation(ref, chat_uuid, "New", opts) end,
       archive: fn ref, opts -> Conversations.archive_conversation(ref, chat_uuid, opts) end,
       delete: fn ref, opts -> Conversations.delete_conversation(ref, chat_uuid, opts) end,
@@ -86,6 +111,26 @@ defmodule PhoenixKitAgent.ConversationsTest do
       assert chat.user_uuid == user.uuid
       assert chat.status == "active"
       assert chat.message_count == 0
+    end
+
+    test "trims the title, and takes it under a string key too" do
+      %{ref: ref} = member()
+
+      assert {:ok, %Conversation{title: "Orders"}} =
+               Conversations.create_conversation(ref, %{title: "  Orders  "}, @me)
+
+      assert {:ok, %Conversation{title: "Sofas"}} =
+               Conversations.create_conversation(ref, %{"title" => " Sofas"}, @me)
+
+      assert {:ok, %Conversation{title: "Atom"}} =
+               Conversations.create_conversation(
+                 ref,
+                 %{:title => "Atom", "title" => "String"},
+                 @me
+               )
+
+      assert {:ok, %Conversation{title: nil}} =
+               Conversations.create_conversation(ref, %{title: "   "}, @me)
     end
 
     test "refuses a title over the limit" do
@@ -153,27 +198,55 @@ defmodule PhoenixKitAgent.ConversationsTest do
       assert length(Enum.uniq(seen)) == 5
     end
 
-    defp collect(ref, cursor, acc) do
-      {:ok, %{conversations: list, next_cursor: next}} =
-        Conversations.list_conversations(ref, @me ++ [limit: 2, cursor: cursor])
-
-      acc = acc ++ Enum.map(list, & &1.uuid)
-      if next, do: collect(ref, next, acc), else: acc
-    end
-
-    test "a page can be made smaller, never larger than the cap" do
+    test "a page can be made smaller, never larger than 50" do
       %{ref: ref} = member()
-      for _ <- 1..3, do: new_chat!(ref)
+      for _ <- 1..52, do: new_chat!(ref)
 
       assert {:ok, %{conversations: [_, _], next_cursor: cursor}} =
                Conversations.list_conversations(ref, @me ++ [limit: 2])
 
       assert cursor
 
-      assert {:ok, %{conversations: list}} =
+      assert {:ok, %{conversations: list, next_cursor: next}} =
                Conversations.list_conversations(ref, @me ++ [limit: 10_000])
 
-      assert length(list) == 3
+      assert length(list) == 50
+      assert next
+
+      assert {:ok, %{conversations: rest, next_cursor: nil}} =
+               Conversations.list_conversations(ref, @me ++ [limit: 10_000, cursor: next])
+
+      assert length(rest) == 2
+    end
+
+    test "a chat without a message time is placed, and paged, by its creation time" do
+      %{ref: ref} = member()
+      oldest = new_chat!(ref, %{title: "oldest"})
+      middle = new_chat!(ref, %{title: "middle"})
+      newest = new_chat!(ref, %{title: "newest"})
+
+      # `middle` has no last_message_at: it sorts by inserted_at, between the
+      # other two, and a page boundary right after it neither repeats nor
+      # skips a chat.
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^middle.uuid),
+        set: [last_message_at: nil]
+      )
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^oldest.uuid),
+        set: [last_message_at: DateTime.add(oldest.inserted_at, -60, :second)]
+      )
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^newest.uuid),
+        set: [last_message_at: DateTime.add(newest.inserted_at, 60, :second)]
+      )
+
+      assert titles(ref) == ["newest", "middle", "oldest"]
+
+      assert {:ok, %{conversations: [_, %{title: "middle"}], next_cursor: cursor}} =
+               Conversations.list_conversations(ref, @me ++ [limit: 2])
+
+      assert {:ok, %{conversations: [%{title: "oldest"}], next_cursor: nil}} =
+               Conversations.list_conversations(ref, @me ++ [limit: 2, cursor: cursor])
     end
 
     test "leaves out archived and deleted chats" do
@@ -204,13 +277,6 @@ defmodule PhoenixKitAgent.ConversationsTest do
       assert {:error, :invalid_cursor} =
                Conversations.list_conversations(ref, @me ++ [cursor: "nonsense"])
     end
-
-    defp titles(ref) do
-      {:ok, %{conversations: list}} = Conversations.list_conversations(ref, @me)
-      Enum.map(list, & &1.title)
-    end
-
-    defp uuids(list), do: MapSet.new(list, & &1.uuid)
   end
 
   describe "opening a chat" do
@@ -218,7 +284,7 @@ defmodule PhoenixKitAgent.ConversationsTest do
       %{ref: ref} = member()
       chat = new_chat!(ref)
       say!(ref, chat, "question")
-      say!(ref, chat, "answer", "assistant")
+      turn_say!(chat, %{role: "assistant", content: "answer"})
 
       assert {:ok, %Conversation{} = loaded} = Conversations.get_conversation(ref, chat.uuid, @me)
       assert loaded.uuid == chat.uuid
@@ -309,37 +375,26 @@ defmodule PhoenixKitAgent.ConversationsTest do
       %{ref: ref} = member()
       chat = new_chat!(ref)
 
-      assert {:ok, %Message{} = message} =
-               Conversations.add_message(
-                 ref,
-                 chat.uuid,
-                 %{
-                   role: "assistant",
-                   content: "answer",
-                   input_tokens: 120,
-                   output_tokens: 30,
-                   cost_micro_usd: 1_500,
-                   turn_ref: "turn-1"
-                 },
-                 @me
-               )
+      message =
+        turn_say!(chat, %{
+          role: "assistant",
+          content: "answer",
+          input_tokens: 120,
+          output_tokens: 30,
+          cost_micro_usd: 1_500,
+          turn_ref: "turn-1"
+        })
 
       assert message.conversation_uuid == chat.uuid
       assert message.role == "assistant"
 
-      {:ok, _} =
-        Conversations.add_message(
-          ref,
-          chat.uuid,
-          %{
-            role: "assistant",
-            content: "more",
-            input_tokens: 5,
-            output_tokens: 2,
-            cost_micro_usd: 500
-          },
-          @me
-        )
+      turn_say!(chat, %{
+        role: "assistant",
+        content: "more",
+        input_tokens: 5,
+        output_tokens: 2,
+        cost_micro_usd: 500
+      })
 
       reloaded = Repo.get!(Conversation, chat.uuid)
       assert reloaded.message_count == 2
@@ -365,14 +420,31 @@ defmodule PhoenixKitAgent.ConversationsTest do
       unnamed = new_chat!(ref)
       named = new_chat!(ref, %{title: "Mine"})
 
-      say!(ref, unnamed, "from the model", "assistant")
+      turn_say!(unnamed, %{role: "assistant", content: "from the model"})
       say!(ref, named, "a question")
 
       assert Repo.get!(Conversation, unnamed.uuid).title == nil
       assert Repo.get!(Conversation, named.uuid).title == "Mine"
     end
 
-    test "keeps the tool fields of a tool message" do
+    test "the turn loop keeps the tool fields of a tool message" do
+      %{ref: ref} = member()
+      chat = new_chat!(ref)
+
+      message =
+        turn_say!(chat, %{
+          role: "tool",
+          tool_call_id: "call_1",
+          tool_name: "orders.list_orders",
+          tool_outcome: "ok",
+          tool_result: %{"count" => 12}
+        })
+
+      assert message.tool_outcome == "ok"
+      assert Repo.get!(Message, message.uuid).tool_result == %{"count" => 12}
+    end
+
+    test "a session writes the user's text only: no answer, no tool row, no money" do
       %{ref: ref} = member()
       chat = new_chat!(ref)
 
@@ -381,27 +453,60 @@ defmodule PhoenixKitAgent.ConversationsTest do
           ref,
           chat.uuid,
           %{
-            role: "tool",
-            tool_call_id: "call_1",
-            tool_name: "orders.list_orders",
-            tool_outcome: "ok",
-            tool_result: %{"count" => 12}
+            "role" => "assistant",
+            "content" => "I am the model",
+            "tool_calls" => [%{"id" => "c1", "name" => "x", "arguments" => "{}"}],
+            "tool_name" => "orders.list_orders",
+            "tool_outcome" => "ok",
+            "tool_result" => %{"fake" => true},
+            "input_tokens" => 1_000,
+            "cost_micro_usd" => -5_000_000,
+            "ai_request_uuid" => Ecto.UUID.generate(),
+            "turn_ref" => "forged"
           },
           @me
         )
 
-      assert message.tool_outcome == "ok"
-      assert message.tool_result == %{"count" => 12}
+      stored = Repo.get!(Message, message.uuid)
+      assert stored.role == "user"
+      assert stored.content == "I am the model"
+
+      for field <-
+            [:tool_calls, :tool_name, :tool_outcome, :tool_result, :input_tokens] ++
+              [:cost_micro_usd, :ai_request_uuid, :turn_ref] do
+        assert Map.fetch!(stored, field) == nil, "#{field} must not be written by a session"
+      end
+
+      chat = Repo.get!(Conversation, chat.uuid)
+      assert chat.cost_micro_usd == 0
+      assert chat.input_tokens == 0
+
+      for role <- ~w(assistant tool notice) do
+        {:ok, _} = Conversations.add_message(ref, chat.uuid, %{role: role, content: "x"}, @me)
+      end
+
+      assert Repo.all(
+               from(m in Message, where: m.conversation_uuid == ^chat.uuid, select: m.role)
+             )
+             |> Enum.uniq() == ["user"]
     end
 
-    test "refuses an unknown role, and the conversation is not taken from the attributes" do
+    test "a blank text is refused" do
+      %{ref: ref} = member()
+      chat = new_chat!(ref)
+
+      assert {:error, %Ecto.Changeset{}} =
+               Conversations.add_message(ref, chat.uuid, %{content: "  "}, @me)
+
+      assert {:error, %Ecto.Changeset{}} = Conversations.add_message(ref, chat.uuid, %{}, @me)
+      assert message_count() == 0
+    end
+
+    test "the conversation is not taken from the attributes" do
       %{ref: ref} = member()
       mine = new_chat!(ref)
       %{ref: other_ref} = member("other")
       theirs = new_chat!(other_ref)
-
-      assert {:error, %Ecto.Changeset{}} =
-               Conversations.add_message(ref, mine.uuid, %{role: "system", content: "x"}, @me)
 
       {:ok, message} =
         Conversations.add_message(
@@ -421,12 +526,144 @@ defmodule PhoenixKitAgent.ConversationsTest do
       {:ok, _} = Conversations.archive_conversation(ref, chat.uuid, @me)
 
       assert {:ok, %Message{}} =
-               Conversations.add_message(
-                 ref,
-                 chat.uuid,
-                 %{role: "assistant", content: "late"},
-                 @me
+               Conversations.add_message(ref, chat.uuid, %{content: "late"}, @me)
+    end
+  end
+
+  describe "reading messages" do
+    setup do
+      %{ref: ref} = owner = member()
+      chat = new_chat!(ref)
+      question = say!(ref, chat, "How many chairs?")
+
+      call =
+        turn_say!(chat, %{
+          role: "assistant",
+          tool_calls: [
+            %{"id" => "c1", "name" => "catalogue_list", "arguments" => ~s({"q":"secret filter"})}
+          ]
+        })
+
+      tool =
+        turn_say!(chat, %{
+          role: "tool",
+          tool_call_id: "c1",
+          tool_name: "catalogue.list",
+          tool_outcome: "ok",
+          tool_result: %{"items" => ["Customer Smith", "b", "c"], "query" => "chairs"}
+        })
+
+      cut =
+        turn_say!(chat, %{
+          role: "tool",
+          tool_call_id: "c2",
+          tool_name: "catalogue.list",
+          tool_outcome: "ok",
+          tool_result: %{"truncated" => true, "partial" => "{\"items\":[\"Smith", "hint" => "h"}
+        })
+
+      answer = turn_say!(chat, %{role: "assistant", content: "Three."})
+
+      Map.merge(owner, %{
+        chat: chat,
+        question: question,
+        call: call,
+        tool: tool,
+        cut: cut,
+        answer: answer
+      })
+    end
+
+    test "a tool result is never handed out, only its summary", ctx do
+      assert {:ok, loaded} = Conversations.get_conversation(ctx.ref, ctx.chat.uuid, @me)
+      assert {:ok, one} = Conversations.get_message(ctx.ref, ctx.chat.uuid, ctx.tool.uuid, @me)
+      assert {:ok, listed} = Conversations.list_messages(ctx.ref, ctx.chat.uuid, @me)
+
+      for messages <- [loaded.messages, [one], listed] do
+        refute inspect(messages) =~ "Customer Smith"
+        refute inspect(messages) =~ "secret filter"
+      end
+
+      tool = Enum.find(loaded.messages, &(&1.uuid == ctx.tool.uuid))
+      assert tool.tool_result == nil
+
+      assert tool.tool_summary == %{
+               name: "catalogue.list",
+               outcome: "ok",
+               count: 3,
+               truncated: false
+             }
+
+      assert one.tool_summary == tool.tool_summary
+
+      cut = Enum.find(listed, &(&1.uuid == ctx.cut.uuid))
+      assert cut.tool_result == nil
+
+      assert cut.tool_summary == %{
+               name: "catalogue.list",
+               outcome: "ok",
+               count: nil,
+               truncated: true
+             }
+
+      call = Enum.find(listed, &(&1.uuid == ctx.call.uuid))
+      assert call.tool_calls == [%{"id" => "c1", "name" => "catalogue_list"}]
+      assert call.tool_summary == nil
+    end
+
+    test "get_message/4 gives one message of the chat", ctx do
+      assert {:ok, %Message{content: "Three."}} =
+               Conversations.get_message(ctx.ref, ctx.chat.uuid, ctx.answer.uuid, @me)
+
+      other = new_chat!(ctx.ref)
+      elsewhere = say!(ctx.ref, other, "elsewhere")
+
+      for uuid <- [elsewhere.uuid, Ecto.UUID.generate(), "junk", nil] do
+        assert {:error, :not_found} = Conversations.get_message(ctx.ref, ctx.chat.uuid, uuid, @me)
+      end
+    end
+
+    test "list_messages/3 gives them oldest first, after a message, a page at a time", ctx do
+      in_order = [ctx.question, ctx.call, ctx.tool, ctx.cut, ctx.answer]
+
+      assert {:ok, all} = Conversations.list_messages(ctx.ref, ctx.chat.uuid, @me)
+      assert Enum.map(all, & &1.uuid) == Enum.map(in_order, & &1.uuid)
+
+      assert {:ok, after_tool} =
+               Conversations.list_messages(ctx.ref, ctx.chat.uuid, @me ++ [after: ctx.tool.uuid])
+
+      assert Enum.map(after_tool, & &1.uuid) == [ctx.cut.uuid, ctx.answer.uuid]
+
+      assert {:ok, [first, second]} =
+               Conversations.list_messages(ctx.ref, ctx.chat.uuid, @me ++ [limit: 2])
+
+      assert [first.uuid, second.uuid] == [ctx.question.uuid, ctx.call.uuid]
+
+      assert {:ok, []} =
+               Conversations.list_messages(
+                 ctx.ref,
+                 ctx.chat.uuid,
+                 @me ++ [after: ctx.answer.uuid]
                )
+    end
+
+    test "list_messages/3 takes at most 200 at once", ctx do
+      for n <- 1..205, do: turn_say!(ctx.chat, %{role: "notice", content: "n#{n}"})
+
+      assert {:ok, page} =
+               Conversations.list_messages(ctx.ref, ctx.chat.uuid, @me ++ [limit: 10_000])
+
+      assert length(page) == 200
+    end
+
+    test "a cursor that is not a message of this chat is refused", ctx do
+      other = new_chat!(ctx.ref)
+      elsewhere = say!(ctx.ref, other, "elsewhere")
+
+      for cursor <- [elsewhere.uuid, Ecto.UUID.generate(), "junk", 5] do
+        assert {:error, :invalid_cursor} =
+                 Conversations.list_messages(ctx.ref, ctx.chat.uuid, @me ++ [after: cursor])
+      end
     end
   end
 
@@ -469,6 +706,22 @@ defmodule PhoenixKitAgent.ConversationsTest do
 
     test "is not in the stranger's list", %{stranger: stranger} do
       assert titles(stranger.ref) == []
+    end
+
+    test "a message of it is not read by its uuid", %{
+      owner: owner,
+      stranger: stranger,
+      chat: chat
+    } do
+      %{ref: stranger_ref} = stranger
+      {:ok, %{messages: [message]}} = Conversations.get_conversation(owner.ref, chat.uuid, @me)
+      own_chat = new_chat!(stranger_ref)
+
+      assert {:error, :not_found} =
+               Conversations.get_message(stranger_ref, chat.uuid, message.uuid, @me)
+
+      assert {:error, :not_found} =
+               Conversations.get_message(stranger_ref, own_chat.uuid, message.uuid, @me)
     end
 
     test "is untouched for its owner after the attempts", %{owner: owner, chat: chat} do
@@ -638,6 +891,17 @@ defmodule PhoenixKitAgent.ConversationsTest do
       refute inspect(event) =~ "secret words"
     end
 
+    test "unsubscribe/1 stops the events" do
+      %{ref: ref} = member()
+      chat = new_chat!(ref)
+      :ok = Conversations.subscribe(ref, chat.uuid, @me)
+
+      assert :ok = Conversations.unsubscribe(chat.uuid)
+      say!(ref, chat, "hello")
+
+      refute_receive {:agent_message_added, _, _}
+    end
+
     test "a stranger is not subscribed, and hears nothing" do
       %{ref: owner_ref} = member("owner")
       %{ref: stranger_ref} = member("stranger")
@@ -676,7 +940,7 @@ defmodule PhoenixKitAgent.ConversationsTest do
                )
 
       assert {:error, %Ecto.Changeset{}} =
-               Conversations.add_message(owner_ref, chat.uuid, %{role: "bogus"}, @me)
+               Conversations.add_message(owner_ref, chat.uuid, %{content: ""}, @me)
 
       refute_receive {:agent_message_added, _, _}
     end

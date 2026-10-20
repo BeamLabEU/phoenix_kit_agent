@@ -31,7 +31,13 @@ defmodule PhoenixKitAgent.Turns do
   The chat's topic (`Conversations.topic/1`) hears every stored message
   (`{:agent_message_added, conversation_uuid, message_uuid}`) and the end of
   the turn (`{:agent_turn_finished, conversation_uuid, turn_ref}`), after its
-  locks are released.
+  locks are released. A listener matches the `turn_ref` it got from
+  `start/6`: a start that failed half-way is announced as finished too.
+
+  A refusal never carries turn data: an unavailable monitor or a task that
+  did not start is `{:monitor_unavailable, class}` / `{:not_started, class}`
+  with only the class of the exit (`t:PhoenixKitAgent.Turns.Monitor.exit_class/0`).
+  NUL characters are cut from the text before anything else.
 
   The assistant acts with the session's rights only: tools are listed and run
   by `PhoenixKit.API.Executor.visible_for/3` / `execute_as/5` with `allow:
@@ -62,9 +68,8 @@ defmodule PhoenixKitAgent.Turns do
           | :conversation_busy
           | :turn_in_flight
           | :not_running
-          | :not_started
-          | {:not_started, exit_reason :: term()}
-          | {:monitor_unavailable, exit_reason :: term()}
+          | {:not_started, Monitor.exit_class()}
+          | {:monitor_unavailable, Monitor.exit_class()}
 
   @doc """
   Starts a turn in the user's chat with `text` and the attachments
@@ -134,6 +139,8 @@ defmodule PhoenixKitAgent.Turns do
   # The current message always goes to the model whole (spec §6.6), so it may
   # not be longer than the whole history window.
   defp message_text(text) when is_binary(text) do
+    text = Message.strip_nul(text)
+
     cond do
       String.trim(text) == "" -> {:error, :empty_message}
       String.length(text) > Config.history_chars() -> {:error, :message_too_long}

@@ -4,19 +4,34 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   watches it, and ends the turn whatever way the task ends (spec §6.1 step 5):
 
     * the task returns — the turn wrote its own answer or notice;
-    * the deadline passes (`agent_turn_deadline_s`) — the task is killed and
-      a `deadline` notice is written;
+    * the deadline passes (`agent_turn_deadline_s`, counted from the
+      go-ahead) — the task is killed and a `deadline` notice is written;
     * the user stops it (`PhoenixKitAgent.Turns.stop/4`, exit reason
       `{:shutdown, :stopped}`) — nothing is written, a partial answer is not
       kept;
-    * it never got the go-ahead (`{:shutdown, :not_started}`, see below) —
-      nothing is written: the turn wrote nothing yet;
-    * anything else (a crash, a kill) — an `interrupted` notice.
+    * its chat was deleted (`{:shutdown, :chat_gone}`) — nothing is written;
+    * it ends in any way before its go-ahead (see below) — nothing is
+      written: the turn wrote nothing yet;
+    * anything else (a crash, a message the database refused, a kill) — an
+      `interrupted` notice.
 
   Then both locks of the turn are released and the chat's topic hears
-  `{:agent_turn_finished, conversation_uuid, turn_ref}`. Those writes run in a
-  short-lived process of their own, so a slow database delays no other start
-  and no deadline.
+  `{:agent_turn_finished, conversation_uuid, turn_ref}` (also for a turn that
+  never started — a listener matches the `turn_ref` it got from
+  `PhoenixKitAgent.Turns.start/6`). Those writes run in a short-lived process
+  of their own, so a slow database delays no other start and no deadline; if
+  that process cannot be started (the task supervisor is restarting), they
+  run here.
+
+  ## Nothing of a turn in the log
+
+  A turn carries the user's text, the history, the system prompt and the
+  session reference. None of it may reach the log, so: the task runs the turn
+  inside a guard and ends with `{:shutdown, _}` whatever happens (no crash
+  report; a crash is logged as the exception's module and where it happened,
+  without arguments); a refusal returns only the class of an exit
+  (`t:exit_class/0`), never the exit term; and `format_status/1` keeps the
+  turn out of this process's own crash report.
 
   ## The start handshake
 
@@ -28,6 +43,10 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   (this process was too busy to take the start in time, or the task did not
   report ready) sends no go-ahead, and the task ends on its own without
   touching the chat or the locks its caller has already released.
+
+  The deadline is armed only when the task reports that it got the
+  go-ahead, so a task whose caller gave up can never be killed as `:deadline`
+  and write a notice under a turn ref nobody saw.
 
   If this process goes down, the supervisor (`:rest_for_one`) takes the
   running turns down with it; their locks then expire by their TTL.
@@ -49,6 +68,12 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   # task waits up to twice this for the go-ahead.
   @handshake_ms 5_000
 
+  @typedoc """
+  What kind of exit made a start fail — never the exit term itself, which can
+  hold the whole turn.
+  """
+  @type exit_class :: :timeout | :noproc | :shutdown | :killed | :unavailable | :crash
+
   @doc false
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -58,7 +83,9 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   handshake"). `callers` become the task's `$callers`, so the process that
   started the turn is its caller, as for a `Task` it starts.
   """
-  @spec start_turn(Runner.turn(), pos_integer(), [pid()]) :: {:ok, pid()} | {:error, term()}
+  @spec start_turn(Runner.turn(), pos_integer(), [pid()]) ::
+          {:ok, pid()}
+          | {:error, {:monitor_unavailable, exit_class()} | {:not_started, exit_class()}}
   def start_turn(turn, deadline_ms, callers) do
     token = Process.alias()
 
@@ -74,10 +101,11 @@ defmodule PhoenixKitAgent.Turns.Monitor do
     end
   end
 
+  # The exit of the call holds the call's arguments — the whole turn.
   defp request_start(turn, deadline_ms, callers, token) do
     GenServer.call(__MODULE__, {:start, turn, deadline_ms, callers, token}, handshake_ms() * 2)
   catch
-    :exit, reason -> {:error, {:monitor_unavailable, reason}}
+    :exit, reason -> {:error, {:monitor_unavailable, exit_class(reason)}}
   end
 
   defp await_ready(pid, token) do
@@ -89,14 +117,25 @@ defmodule PhoenixKitAgent.Turns.Monitor do
         :ok
 
       {:DOWN, ^ref, :process, ^pid, reason} ->
-        {:error, {:not_started, reason}}
+        {:error, {:not_started, exit_class(reason)}}
     after
       handshake_ms() ->
         Process.demonitor(ref, [:flush])
         Process.exit(pid, {:shutdown, :not_started})
-        {:error, :not_started}
+        {:error, {:not_started, :timeout}}
     end
   end
+
+  @doc false
+  # The class of an exit reason, for a refusal or a log line.
+  @spec exit_class(term()) :: exit_class()
+  def exit_class({reason, {GenServer, :call, _call}}), do: exit_class(reason)
+  def exit_class(:timeout), do: :timeout
+  def exit_class(:noproc), do: :noproc
+  def exit_class(reason) when reason in [:normal, :shutdown], do: :shutdown
+  def exit_class({:shutdown, _}), do: :shutdown
+  def exit_class(reason) when reason in [:killed, :kill], do: :killed
+  def exit_class(_crash), do: :crash
 
   # A ready message that came in as the wait gave up; nothing else is sent to
   # the alias, and after `unalias/1` nothing more arrives.
@@ -118,28 +157,39 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   def handle_call({:start, turn, deadline_ms, callers, token}, _from, turns) do
     go_wait = handshake_ms() * 2
 
-    case Task.Supervisor.start_child(@task_supervisor, fn ->
-           task(turn, callers, token, go_wait)
-         end) do
+    case start_task(fn -> task(turn, callers, token, go_wait) end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
-        timer = Process.send_after(self(), {:deadline, ref}, deadline_ms)
 
         entry = %{
           turn: Map.take(turn, [:turn_ref, :user_uuid, :conversation_uuid]),
           pid: pid,
-          timer: timer,
+          deadline_ms: deadline_ms,
+          timer: nil,
+          running?: false,
           deadline?: false
         }
 
         {:reply, {:ok, pid}, Map.put(turns, ref, entry)}
 
-      {:error, reason} ->
-        {:reply, {:error, reason}, turns}
+      {:error, class} ->
+        {:reply, {:error, {:not_started, class}}, turns}
     end
   end
 
   @impl GenServer
+  # The task got its go-ahead: its deadline runs from now.
+  def handle_info({:turn_running, pid}, turns) do
+    case Enum.find(turns, fn {_ref, entry} -> entry.pid == pid end) do
+      {ref, %{running?: false} = entry} ->
+        timer = Process.send_after(self(), {:deadline, ref}, entry.deadline_ms)
+        {:noreply, Map.put(turns, ref, %{entry | running?: true, timer: timer})}
+
+      _unknown_or_running ->
+        {:noreply, turns}
+    end
+  end
+
   def handle_info({:deadline, ref}, turns) do
     case Map.fetch(turns, ref) do
       {:ok, entry} ->
@@ -157,13 +207,13 @@ defmodule PhoenixKitAgent.Turns.Monitor do
         {:noreply, turns}
 
       {entry, turns} ->
-        Process.cancel_timer(entry.timer)
+        if entry.timer, do: Process.cancel_timer(entry.timer)
         turn = entry.turn
         ending = ending(entry, reason)
 
-        case Task.Supervisor.start_child(@task_supervisor, fn -> finish(turn, ending) end) do
+        case start_task(fn -> finish(turn, ending) end) do
           {:ok, _pid} -> :ok
-          {:error, _reason} -> finish(turn, ending)
+          {:error, _class} -> finish(turn, ending)
         end
 
         {:noreply, turns}
@@ -172,18 +222,90 @@ defmodule PhoenixKitAgent.Turns.Monitor do
 
   def handle_info(_other, turns), do: {:noreply, turns}
 
+  # A task supervisor that is restarting is not there for a moment:
+  # `start_child` then exits (`:noproc`) instead of answering.
+  defp start_task(fun) do
+    case Task.Supervisor.start_child(@task_supervisor, fun) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, _reason} -> {:error, :unavailable}
+    end
+  catch
+    :exit, reason -> {:error, exit_class(reason)}
+  end
+
+  @impl GenServer
+  # The last message of a crash can be `{:start, turn, ...}`, and its reason
+  # can carry the turn in an exception or a stack frame's arguments.
+  def format_status(status) do
+    status
+    |> Map.replace_lazy(:message, &redact_message/1)
+    |> Map.replace(:log, [])
+    |> Map.replace_lazy(:reason, &redact_reason/1)
+  end
+
+  defp redact_message({:"$gen_call", from, {:start, turn, _deadline, _callers, _token}}),
+    do: {:"$gen_call", from, {:start, Map.take(turn, [:turn_ref])}}
+
+  defp redact_message(message), do: message
+
+  defp redact_reason({exception, stacktrace})
+       when is_exception(exception) and is_list(stacktrace),
+       do: {exception.__struct__, without_arguments(stacktrace)}
+
+  defp redact_reason(reason) when is_atom(reason), do: reason
+  defp redact_reason(reason), do: exit_class(reason)
+
   # ── the task ────────────────────────────────────────────────────
 
   defp task(turn, callers, token, go_wait) do
-    Process.put(:"$callers", callers)
-    {:ok, _} = Registry.register(@registry, turn.turn_ref, turn.conversation_uuid)
-    send(token, {:turn_ready, token})
+    guarded(fn ->
+      Process.put(:"$callers", callers)
+      {:ok, _} = Registry.register(@registry, turn.turn_ref, turn.conversation_uuid)
+      send(token, {:turn_ready, token})
 
-    receive do
-      {:turn_go, ^token} -> Runner.run(turn)
-    after
-      go_wait -> exit({:shutdown, :not_started})
-    end
+      receive do
+        {:turn_go, ^token} ->
+          send(__MODULE__, {:turn_running, self()})
+          Runner.run(turn)
+      after
+        go_wait -> exit({:shutdown, :not_started})
+      end
+    end)
+  end
+
+  # Runs the turn so that it ends normally or with `{:shutdown, _}`: an
+  # exception or an exit whose term may hold the turn's data is logged as its
+  # class and location only, and ends the task as `{:shutdown, :crashed}`.
+  defp guarded(fun) do
+    fun.()
+  rescue
+    exception ->
+      log_crash(inspect(exception.__struct__), __STACKTRACE__)
+      exit({:shutdown, :crashed})
+  catch
+    :exit, {:shutdown, _} = reason ->
+      exit(reason)
+
+    kind, reason ->
+      log_crash("#{kind} #{exit_class(reason)}", __STACKTRACE__)
+      exit({:shutdown, :crashed})
+  end
+
+  defp log_crash(what, stacktrace) do
+    where =
+      case without_arguments(stacktrace) do
+        [frame | _] -> " at " <> Exception.format_stacktrace_entry(frame)
+        [] -> ""
+      end
+
+    Logger.error("[PhoenixKitAgent] a turn crashed: #{what}#{where}")
+  end
+
+  defp without_arguments(stacktrace) do
+    Enum.map(stacktrace, fn
+      {module, fun, args, location} when is_list(args) -> {module, fun, length(args), location}
+      frame -> frame
+    end)
   end
 
   # ── the end of a turn ───────────────────────────────────────────
@@ -198,14 +320,17 @@ defmodule PhoenixKitAgent.Turns.Monitor do
     )
   end
 
-  # A task that returned is done, even when its deadline fired a moment late.
+  # A task that returned is done, even when its deadline fired a moment late;
+  # one that never got its go-ahead wrote nothing, however it ended.
   defp ending(_entry, :normal), do: :done
+  defp ending(%{running?: false}, _reason), do: :not_started
   defp ending(%{deadline?: true}, _reason), do: :deadline
   defp ending(_entry, {:shutdown, :stopped}), do: :stopped
-  defp ending(_entry, {:shutdown, :not_started}), do: :not_started
+  defp ending(_entry, {:shutdown, :chat_gone}), do: :chat_gone
   defp ending(_entry, _reason), do: :interrupted
 
-  defp write_end(_turn, ending) when ending in [:done, :stopped, :not_started], do: :ok
+  defp write_end(_turn, ending) when ending in [:done, :stopped, :not_started, :chat_gone],
+    do: :ok
 
   defp write_end(turn, :deadline) do
     add_notice(
@@ -230,9 +355,9 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   defp safely(fun) do
     fun.()
   rescue
-    error -> Logger.warning("[PhoenixKitAgent] ending a turn: #{Exception.message(error)}")
+    error -> Logger.warning("[PhoenixKitAgent] ending a turn: #{inspect(error.__struct__)}")
   catch
     kind, reason ->
-      Logger.warning("[PhoenixKitAgent] ending a turn: #{inspect(kind)} #{inspect(reason)}")
+      Logger.warning("[PhoenixKitAgent] ending a turn: #{kind} #{exit_class(reason)}")
   end
 end

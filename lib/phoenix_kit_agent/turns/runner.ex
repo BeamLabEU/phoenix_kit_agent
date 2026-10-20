@@ -6,24 +6,34 @@ defmodule PhoenixKitAgent.Turns.Runner do
   chat. Then each round:
 
     a. checks the session again (`Conversations.authorize_session/2`), that
-       the AI module is on and that the turn still holds its locks
-       (`Locks.held?/3`) — a revoked session, a blocked user, a lost `agent`
-       permission, a switched-off assistant or a lock taken over end the turn
-       with a notice;
+       the chat is still there, that the AI module is on and that the turn
+       still holds its locks (`Locks.held?/3`) — a revoked session, a blocked
+       user, a lost `agent` permission, a switched-off assistant or a lock
+       taken over end the turn with a notice; a deleted chat ends it quietly;
     b. lists the session's tools (`Executor.visible_for/3`, `allow: :read`) and
        shows them to the model (`PhoenixKitAgent.Turns.Tools`);
-    c. sends the system prompt, the history and this turn's messages;
+    c. sends the system prompt, the history and this turn's messages — of the
+       results of earlier rounds of this turn only as many as fit, together
+       with the newest round's, in `10 × agent_tool_result_chars` characters
+       (spec §6.4): an older one beyond that is sent as a short stub that says
+       it was left out (the database keeps it whole);
     d. calls the model (`PhoenixKitAI.complete/3`, `source: "agent"`, the user,
        no cache, the module's content capture, and the uuid the answer will be
        stored under as `attribution`);
-    e. stores the answer; without tool calls the turn is over;
+    e. stores the answer; without tool calls the turn is over. A tool call
+       without a name is dropped (not run, stored or sent back); an answer
+       with neither text nor a named tool call is stored as an
+       `empty_answer` notice, not as an empty answer;
     f. runs each tool call — only a name shown in **this** round reaches the
        executor (`execute_as/5`, `allow: :read`), any other is `denied`, and so
        is every call past the 10th of the round — and stores each result,
        truncated.
 
-  A message that cannot be stored (the database refuses it) crashes the task,
-  and the monitor writes an `interrupted` notice.
+  A message the database refuses ends the task as `{:shutdown,
+  :store_failed}` (the log gets the field names and validation codes only),
+  and the monitor writes an `interrupted` notice; a chat deleted mid-turn
+  ends it as `{:shutdown, :chat_gone}`, with nothing written and no further
+  model call.
 
   Every stored message is broadcast by `PhoenixKitAgent.Conversations`. Ending
   the task (stop, deadline, crash) and the locks are
@@ -59,6 +69,15 @@ defmodule PhoenixKitAgent.Turns.Runner do
   # denied. One answer of the model must not fan out into hundreds of calls.
   @max_calls_per_round 10
 
+  # What an older result of this turn is sent as once the turn's results are
+  # over their budget.
+  @omitted Jason.encode!(%{
+             "omitted" => true,
+             "hint" =>
+               "This earlier result was left out to keep the conversation short. " <>
+                 "Call the tool again if you still need it."
+           })
+
   # The model errors of `PhoenixKitAI.complete/3` kept as their own code in
   # `messages.error`; any other is "model_error".
   @model_errors ~w(request_timeout invalid_api_key api_key_forbidden rate_limited
@@ -90,19 +109,9 @@ defmodule PhoenixKitAgent.Turns.Runner do
   """
   @spec run(turn()) :: :ok
   def run(turn) do
-    case Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, %{
-           turn_ref: turn.turn_ref,
-           role: "user",
-           content: turn.text
-         }) do
-      {:ok, message} ->
-        link_attachments(turn.attachment_uuids, message)
-        round(turn, 1, turn.history)
-
-      # The chat was deleted since the start: there is nowhere to answer.
-      {:error, :not_found} ->
-        :ok
-    end
+    message = store!(turn, %{turn_ref: turn.turn_ref, role: "user", content: turn.text})
+    link_attachments(turn.attachment_uuids, message)
+    round(turn, 1, turn.history)
   end
 
   defp link_attachments([], _message), do: :ok
@@ -148,7 +157,8 @@ defmodule PhoenixKitAgent.Turns.Runner do
       {definitions, allowed} = Tools.for_model(tools)
 
       case ask_model(turn, transcript, definitions) do
-        {:ok, %Message{tool_calls: calls} = message} when is_list(calls) and calls != [] ->
+        {:ok, %Message{role: "assistant", tool_calls: calls} = message}
+        when is_list(calls) and calls != [] ->
           results =
             calls
             |> Enum.with_index(1)
@@ -157,12 +167,14 @@ defmodule PhoenixKitAgent.Turns.Runner do
               {call, _past_the_cap} -> run_call(turn, call, %{}, too_many_calls())
             end)
 
-          round(turn, r + 1, transcript ++ [assistant_entry(message)] ++ results)
+          latest = [assistant_entry(message) | results]
+          round(turn, r + 1, fit_turn(transcript, latest, turn.result_chars) ++ latest)
 
         _answered_or_failed ->
           :ok
       end
     else
+      {:error, :chat_gone} -> exit({:shutdown, :chat_gone})
       {:error, reason} -> stopped(turn, reason)
     end
   end
@@ -171,6 +183,9 @@ defmodule PhoenixKitAgent.Turns.Runner do
     with {:ok, _user_uuid} <-
            Conversations.authorize_session(turn.session_ref, impersonated: false) do
       cond do
+        not chat_alive?(turn) ->
+          {:error, :chat_gone}
+
         not PhoenixKitAI.enabled?() ->
           {:error, :ai_disabled}
 
@@ -181,6 +196,44 @@ defmodule PhoenixKitAgent.Turns.Runner do
           :ok
       end
     end
+  end
+
+  defp chat_alive?(turn) do
+    RepoHelper.repo().exists?(
+      from(c in Conversation,
+        where:
+          c.uuid == ^turn.conversation_uuid and c.user_uuid == ^turn.user_uuid and
+            c.status != "deleted"
+      )
+    )
+  end
+
+  # The earlier transcript, with the oldest results of this turn turned into
+  # stubs until the results still in it and those of the newest round fit
+  # `@max_calls_per_round` results. The newest round is never cut: the model
+  # has not seen it yet. The history holds no `tool` entries.
+  defp fit_turn(earlier, latest, result_chars) do
+    budget = @max_calls_per_round * result_chars
+    used = results_size(earlier) + results_size(latest)
+
+    {fitted, _used} =
+      Enum.map_reduce(earlier, used, fn
+        %{role: "tool", content: content} = entry, used
+        when used > budget and content != @omitted ->
+          {%{entry | content: @omitted}, used - String.length(content)}
+
+        entry, used ->
+          {entry, used}
+      end)
+
+    fitted
+  end
+
+  defp results_size(entries) do
+    entries
+    |> Enum.filter(&(&1.role == "tool" and &1.content != @omitted))
+    |> Enum.map(&String.length(&1.content))
+    |> Enum.sum()
   end
 
   defp visible_tools(turn) do
@@ -242,28 +295,30 @@ defmodule PhoenixKitAgent.Turns.Runner do
         _no_text -> nil
       end
 
+    # A call without a name can be neither run nor sent back: strict
+    # providers refuse a replayed call named "".
     calls =
       response
       |> PhoenixKitAI.extract_tool_calls()
       |> Enum.with_index(1)
       |> Enum.map(&stored_call/1)
+      |> Enum.reject(&is_nil(&1["name"]))
+
+    fields = [uuid: message_uuid, ai_request_uuid: request && request.uuid]
+    usage = usage(request, response, latency_ms)
 
     attrs =
-      Map.merge(
+      if calls == [] and (content == nil or String.trim(content) == "") do
         %{
-          turn_ref: turn.turn_ref,
-          role: "assistant",
-          content: content,
-          tool_calls: if(calls == [], do: nil, else: calls)
-        },
-        usage(request, response, latency_ms)
-      )
+          role: "notice",
+          content: "The model gave no answer. Try again.",
+          error: "empty_answer"
+        }
+      else
+        %{role: "assistant", content: content, tool_calls: if(calls == [], do: nil, else: calls)}
+      end
 
-    {:ok, _message} =
-      Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, attrs,
-        uuid: message_uuid,
-        ai_request_uuid: request && request.uuid
-      )
+    {:ok, store!(turn, attrs |> Map.put(:turn_ref, turn.turn_ref) |> Map.merge(usage), fields)}
   end
 
   # Model, tokens, cost and latency: from the journal row when the usage sink
@@ -312,7 +367,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
             "id" => call["id"],
             "type" => "function",
             "function" => %{
-              "name" => call["name"] || "",
+              "name" => call["name"],
               "arguments" => encoded_arguments(call["arguments"])
             }
           }
@@ -328,27 +383,26 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
   defp run_call(turn, call, allowed, denial \\ denied()) do
     {registry_name, outcome, result} =
-      case Map.fetch(allowed, call["name"] || "") do
+      case Map.fetch(allowed, call["name"]) do
         {:ok, tool} -> execute(turn, tool, call["arguments"])
         :error -> {denied_name(call["name"]), "denied", denial}
       end
 
     tool_result = Tools.fit(result, turn.result_chars)
 
-    {:ok, _message} =
-      Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, %{
-        turn_ref: turn.turn_ref,
-        role: "tool",
-        tool_call_id: call["id"],
-        tool_name: registry_name,
-        tool_outcome: outcome,
-        tool_result: tool_result
-      })
+    store!(turn, %{
+      turn_ref: turn.turn_ref,
+      role: "tool",
+      tool_call_id: call["id"],
+      tool_name: registry_name,
+      tool_outcome: outcome,
+      tool_result: tool_result
+    })
 
     %{
       role: "tool",
       tool_call_id: call["id"],
-      name: call["name"] || "",
+      name: call["name"],
       content: Jason.encode!(tool_result)
     }
   end
@@ -395,8 +449,32 @@ defmodule PhoenixKitAgent.Turns.Runner do
   end
 
   # The registry name when the model's name maps to one, else its own name.
-  defp denied_name(name) when is_binary(name), do: name |> Names.resolve(:admin) |> clip()
-  defp denied_name(_none), do: nil
+  defp denied_name(name), do: name |> Names.resolve(:admin) |> clip()
+
+  # ── storing ─────────────────────────────────────────────────────
+
+  # A message of the turn, or the end of the turn: a deleted chat ends it
+  # quietly; a refused message ends it with only the field names and
+  # validation codes in the log, never the values.
+  defp store!(turn, attrs, fields \\ []) do
+    case Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, attrs, fields) do
+      {:ok, message} ->
+        message
+
+      {:error, :not_found} ->
+        exit({:shutdown, :chat_gone})
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        codes =
+          Enum.map(changeset.errors, fn {field, {_text, opts}} -> {field, opts[:validation]} end)
+
+        Logger.warning(
+          "[PhoenixKitAgent] a #{attrs.role} message of a turn was not stored: #{inspect(codes)}"
+        )
+
+        exit({:shutdown, :store_failed})
+    end
+  end
 
   # ── notices ─────────────────────────────────────────────────────
 
@@ -466,7 +544,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
     :ok
   rescue
     error ->
-      Logger.warning("[PhoenixKitAgent] AI request not linked: #{Exception.message(error)}")
+      Logger.warning("[PhoenixKitAgent] AI request not linked: #{inspect(error.__struct__)}")
       :ok
   end
 
