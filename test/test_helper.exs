@@ -35,6 +35,7 @@ support_dir = Path.expand("support", __DIR__)
   {PhoenixKitAgent.Fixtures, "fixtures.ex"},
   {PhoenixKitAgent.Test.Tools, "agent_test_tools.ex"},
   {PhoenixKitAgent.Test.LogProbe, "log_probe.ex"},
+  {PhoenixKitAgent.Test.Addenda, "prompt_addenda.ex"},
   {PhoenixKitAgent.DataCase, "data_case.ex"},
   {PhoenixKitAgent.LiveCase, "live_case.ex"}
 ]

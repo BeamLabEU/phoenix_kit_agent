@@ -22,9 +22,9 @@ defmodule PhoenixKitAgent.TurnsTest do
   alias PhoenixKit.Users.Roles
   alias PhoenixKitAgent.{Config, Conversations}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message, UserSettings}
-  alias PhoenixKitAgent.Test.LogProbe
+  alias PhoenixKitAgent.Test.{Addenda, LogProbe}
   alias PhoenixKitAgent.Test.Tools
-  alias PhoenixKitAgent.Turns
+  alias PhoenixKitAgent.{Turns, UserConfig}
   alias PhoenixKitAgent.Turns.Monitor
 
   @stub __MODULE__
@@ -173,6 +173,10 @@ defmodule PhoenixKitAgent.TurnsTest do
   defp unlocked?(ctx),
     do: lock_of(ctx.chat) == {nil, nil} and user_lock_of(ctx.user) == {nil, nil}
 
+  # What was said, without the system message (which always carries the
+  # context of the session).
+  defp chat_messages(body), do: Enum.reject(body["messages"], &(&1["role"] == "system"))
+
   defp tool_names(body), do: Enum.map(body["tools"] || [], & &1["function"]["name"])
 
   # Suspends the monitor for the rest of the test; it is resumed at the end
@@ -254,10 +258,10 @@ defmodule PhoenixKitAgent.TurnsTest do
 
       assert_received {:model_request, first}
       assert tool_names(first) == ["agenttest_list_items"]
-      assert [%{"role" => "user", "content" => "How many items?"}] = first["messages"]
+      assert [%{"role" => "user", "content" => "How many items?"}] = chat_messages(first)
 
       assert_received {:model_request, second}
-      assert [_user, assistant, tool] = second["messages"]
+      assert [_user, assistant, tool] = chat_messages(second)
       assert assistant["role"] == "assistant"
 
       assert [%{"id" => "call_1", "function" => %{"name" => "agenttest_list_items"}}] =
@@ -574,7 +578,7 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert_received {:model_request, _}
       assert_received {:model_request, body}
 
-      assert body["messages"] == [
+      assert chat_messages(body) == [
                %{"role" => "user", "content" => "Old question"},
                %{"role" => "assistant", "content" => "Three old items."},
                %{"role" => "user", "content" => "New question"}
@@ -656,6 +660,214 @@ defmodule PhoenixKitAgent.TurnsTest do
       {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", "none")
       assert {:error, :no_endpoint} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
       assert unlocked?(ctx)
+    end
+  end
+
+  # ── the user's settings (spec §5.4, §7) ────────────────────────────
+
+  describe "the settings of the user" do
+    defp last_request(user),
+      do:
+        Repo.one(
+          from(r in PhoenixKitAI.Request,
+            where: r.user_uuid == ^user.uuid,
+            order_by: [desc: r.inserted_at, desc: r.uuid],
+            limit: 1
+          )
+        )
+
+    test "their own model is the one the request goes to and the journal records", ctx do
+      own = endpoint_fixture(%{model: "mistralai/own-model"})
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: own.uuid})
+
+      answer_next(text_answer("ok"))
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert_received {:model_request, body}
+      assert body["model"] == "mistralai/own-model"
+
+      assert last_request(ctx.user).model == "mistralai/own-model"
+      assert last_request(ctx.user).endpoint_uuid == own.uuid
+
+      assert %Message{role: "assistant", model: "mistralai/own-model"} =
+               List.last(messages(ctx.chat))
+    end
+
+    test "a user without their own model gets the module's", ctx do
+      answer_next(text_answer("ok"))
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert last_request(ctx.user).model == @model
+    end
+
+    test "a change of the model takes effect with the next turn, in any chat", ctx do
+      other_chat = conversation_fixture(ctx.user)
+      :ok = Conversations.subscribe(ctx.ref, other_chat.uuid, @me)
+
+      answer_next(text_answer("one"))
+      await_end(ctx.chat, start!(ctx, "First"))
+      assert last_request(ctx.user).model == @model
+
+      own = endpoint_fixture(%{model: "mistralai/own-model"})
+
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: own.uuid},
+        on_conflict: {:replace, [:endpoint_uuid]},
+        conflict_target: :user_uuid
+      )
+
+      answer_next(text_answer("two"))
+
+      assert {:ok, turn_ref} = Turns.start(ctx.ref, false, other_chat.uuid, "Second")
+      await_end(other_chat, turn_ref)
+      assert last_request(ctx.user).model == "mistralai/own-model"
+    end
+
+    test "a turn under way keeps the model it started with", ctx do
+      own = endpoint_fixture(%{model: "mistralai/own-model"})
+
+      answer_next(
+        tool_answer([call("call_1", "agenttest_list_items", %{})]),
+        fn ->
+          Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: own.uuid},
+            on_conflict: {:replace, [:endpoint_uuid]},
+            conflict_target: :user_uuid
+          )
+        end
+      )
+
+      answer_next(text_answer("done"))
+      await_end(ctx.chat, start!(ctx, "Hi"))
+
+      assert_received {:model_request, first}
+      assert_received {:model_request, second}
+      assert first["model"] == @model
+      assert second["model"] == @model
+
+      # The change is for the next turn.
+      answer_next(text_answer("next"))
+      await_end(ctx.chat, start!(ctx, "Again"))
+      assert_received {:model_request, third}
+      assert third["model"] == "mistralai/own-model"
+    end
+
+    test "a deleted endpoint of the user falls back to the module's", ctx do
+      own = endpoint_fixture(%{model: "mistralai/own-model"})
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: own.uuid})
+      {:ok, _} = PhoenixKitAI.delete_endpoint(own)
+
+      answer_next(text_answer("ok"))
+      await_end(ctx.chat, start!(ctx, "Hi"))
+
+      assert last_request(ctx.user).model == @model
+    end
+
+    test "with their own model the user needs no module default", ctx do
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", "none")
+      assert {:error, :no_endpoint} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+
+      own = endpoint_fixture(%{model: "mistralai/own-model"})
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: own.uuid})
+
+      answer_next(text_answer("ok"))
+      await_end(ctx.chat, start!(ctx, "Hi"))
+      assert last_request(ctx.user).model == "mistralai/own-model"
+    end
+
+    test "a user the assistant is switched off for has no turn", ctx do
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, enabled: false})
+
+      assert {:error, :forbidden} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+      assert messages(ctx.chat) == []
+      refute_received {:model_request, _}
+    end
+
+    test "switching the user off ends a turn at its next round", ctx do
+      answer_next(
+        tool_answer([call("call_1", "agenttest_list_items", %{})]),
+        fn ->
+          Repo.update_all(from(s in UserSettings, where: s.user_uuid == ^ctx.user.uuid),
+            set: [enabled: false]
+          )
+        end
+      )
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert %Message{role: "notice", error: "forbidden"} = List.last(messages(ctx.chat))
+      assert unlocked?(ctx)
+    end
+
+    test "the system prompt: the module, the host, the admin, the user, then the context", ctx do
+      {:ok, _} = Config.put_system_prompt("MODULE-PROMPT", [])
+      Application.put_env(:phoenix_kit_agent, :prompt_addendum, {Addenda, :plain})
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :prompt_addendum) end)
+
+      {:ok, _, _} =
+        UserConfig.admin_update(scope_of(owner_fixture()), ctx.user.uuid, %{
+          "system_prompt" => "ADMIN-PROMPT"
+        })
+
+      {:ok, _} = UserConfig.put_personal_instructions(ctx.ref, "PERSONAL-NOTE", @me)
+
+      answer_next(text_answer("ok"))
+
+      turn_ref =
+        start!(ctx, "Hi", page: %{path: "/admin/orders/5", order_number: "A-5"}, locale: "et")
+
+      await_end(ctx.chat, turn_ref)
+
+      assert_received {:model_request, body}
+      assert [%{"role" => "system", "content" => system}, %{"role" => "user"}] = body["messages"]
+
+      positions =
+        for part <- [
+              "MODULE-PROMPT",
+              "HOST-ADDENDUM-PLAIN",
+              "ADMIN-PROMPT",
+              "rank below",
+              "PERSONAL-NOTE",
+              "Locale: et",
+              "Page: /admin/orders/5",
+              "Order: A-5"
+            ] do
+          {at, _} = :binary.match(system, part)
+          at
+        end
+
+      assert positions == Enum.sort(positions)
+    end
+
+    test "without options the context still names the user's locale and no page", ctx do
+      answer_next(text_answer("ok"))
+      await_end(ctx.chat, start!(ctx, "Hi"))
+
+      assert_received {:model_request, body}
+      assert [%{"role" => "system", "content" => system}, _] = body["messages"]
+      assert system =~ "Locale: "
+      refute system =~ "Page:"
+    end
+
+    test "the locale of the request context stands in for a missing locale option", ctx do
+      answer_next(text_answer("ok"))
+      await_end(ctx.chat, start!(ctx, "Hi", request_context: [language: "ru"]))
+
+      assert_received {:model_request, body}
+      assert [%{"role" => "system", "content" => system}, _] = body["messages"]
+      assert system =~ "Locale: ru"
+    end
+
+    test "the prompt is the user's own: another user's instructions never reach it", ctx do
+      other = user_with(["agent"], "other")
+      Repo.insert!(%UserSettings{user_uuid: other.uuid, personal_instructions: "OTHERS-NOTE"})
+
+      answer_next(text_answer("ok"))
+      await_end(ctx.chat, start!(ctx, "Hi"))
+
+      assert_received {:model_request, body}
+      refute inspect(body) =~ "OTHERS-NOTE"
     end
   end
 
@@ -1061,7 +1273,7 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert Repo.get!(Attachment, att.uuid).message_uuid == user_msg.uuid
 
       assert_received {:model_request, body}
-      assert [%{"role" => "user", "content" => content}] = body["messages"]
+      assert [%{"role" => "user", "content" => content}] = chat_messages(body)
       assert content =~ "See file"
       assert content =~ "Sofa 3 pcs"
       assert content =~ "notes.txt"
@@ -1324,6 +1536,30 @@ defmodule PhoenixKitAgent.TurnsTest do
     # phoenix_kit_ai itself logs the provider's error message (a warning in
     # `PhoenixKitAI.Completion.handle_error_status/2`); a provider that echoed
     # the prompt there would leak it — that is phoenix_kit_ai's to fix.
+    test "the personal instructions, the admin's prompt and a failing addendum are not logged",
+         ctx do
+      {:ok, _} = UserConfig.put_personal_instructions(ctx.ref, "Personal " <> @secret, @me)
+
+      {:ok, _, _} =
+        UserConfig.admin_update(scope_of(owner_fixture()), ctx.user.uuid, %{
+          "system_prompt" => "Admin " <> @secret
+        })
+
+      Application.put_env(:phoenix_kit_agent, :prompt_addendum, {Addenda, :raises})
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :prompt_addendum) end)
+      answer_next(text_answer("ok"))
+
+      {_, logs} =
+        LogProbe.capture(fn ->
+          turn_ref = start!(ctx, "Hi")
+          await_end(ctx.chat, turn_ref)
+        end)
+
+      refute_leak(logs)
+      for line <- logs, do: refute(line =~ "addendum boom", "leaked to the log: " <> line)
+      assert Enum.any?(logs, &(&1 =~ "prompt addendum skipped"))
+    end
+
     test "a model error logs nothing of the user's text", ctx do
       error_next(500)
 

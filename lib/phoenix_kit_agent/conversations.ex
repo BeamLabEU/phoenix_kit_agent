@@ -75,7 +75,8 @@ defmodule PhoenixKitAgent.Conversations do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Users.Auth.SessionRef
-  alias PhoenixKitAgent.Schemas.{Conversation, Message, UserSettings}
+  alias PhoenixKitAgent.Schemas.{Conversation, Message}
+  alias PhoenixKitAgent.UserConfig
 
   @page_size 20
   @max_page_size 50
@@ -310,6 +311,13 @@ defmodule PhoenixKitAgent.Conversations do
   def authorize_session(session_ref, opts),
     do: with_user(session_ref, opts, fn user_uuid -> {:ok, user_uuid} end)
 
+  @doc false
+  # `authorize_session/2`, handing back the session's scope as well: for
+  # `PhoenixKitAgent.Turns`, which tells the model who the user is.
+  @spec authorized_scope(session_ref(), keyword()) :: {:ok, Scope.t()} | {:error, refusal()}
+  def authorized_scope(session_ref, opts),
+    do: with_scope(session_ref, opts, &{:ok, &1})
+
   @doc """
   Subscribes the calling process to the chat's topic, but only after the
   checks of the moduledoc — a chat of someone else is `{:error, :not_found}`
@@ -332,12 +340,14 @@ defmodule PhoenixKitAgent.Conversations do
   # Runs `fun.(user_uuid)` for a session that passes the checks 1-3 of the
   # moduledoc. A `fun` result of `:ok`, `{:ok, _}` or `{:error, _}` is the
   # answer as is.
-  defp with_user(session_ref, opts, fun) do
+  defp with_user(session_ref, opts, fun),
+    do: with_scope(session_ref, opts, &fun.(Scope.user_uuid(&1)))
+
+  defp with_scope(session_ref, opts, fun) do
     with :ok <- not_impersonated(impersonated!(opts)),
          {:ok, scope} <- scope_for(session_ref),
-         user_uuid = Scope.user_uuid(scope),
-         :ok <- authorize(scope, user_uuid) do
-      fun.(user_uuid)
+         :ok <- authorize(scope, Scope.user_uuid(scope)) do
+      fun.(scope)
     end
   end
 
@@ -372,15 +382,9 @@ defmodule PhoenixKitAgent.Conversations do
 
   defp authorize(scope, user_uuid) do
     if PhoenixKitAgent.enabled?() and Scope.can?(scope, "agent") and
-         not switched_off?(user_uuid),
+         UserConfig.enabled?(user_uuid),
        do: :ok,
        else: {:error, :forbidden}
-  end
-
-  defp switched_off?(user_uuid) do
-    repo().exists?(
-      from(s in UserSettings, where: s.user_uuid == ^user_uuid and s.enabled == false)
-    )
   end
 
   defp fetch_owned(user_uuid, conversation_uuid, opts \\ []) do

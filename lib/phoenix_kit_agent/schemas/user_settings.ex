@@ -26,14 +26,25 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
 
   import Ecto.Changeset
 
+  alias PhoenixKitAgent.Schemas.Message
+
   @primary_key {:user_uuid, UUIDv7, autogenerate: false}
   @foreign_key_type UUIDv7
 
   @limits ~w(daily_cost_limit_micro_usd monthly_cost_limit_micro_usd daily_turn_limit max_attachment_mb max_attachments_per_message)a
 
+  # The longest admin prompt and the longest personal instructions, in
+  # characters: both go into every request of the user.
+  @prompt_max 8_000
+  @personal_max 4_000
+
   # The limits kept in `integer` columns (the money ones are `bigint`).
   @int4_limits ~w(daily_turn_limit max_attachment_mb max_attachments_per_message)a
   @int4_max 2_147_483_647
+
+  # The most a money limit may be: $1,000,000, as for the module default.
+  @money_max 1_000_000_000_000
+  @money_limits ~w(daily_cost_limit_micro_usd monthly_cost_limit_micro_usd)a
 
   @type t :: %__MODULE__{}
 
@@ -72,8 +83,16 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
       [:enabled, :endpoint_uuid, :system_prompt, :notify_on_limit, :notify_user_uuids] ++ @limits
     )
     |> validate_required([:notify_on_limit, :notify_user_uuids])
+    |> clean_text(:system_prompt, @prompt_max)
     |> then(fn changeset ->
       Enum.reduce(@limits, changeset, &validate_number(&2, &1, greater_than_or_equal_to: 0))
+    end)
+    |> then(fn changeset ->
+      Enum.reduce(
+        @money_limits,
+        changeset,
+        &validate_number(&2, &1, less_than_or_equal_to: @money_max)
+      )
     end)
     |> then(fn changeset ->
       Enum.reduce(
@@ -90,7 +109,25 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
   def personal_changeset(settings, attrs) do
     settings
     |> cast(attrs, [:personal_instructions])
+    |> clean_text(:personal_instructions, @personal_max)
     |> key_constraints()
+  end
+
+  # A text field: NUL characters cut (the database refuses them), the ends
+  # trimmed, blank means none, and a length cap.
+  defp clean_text(changeset, field, max) do
+    changeset
+    |> update_change(field, fn
+      text when is_binary(text) ->
+        case text |> Message.strip_nul() |> String.trim() do
+          "" -> nil
+          text -> text
+        end
+
+      other ->
+        other
+    end)
+    |> validate_length(field, max: max)
   end
 
   defp key_constraints(changeset) do
