@@ -104,4 +104,29 @@ defmodule PhoenixKitAgentTest do
       assert function_exported?(PhoenixKitAgent, :before_user_delete, 1)
     end
   end
+
+  describe "children/0 next to the other modules" do
+    # PhoenixKit.Supervisor starts the children of every module it knows in one
+    # list (`ModuleRegistry.static_children/0`): an id two modules share stops
+    # the host from booting (`duplicate_child_name`).
+    test "the children of all modules, this one included, can be started side by side" do
+      specs = PhoenixKit.ModuleRegistry.static_children()
+      ids = specs |> Enum.map(&Supervisor.child_spec(&1, []).id)
+
+      for spec <- PhoenixKitAgent.children(),
+          do: assert(Supervisor.child_spec(spec, []).id in ids)
+
+      assert {:ok, {_flags, children}} = Supervisor.init(specs, strategy: :one_for_one)
+      assert :supervisor.check_childspecs(children) == :ok
+      assert ids -- Enum.uniq(ids) == []
+    end
+
+    test "every child of this module has an id of its own namespace" do
+      for spec <- PhoenixKitAgent.children() do
+        id = Supervisor.child_spec(spec, []).id
+        assert is_atom(id)
+        assert String.starts_with?(Atom.to_string(id), "Elixir.PhoenixKitAgent."), inspect(id)
+      end
+    end
+  end
 end

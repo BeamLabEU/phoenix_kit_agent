@@ -141,8 +141,11 @@ defmodule PhoenixKitAgent.Attachments.Work do
   end
 
   @doc false
-  # The task that sweeps at start-up (`PhoenixKitAgent.children/0`).
-  def sweep_task, do: Task.child_spec(fn -> sweep() end)
+  # The task that sweeps at start-up (`PhoenixKitAgent.children/0`). Its id is
+  # its own: PhoenixKit.Supervisor starts the children of every module in one
+  # list, and the default id `Task` is taken there already (core's Sitemap).
+  def sweep_task,
+    do: Supervisor.child_spec(Task.child_spec(fn -> sweep() end), id: __MODULE__.Sweep)
 
   defp stale?(path, now, max_age) do
     case File.lstat(path, time: :posix) do
