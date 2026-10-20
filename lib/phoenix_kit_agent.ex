@@ -147,6 +147,25 @@ defmodule PhoenixKitAgent do
     ]
   end
 
+  @doc """
+  The notification type of the module: `"agent_limit"`, what the watchers get
+  when someone reaches a limit of the assistant or the AI budget refuses it
+  (`PhoenixKitAgent.Limits`). A watcher can switch it off for themselves.
+  """
+  @impl PhoenixKit.Module
+  def notification_types do
+    [
+      %{
+        key: "agent_limit",
+        label: "AI assistant limits",
+        description:
+          "Someone reached a spending or turn limit of the AI assistant, or the AI budget refused it",
+        actions: [],
+        default: true
+      }
+    ]
+  end
+
   @impl PhoenixKit.Module
   def settings_tabs do
     [

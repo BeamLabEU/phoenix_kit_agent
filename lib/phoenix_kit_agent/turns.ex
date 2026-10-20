@@ -11,7 +11,8 @@ defmodule PhoenixKitAgent.Turns do
   anything is read or written.
 
   `start/6`, in order (the first failure is the answer; a start that fails
-  writes nothing to the chat and leaves no lock behind):
+  leaves no lock behind and writes nothing to the chat — except for a limit
+  reached, below):
 
     0-1. the checks of `Conversations` — impersonation, the session's scope,
          the `agent` permission, the module and the user's switch, the chat is
@@ -20,14 +21,21 @@ defmodule PhoenixKitAgent.Turns do
          AI module on, an endpoint chosen (the user's own, else
          `agent_default_endpoint_uuid`; `PhoenixKitAgent.UserConfig`), the
          attachments ready and the user's own, of this chat and not sent yet;
-    2. the limits (spec §7.3, a later block — every turn may start for now);
-    3. the locks (`PhoenixKitAgent.Turns.Locks`): one turn per chat
+    2. the locks (`PhoenixKitAgent.Turns.Locks`): one turn per chat
        (`:conversation_busy`) and per user (`:turn_in_flight`); the history
        is read only once they are taken, so it holds the previous turn's end;
+    3. the limits (`PhoenixKitAgent.Limits.check/3`), under the locks: the
+       user's previous turn is over, so all it spent is in the AI journal. A
+       limit used up is `{:error, {:limit_reached, kind}}`: the locks are
+       released, the model is not called, the user's text is not stored, and
+       — the one refusal that writes — a `notice` goes into the chat (error
+       `daily_cost_limit`, `monthly_cost_limit` or `daily_turn_limit`) and the
+       limit is announced (`PhoenixKitAgent.Limits.announce_reached/2`);
     4. the task starts (`PhoenixKitAgent.Turns.Monitor`), and `{:ok,
        turn_ref}` is returned; there the user message is stored (and the
        attachments linked to it), then the rounds run
-       (`PhoenixKitAgent.Turns.Runner`).
+       (`PhoenixKitAgent.Turns.Runner`). A turn that started under its limits
+       runs to its end.
 
   The chat's topic (`Conversations.topic/1`) hears every stored message
   (`{:agent_message_added, conversation_uuid, message_uuid}`) and the end of
@@ -48,7 +56,7 @@ defmodule PhoenixKitAgent.Turns do
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Config, Conversations, Prompt, UserConfig}
+  alias PhoenixKitAgent.{Config, Conversations, Limits, Prompt, UserConfig}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
   alias PhoenixKitAgent.Turns.{History, Locks, Monitor}
 
@@ -68,6 +76,7 @@ defmodule PhoenixKitAgent.Turns do
           | :invalid_attachments
           | :conversation_busy
           | :turn_in_flight
+          | {:limit_reached, Limits.kind()}
           | :not_running
           | {:not_started, Monitor.exit_class()}
           | {:monitor_unavailable, Monitor.exit_class()}
@@ -111,7 +120,6 @@ defmodule PhoenixKitAgent.Turns do
          :ok <- ai_enabled(),
          settings = UserConfig.effective(conversation.user_uuid),
          {:ok, endpoint_uuid} <- endpoint(settings),
-         :ok <- within_limits(conversation.user_uuid),
          {:ok, attachments} <- new_attachments(conversation, attachment_uuids) do
       user = %{scope: scope, settings: settings, endpoint_uuid: endpoint_uuid}
       launch(session_ref, conversation, text, attachments, user, opts)
@@ -169,10 +177,6 @@ defmodule PhoenixKitAgent.Turns do
   defp endpoint(%{endpoint_uuid: nil}), do: {:error, :no_endpoint}
   defp endpoint(%{endpoint_uuid: uuid}), do: {:ok, uuid}
 
-  # The spending and turn limits (spec §7.3) are a later block; until then
-  # every turn may start.
-  defp within_limits(_user_uuid), do: :ok
-
   # Every uuid must name a ready attachment of this user in this chat that is
   # not part of a message yet.
   defp new_attachments(_conversation, []), do: {:ok, []}
@@ -209,23 +213,71 @@ defmodule PhoenixKitAgent.Turns do
   end
 
   defp launch(session_ref, conversation, text, attachments, user, opts) do
-    user_uuid = conversation.user_uuid
     turn_ref = UUIDv7.generate()
 
-    with :ok <- Locks.acquire(user_uuid, conversation.uuid, turn_ref, lock_ttl_s()) do
-      case begin(session_ref, conversation, text, attachments, user, turn_ref, opts) do
-        {:ok, _pid} ->
-          {:ok, turn_ref}
-
-        {:error, _reason} = error ->
-          Locks.release(user_uuid, conversation.uuid, turn_ref)
-          error
-      end
+    with :ok <- Locks.acquire(conversation.user_uuid, conversation.uuid, turn_ref, lock_ttl_s()) do
+      conversation
+      |> locked(turn_ref, fn ->
+        with :ok <- Limits.check(user.settings, user.endpoint_uuid),
+             do: begin(session_ref, conversation, text, attachments, user, turn_ref, opts)
+      end)
+      |> started(conversation, turn_ref, user)
     end
   end
 
-  # Everything here runs with the locks held: an exception frees them before
-  # it goes on (the task has not started, or never got its go-ahead).
+  defp started({:ok, _pid}, _conversation, turn_ref, _user), do: {:ok, turn_ref}
+
+  defp started({:error, {:limit_reached, reached}}, conversation, turn_ref, user) do
+    Locks.release(conversation.user_uuid, conversation.uuid, turn_ref)
+    limit_reached(conversation, turn_ref, user.settings, reached)
+    {:error, {:limit_reached, reached.kind}}
+  end
+
+  defp started({:error, _reason} = error, conversation, turn_ref, _user) do
+    Locks.release(conversation.user_uuid, conversation.uuid, turn_ref)
+    error
+  end
+
+  # Runs `fun` with the locks held: an exception frees them before it goes on
+  # (the task has not started, or never got its go-ahead).
+  defp locked(conversation, turn_ref, fun) do
+    fun.()
+  catch
+    kind, reason ->
+      stacktrace = __STACKTRACE__
+      release_quietly(conversation.user_uuid, conversation.uuid, turn_ref)
+      :erlang.raise(kind, reason, stacktrace)
+  end
+
+  # The chat says why nothing happened; the user (and, if they are to be
+  # told, the watchers) hear of the limit once per period.
+  defp limit_reached(conversation, turn_ref, settings, reached) do
+    _ =
+      Conversations.add_turn_message(conversation.user_uuid, conversation.uuid, %{
+        turn_ref: turn_ref,
+        role: "notice",
+        content: limit_text(reached.kind),
+        error: limit_code(reached.kind)
+      })
+
+    Limits.announce_reached(settings, reached)
+  end
+
+  defp limit_code(:daily_cost), do: "daily_cost_limit"
+  defp limit_code(:monthly_cost), do: "monthly_cost_limit"
+  defp limit_code(:daily_turns), do: "daily_turn_limit"
+
+  defp limit_text(:daily_cost),
+    do: "You have reached your daily spending limit for the assistant. It resets at midnight."
+
+  defp limit_text(:monthly_cost),
+    do:
+      "You have reached your monthly spending limit for the assistant. " <>
+        "It resets on the first day of next month."
+
+  defp limit_text(:daily_turns),
+    do: "You have used all your assistant turns for today. They reset at midnight."
+
   defp begin(session_ref, conversation, text, attachments, user, turn_ref, opts) do
     user_uuid = conversation.user_uuid
 
@@ -249,11 +301,6 @@ defmodule PhoenixKitAgent.Turns do
     }
 
     Monitor.start_turn(turn, deadline_ms(opts), [self() | Process.get(:"$callers", [])])
-  catch
-    kind, reason ->
-      stacktrace = __STACKTRACE__
-      release_quietly(conversation.user_uuid, conversation.uuid, turn_ref)
-      :erlang.raise(kind, reason, stacktrace)
   end
 
   defp release_quietly(user_uuid, conversation_uuid, turn_ref) do

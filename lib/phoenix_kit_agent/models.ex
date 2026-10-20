@@ -17,6 +17,9 @@ defmodule PhoenixKitAgent.Models do
       could not be fetched.
 
   `tools_support/1` makes network requests: call it off the LiveView process.
+
+  `reports_cost?/1` says whether an endpoint's answers carry what the call
+  cost — the money limits count only such calls (spec §7.3).
   """
 
   alias PhoenixKitAI.{Endpoint, OpenRouterClient}
@@ -55,6 +58,18 @@ defmodule PhoenixKitAgent.Models do
       Map.merge(acc, group_support(connection, group))
     end)
   end
+
+  @doc """
+  Whether calls on the endpoint report their cost to the AI journal: today
+  only OpenRouter answers with one (`usage.cost`); `phoenix_kit_ai` has no
+  price table for the other providers. On an endpoint that does not, money is
+  not counted and only the turn limit applies.
+  """
+  @spec reports_cost?(Endpoint.t() | %{provider: term()} | nil) :: boolean()
+  def reports_cost?(%{provider: provider}) when is_binary(provider),
+    do: Endpoint.base_provider(provider) == "openrouter"
+
+  def reports_cost?(_endpoint), do: false
 
   # ── internals ─────────────────────────────────────────────────────────
 

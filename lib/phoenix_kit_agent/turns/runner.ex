@@ -19,7 +19,9 @@ defmodule PhoenixKitAgent.Turns.Runner do
        it was left out (the database keeps it whole);
     d. calls the model (`PhoenixKitAI.complete/3`, `source: "agent"`, the user,
        no cache, the module's content capture, and the uuid the answer will be
-       stored under as `attribution`);
+       stored under as `attribution`); a refusal of the `phoenix_kit_ai`
+       budget is a notice, and the watchers hear of it once a day
+       (`PhoenixKitAgent.Limits.ai_budget_reached/3`);
     e. stores the answer; without tool calls the turn is over. A tool call
        without a name is dropped (not run, stored or sent back); an answer
        with neither text nor a named tool call is stored as an
@@ -71,7 +73,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   alias PhoenixKit.API.Executor
   alias PhoenixKit.API.MCP.Names
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.Conversations
+  alias PhoenixKitAgent.{Conversations, Limits}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
   alias PhoenixKitAgent.Turns.{Locks, Monitor, Tools}
 
@@ -297,6 +299,9 @@ defmodule PhoenixKitAgent.Turns.Runner do
           uuid: message_uuid,
           ai_request_uuid: request && request.uuid
         )
+
+        with {:budget_exceeded, scope} <- reason,
+             do: Limits.ai_budget_reached(turn.user_uuid, scope)
 
         {:error, reason}
     end

@@ -12,6 +12,9 @@ defmodule PhoenixKitAgent.Spend do
   The windows are calendar days and months in the **site time zone**
   (Settings → `time_zone`; `PhoenixKit.Utils.TimeZone`), each from its local
   midnight to the next one — so a day that has 23 or 25 hours is counted right.
+
+  Turns are counted from the module's own messages (`turns_today/2`): a turn
+  is one `user` message with a `turn_ref`.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -19,6 +22,7 @@ defmodule PhoenixKitAgent.Spend do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Settings
   alias PhoenixKit.Utils.TimeZone
+  alias PhoenixKitAgent.Schemas.{Conversation, Message}
   alias PhoenixKitAI.Request
 
   @typedoc "Half-open: from the first instant, up to but not including the second."
@@ -40,6 +44,88 @@ defmodule PhoenixKitAgent.Spend do
         TimeZone.date_start(Date.add(Date.end_of_month(today), 1), zone)
       }
     }
+  end
+
+  @doc """
+  The local day and month that contain `now`, as keys: `%{day: "2026-10-19",
+  month: "2026-10"}`.
+  """
+  @spec period_keys(DateTime.t()) :: %{day: String.t(), month: String.t()}
+  def period_keys(now \\ DateTime.utc_now()) do
+    today = TimeZone.local_date(now, Settings.get_setting("time_zone", "0"))
+    %{day: Date.to_iso8601(today), month: String.slice(Date.to_iso8601(today), 0, 7)}
+  end
+
+  @doc """
+  How many turns each of `user_uuids` started today (the local day of `now`),
+  in any of their chats: `%{user_uuid => count}`, every user in the answer.
+  """
+  @spec turns_today([String.t()], DateTime.t()) :: %{String.t() => non_neg_integer()}
+  def turns_today(user_uuids, now \\ DateTime.utc_now())
+  def turns_today([], _now), do: %{}
+
+  def turns_today(user_uuids, now) when is_list(user_uuids) do
+    %{day: {from, to}} = windows(now)
+
+    counts =
+      from(m in Message,
+        join: c in Conversation,
+        on: c.uuid == m.conversation_uuid,
+        where:
+          c.user_uuid in ^user_uuids and m.role == "user" and not is_nil(m.turn_ref) and
+            m.inserted_at >= ^from and m.inserted_at < ^to,
+        group_by: c.user_uuid,
+        select: {c.user_uuid, count(m.turn_ref, :distinct)}
+      )
+      |> RepoHelper.repo().all()
+      |> Map.new()
+
+    Map.new(user_uuids, &{&1, Map.get(counts, &1, 0)})
+  end
+
+  @doc """
+  Everyone who used the assistant this month (the local month of `now`): a
+  request in the journal or a turn. User uuids; a journal row whose user was
+  deleted has none and is left out.
+  """
+  @spec users_this_month(DateTime.t()) :: [String.t()]
+  def users_this_month(now \\ DateTime.utc_now()) do
+    %{month: {from, to}} = windows(now)
+
+    journal =
+      from(r in Request,
+        where:
+          not is_nil(r.user_uuid) and fragment("?->>'source' = 'agent'", r.metadata) and
+            r.inserted_at >= ^from and r.inserted_at < ^to,
+        distinct: true,
+        select: r.user_uuid
+      )
+
+    turns =
+      from(m in Message,
+        join: c in Conversation,
+        on: c.uuid == m.conversation_uuid,
+        where:
+          m.role == "user" and not is_nil(m.turn_ref) and m.inserted_at >= ^from and
+            m.inserted_at < ^to,
+        distinct: true,
+        select: c.user_uuid
+      )
+
+    (RepoHelper.repo().all(journal) ++ RepoHelper.repo().all(turns)) |> Enum.uniq()
+  end
+
+  @doc "Micro-dollars as dollars with at least two decimals: `1_500_000` is `\"1.50\"`."
+  @spec format_usd(integer()) :: String.t()
+  def format_usd(micro) when is_integer(micro) do
+    text = micro |> Decimal.new() |> Decimal.div(1_000_000) |> Decimal.normalize()
+    text = Decimal.to_string(text, :normal)
+
+    case String.split(text, ".") do
+      [whole] -> "#{whole}.00"
+      [whole, <<_::binary-size(1)>> = fraction] -> "#{whole}.#{fraction}0"
+      _ -> text
+    end
   end
 
   @doc """

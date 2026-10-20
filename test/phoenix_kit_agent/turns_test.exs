@@ -1525,6 +1525,217 @@ defmodule PhoenixKitAgent.TurnsTest do
 
   # ── nothing of a turn reaches the log (spec §8.2) ───────────────────
 
+  # ── the limits (spec §7.3, §7.4) ────────────────────────────────────
+
+  describe "the limits" do
+    defp limits!(user, attrs) do
+      Repo.insert!(struct(UserSettings, Map.merge(%{user_uuid: user.uuid}, Map.new(attrs))))
+    end
+
+    defp spend!(user, endpoint, cost) do
+      Repo.insert!(%PhoenixKitAI.Request{
+        endpoint_uuid: endpoint.uuid,
+        user_uuid: user.uuid,
+        model: endpoint.model,
+        status: "success",
+        request_type: "vision",
+        cost_cents: cost,
+        metadata: %{"source" => "agent"},
+        inserted_at: DateTime.truncate(DateTime.utc_now(), :second)
+      })
+    end
+
+    defp notifications_of(user) do
+      Repo.all(
+        from(n in PhoenixKit.Notifications.Notification, where: n.recipient_uuid == ^user.uuid)
+      )
+    end
+
+    defp answer_with_cost(answer, usd), do: put_in(answer, ["usage", "cost"], usd)
+
+    test "a used-up turn limit: no model call, a notice in the chat, the locks freed", ctx do
+      limits!(ctx.user, daily_turn_limit: 1)
+
+      answer_next(text_answer("First answer."))
+      turn_ref = start!(ctx, "First")
+      await_end(ctx.chat, turn_ref)
+      assert_received {:model_request, _}
+
+      assert {:error, {:limit_reached, :daily_turns}} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "Second")
+
+      refute_received {:model_request, _}
+      assert unlocked?(ctx)
+
+      assert [
+               %Message{role: "user", content: "First"},
+               %Message{role: "assistant"},
+               %Message{role: "notice", error: "daily_turn_limit", turn_ref: notice_ref}
+             ] = messages(ctx.chat)
+
+      assert is_binary(notice_ref) and notice_ref != turn_ref
+
+      assert [%{metadata: %{"dedupe_key" => "agent:limit:daily_turns:" <> _}}] =
+               notifications_of(ctx.user)
+    end
+
+    test "money in the AI journal, a vision call no message records, blocks the turn", ctx do
+      spend!(ctx.user, ctx.endpoint, 1_000_000)
+
+      assert {:error, {:limit_reached, :daily_cost}} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+
+      refute_received {:model_request, _}
+      assert [%Message{role: "notice", error: "daily_cost_limit"}] = messages(ctx.chat)
+      assert unlocked?(ctx)
+    end
+
+    test "the watchers hear of it once, and only with notify_on_limit", ctx do
+      owner = owner_fixture()
+      limits!(ctx.user, daily_turn_limit: 0)
+
+      for _ <- 1..2 do
+        assert {:error, {:limit_reached, :daily_turns}} =
+                 Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+      end
+
+      assert notifications_of(owner) == []
+      assert [_one] = notifications_of(ctx.user)
+      assert length(messages(ctx.chat)) == 2
+
+      # Switched on later the same day: the period was already announced.
+      Repo.update_all(from(s in UserSettings, where: s.user_uuid == ^ctx.user.uuid),
+        set: [notify_on_limit: true]
+      )
+
+      assert {:error, {:limit_reached, :daily_turns}} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+
+      assert notifications_of(owner) == []
+    end
+
+    test "with notify_on_limit the watchers hear of it once a period", ctx do
+      owner = owner_fixture()
+      limits!(ctx.user, daily_turn_limit: 0, notify_on_limit: true)
+
+      for _ <- 1..3 do
+        assert {:error, {:limit_reached, :daily_turns}} =
+                 Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+      end
+
+      assert [%{metadata: %{"notification_text" => text}}] = notifications_of(owner)
+      assert text =~ ctx.user.email
+    end
+
+    test "the limits are checked under the locks: a turn in flight is :turn_in_flight", ctx do
+      other_chat = conversation_fixture(ctx.user)
+      :ok = Conversations.subscribe(ctx.ref, other_chat.uuid, @me)
+
+      hang_next()
+      turn_ref = start!(ctx, "First")
+      assert_receive {:model_waiting, _pid}, 5_000
+
+      # What the turn in flight is spending reaches the limit.
+      spend!(ctx.user, ctx.endpoint, 1_000_000)
+
+      assert {:error, :turn_in_flight} = Turns.start(ctx.ref, false, other_chat.uuid, "Second")
+      assert messages(other_chat) == []
+      assert Repo.all(PhoenixKitAgent.Schemas.LimitEvent) == []
+
+      :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid)
+      await_end(ctx.chat, turn_ref)
+
+      assert {:error, {:limit_reached, :daily_cost}} =
+               Turns.start(ctx.ref, false, other_chat.uuid, "Second")
+    end
+
+    test "two starts at the edge of the limit give one turn", ctx do
+      limits!(ctx.user, daily_turn_limit: 1)
+      other_chat = conversation_fixture(ctx.user)
+      :ok = Conversations.subscribe(ctx.ref, other_chat.uuid, @me)
+
+      hang_next()
+
+      results =
+        [ctx.chat.uuid, other_chat.uuid]
+        |> Enum.map(fn chat_uuid ->
+          Task.async(fn -> {chat_uuid, Turns.start(ctx.ref, false, chat_uuid, "Go")} end)
+        end)
+        |> Task.await_many(10_000)
+
+      assert [{started_chat, {:ok, turn_ref}}] =
+               Enum.filter(results, &match?({_, {:ok, _}}, &1))
+
+      assert [{_, {:error, refusal}}] = Enum.reject(results, &match?({_, {:ok, _}}, &1))
+      assert refusal in [:turn_in_flight, :conversation_busy]
+
+      assert_receive {:model_waiting, _pid}, 5_000
+      :ok = Turns.stop(ctx.ref, false, started_chat)
+      assert_receive {:agent_turn_finished, ^started_chat, ^turn_ref}, 5_000
+
+      for chat_uuid <- [ctx.chat.uuid, other_chat.uuid] do
+        assert {:error, {:limit_reached, :daily_turns}} =
+                 Turns.start(ctx.ref, false, chat_uuid, "Again")
+      end
+    end
+
+    test "a turn that started under its limit plays to its end", ctx do
+      limits!(ctx.user, daily_cost_limit_micro_usd: 1_000)
+
+      answer_next(answer_with_cost(tool_answer([call("c1", "agenttest_list_items", %{})]), 0.005))
+
+      answer_next(answer_with_cost(text_answer("Done."), 0.005))
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert %Message{role: "assistant", content: "Done."} = List.last(messages(ctx.chat))
+
+      assert PhoenixKitAgent.Spend.for_users([ctx.user.uuid])[ctx.user.uuid].day_micro_usd ==
+               10_000
+
+      assert {:error, {:limit_reached, :daily_cost}} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "More")
+    end
+
+    test "an endpoint without a cost: the money limit does not act, the turn limit does", ctx do
+      direct = endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
+
+      limits!(ctx.user,
+        endpoint_uuid: direct.uuid,
+        daily_cost_limit_micro_usd: 0,
+        daily_turn_limit: 1
+      )
+
+      answer_next(text_answer("Fine."))
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+      assert %Message{role: "assistant", content: "Fine."} = List.last(messages(ctx.chat))
+
+      assert {:error, {:limit_reached, :daily_turns}} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "Again")
+    end
+
+    test "the AI budget used up: a notice, and the watchers once a day", ctx do
+      owner = owner_fixture()
+      {:ok, _} = PhoenixKitAI.Budget.set_limit(:user_calls, 1)
+      ai_request_fixture(ctx.user, ctx.endpoint)
+
+      for _ <- 1..2 do
+        turn_ref = start!(ctx, "Hi")
+        await_end(ctx.chat, turn_ref)
+
+        assert %Message{role: "notice", error: "budget_exceeded"} =
+                 List.last(messages(ctx.chat))
+      end
+
+      refute_received {:model_request, _}
+      assert [%{metadata: %{"notification_text" => text}}] = notifications_of(owner)
+      assert text =~ ctx.user.email
+      assert notifications_of(ctx.user) == []
+    end
+  end
+
   # ── stopping between steps ──────────────────────────────────────────
 
   describe "stop and deadline let a model call finish" do

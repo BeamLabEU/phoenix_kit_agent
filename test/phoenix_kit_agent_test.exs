@@ -1,6 +1,8 @@
 defmodule PhoenixKitAgentTest do
   use ExUnit.Case, async: true
 
+  alias PhoenixKit.Notifications.Types
+
   # `function_exported?/3` answers false for a module that is merely not
   # loaded, so load it before asserting on callbacks.
   setup_all do
@@ -82,6 +84,14 @@ defmodule PhoenixKitAgentTest do
       assert users.level == :admin
       assert users.permission == "agent.manage"
       assert users.live_view == {PhoenixKitAgent.Web.UsersLive, :index}
+    end
+
+    test "notification_types/0 declares agent_limit, so a watcher can switch it off" do
+      assert [%{key: "agent_limit", default: true, actions: []} = type] =
+               PhoenixKitAgent.notification_types()
+
+      assert is_binary(type.label) and is_binary(type.description)
+      assert %{key: "agent_limit"} = Types.find("agent_limit")
     end
 
     test "before_user_delete/1 is defined" do

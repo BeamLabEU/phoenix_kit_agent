@@ -2,8 +2,11 @@ defmodule PhoenixKitAgent.Schemas.LimitEvent do
   @moduledoc """
   A limit notice that was sent (`phoenix_kit_agent_limit_events`): at most one per
   user, kind and period (`period_key` is `"2026-10-19"` for a day, `"2026-10"` for
-  a month), which is how a limit is announced once. `used` and `limit` are in the
-  limit's own unit (micro-dollars or turns). `user_uuid` is set by the caller.
+  a month), which is how a limit is announced once. A `warn_80` row names its
+  limit in the key — `"cost:2026-10-19"`, `"cost:2026-10"`, `"turns:2026-10-19"` —
+  so each of the three limits warns once (`PhoenixKitAgent.Limits`). `used` and
+  `limit` are in the limit's own unit (micro-dollars or turns; none for
+  `ai_budget`). `user_uuid` is set by the caller.
   """
 
   use Ecto.Schema
