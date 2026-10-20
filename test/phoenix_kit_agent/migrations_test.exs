@@ -48,6 +48,40 @@ defmodule PhoenixKitAgent.MigrationsTest do
     |> Enum.map(fn [child, column, parent, action] -> {child, column, parent, action} end)
   end
 
+  # "c" = CASCADE, "n" = SET NULL
+  @foreign_keys [
+    {"phoenix_kit_agent_attachments", "conversation_uuid", "phoenix_kit_agent_conversations",
+     "c"},
+    {"phoenix_kit_agent_attachments", "file_uuid", "phoenix_kit_files", "n"},
+    {"phoenix_kit_agent_attachments", "message_uuid", "phoenix_kit_agent_messages", "c"},
+    {"phoenix_kit_agent_attachments", "user_uuid", "phoenix_kit_users", "c"},
+    {"phoenix_kit_agent_conversations", "user_uuid", "phoenix_kit_users", "c"},
+    {"phoenix_kit_agent_limit_events", "user_uuid", "phoenix_kit_users", "c"},
+    {"phoenix_kit_agent_messages", "ai_request_uuid", "phoenix_kit_ai_requests", "n"},
+    {"phoenix_kit_agent_messages", "conversation_uuid", "phoenix_kit_agent_conversations", "c"},
+    {"phoenix_kit_agent_user_settings", "endpoint_uuid", "phoenix_kit_ai_endpoints", "n"},
+    {"phoenix_kit_agent_user_settings", "updated_by_uuid", "phoenix_kit_users", "n"},
+    {"phoenix_kit_agent_user_settings", "user_uuid", "phoenix_kit_users", "c"}
+  ]
+
+  defp indexdef(name) do
+    [[indexdef]] = query("SELECT indexdef FROM pg_indexes WHERE indexname = $1", [name])
+    indexdef
+  end
+
+  # The foreign keys and the two indexes the module relies on, as the schema
+  # in the database has them now.
+  defp assert_structure do
+    assert foreign_keys() == @foreign_keys
+
+    assert indexdef("phoenix_kit_agent_conversations_user_list_index") =~
+             "(user_uuid, status, last_message_at DESC)"
+
+    limit_index = indexdef("phoenix_kit_agent_limit_events_user_kind_period_index")
+    assert limit_index =~ "UNIQUE"
+    assert limit_index =~ "(user_uuid, limit_kind, period_key)"
+  end
+
   describe "the chain as built at boot" do
     test "is at the current version, with all five tables" do
       assert Migrations.current_version() == 1
@@ -56,46 +90,8 @@ defmodule PhoenixKitAgent.MigrationsTest do
       assert Migrations.migrated_version_runtime() == 1
     end
 
-    test "user rows cascade, journal and endpoint links are set to null, files are set to null" do
-      fks = foreign_keys()
-
-      # "c" = CASCADE, "n" = SET NULL
-      expected = [
-        {"phoenix_kit_agent_attachments", "conversation_uuid", "phoenix_kit_agent_conversations",
-         "c"},
-        {"phoenix_kit_agent_attachments", "file_uuid", "phoenix_kit_files", "n"},
-        {"phoenix_kit_agent_attachments", "message_uuid", "phoenix_kit_agent_messages", "c"},
-        {"phoenix_kit_agent_attachments", "user_uuid", "phoenix_kit_users", "c"},
-        {"phoenix_kit_agent_conversations", "user_uuid", "phoenix_kit_users", "c"},
-        {"phoenix_kit_agent_limit_events", "user_uuid", "phoenix_kit_users", "c"},
-        {"phoenix_kit_agent_messages", "ai_request_uuid", "phoenix_kit_ai_requests", "n"},
-        {"phoenix_kit_agent_messages", "conversation_uuid", "phoenix_kit_agent_conversations",
-         "c"},
-        {"phoenix_kit_agent_user_settings", "endpoint_uuid", "phoenix_kit_ai_endpoints", "n"},
-        {"phoenix_kit_agent_user_settings", "updated_by_uuid", "phoenix_kit_users", "n"},
-        {"phoenix_kit_agent_user_settings", "user_uuid", "phoenix_kit_users", "c"}
-      ]
-
-      assert fks == expected
-    end
-
-    test "the chat list has its index: by user and status, newest first" do
-      [[indexdef]] =
-        query(
-          "SELECT indexdef FROM pg_indexes WHERE indexname = 'phoenix_kit_agent_conversations_user_list_index'"
-        )
-
-      assert indexdef =~ "(user_uuid, status, last_message_at DESC)"
-    end
-
-    test "one limit notice per user, kind and period" do
-      [[indexdef]] =
-        query(
-          "SELECT indexdef FROM pg_indexes WHERE indexname = 'phoenix_kit_agent_limit_events_user_kind_period_index'"
-        )
-
-      assert indexdef =~ "UNIQUE"
-      assert indexdef =~ "(user_uuid, limit_kind, period_key)"
+    test "user rows cascade, journal and endpoint links are set to null; the indexes" do
+      assert_structure()
     end
   end
 
@@ -115,6 +111,10 @@ defmodule PhoenixKitAgent.MigrationsTest do
       run(Migrations.up_statements("public"))
       assert existing_tables() == Enum.sort(@tables)
       assert marker() == "pk_agent_schema:1"
+
+      # Built here, from the statements as they are now — not the schema a
+      # persistent test database kept from an earlier V1.
+      assert_structure()
     end
 
     test "down does not touch a table that is not the module's" do
@@ -157,6 +157,7 @@ defmodule PhoenixKitAgent.MigrationsTest do
       assert :ok = Ecto.Migrator.up(Repo, version, SchemaMigration, @migrator_opts)
       assert existing_tables() == Enum.sort(@tables)
       assert Migrations.migrated_version_runtime() == 1
+      assert_structure()
     end
   end
 end
