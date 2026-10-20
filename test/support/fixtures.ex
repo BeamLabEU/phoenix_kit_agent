@@ -4,8 +4,11 @@ defmodule PhoenixKitAgent.Fixtures do
   test names, AI endpoints and request-journal rows, agent chats.
   """
 
+  import Ecto.Query, only: [from: 2]
+
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.Scope
+  alias PhoenixKit.Users.Auth.SessionRef
   alias PhoenixKit.Users.Permissions
   alias PhoenixKit.Users.Roles
   alias PhoenixKitAgent.Schemas.Conversation
@@ -52,6 +55,25 @@ defmodule PhoenixKitAgent.Fixtures do
 
   @doc "The user's scope, as core builds it for a signed-in session."
   def scope_of(user), do: Scope.for_user(Repo.get!(Auth.User, user.uuid))
+
+  @doc """
+  A live browser session of `user`: the `{session_token_uuid, user_uuid}`
+  reference core's `SessionRef.from_session/1` reads from a LiveView session,
+  and the raw token (to revoke the session with). The user's email is
+  confirmed first (core refuses the session of an unconfirmed account), unless
+  `confirmed: false`.
+  """
+  def session_fixture(user, opts \\ []) do
+    if Keyword.get(opts, :confirmed, true) do
+      Repo.update_all(from(u in Auth.User, where: u.uuid == ^user.uuid),
+        set: [confirmed_at: DateTime.utc_now()]
+      )
+    end
+
+    token = Auth.generate_user_session_token(Repo.get!(Auth.User, user.uuid))
+    {:ok, ref} = SessionRef.from_session(%{"user_token" => token})
+    {ref, token}
+  end
 
   def endpoint_fixture(attrs \\ %{}) do
     {:ok, endpoint} =
