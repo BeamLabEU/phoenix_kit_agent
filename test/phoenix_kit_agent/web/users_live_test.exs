@@ -1,0 +1,416 @@
+defmodule PhoenixKitAgent.Web.UsersLiveTest do
+  @moduledoc """
+  Admin → Agent → Users (spec §7, §10): the people who hold `agent`, with their
+  model, limits, spending and notice flag, and the form that sets one user's
+  settings. Open to `agent.manage` only — on mount and again on every event.
+  """
+
+  use PhoenixKitAgent.LiveCase, async: false
+
+  import Ecto.Query, only: [from: 2]
+
+  alias PhoenixKit.Users.{Permissions, Roles}
+  alias PhoenixKitAgent.Schemas.UserSettings
+
+  @path "/en/admin/agent/users"
+  @stub __MODULE__
+
+  setup do
+    {:ok, _} = PhoenixKitAgent.enable_system()
+    Req.Test.set_req_test_to_shared()
+    Application.put_env(:phoenix_kit_ai, :req_options, plug: {Req.Test, @stub}, retry: false)
+    on_exit(fn -> Application.delete_env(:phoenix_kit_ai, :req_options) end)
+
+    # OpenRouter's listing: one model with tools, one without.
+    Req.Test.stub(@stub, fn conn ->
+      Req.Test.json(conn, %{
+        "data" => [
+          %{"id" => "a/with-tools", "supported_parameters" => ["tools"]},
+          %{"id" => "a/no-tools", "supported_parameters" => ["temperature"]}
+        ]
+      })
+    end)
+
+    :ok
+  end
+
+  defp manager, do: user_with(["agent", "agent.manage"], "manager")
+
+  defp activity do
+    Repo.all(
+      from(a in PhoenixKit.Activity.Entry, where: a.action == "agent.user_settings_updated")
+    )
+  end
+
+  defp spend!(user, endpoint, cost) do
+    Repo.insert!(%PhoenixKitAI.Request{
+      endpoint_uuid: endpoint.uuid,
+      user_uuid: user.uuid,
+      model: endpoint.model,
+      status: "success",
+      cost_cents: cost,
+      metadata: %{"source" => "agent"},
+      inserted_at: DateTime.truncate(DateTime.utc_now(), :second)
+    })
+  end
+
+  describe "with agent.manage: the list" do
+    setup %{conn: conn} do
+      admin = manager()
+      %{conn: log_in(conn, admin), admin: admin}
+    end
+
+    test "lists the people who hold agent, not the others", %{conn: conn, admin: admin} do
+      member = user_with(["agent"], "member")
+      stranger = user_with(["dashboard"], "stranger")
+
+      {:ok, view, _html} = live(conn, @path)
+
+      assert has_element?(view, "#agent-users")
+      assert has_element?(view, "#agent-user-#{member.uuid}")
+      assert has_element?(view, "#agent-user-#{admin.uuid}")
+      refute has_element?(view, "#agent-user-#{stranger.uuid}")
+    end
+
+    test "shows the model, the limits, the spending and the notice flag", %{conn: conn} do
+      member = user_with(["agent"], "member")
+      endpoint = endpoint_fixture(%{name: "Own model", model: "a/with-tools"})
+
+      Repo.insert!(%UserSettings{
+        user_uuid: member.uuid,
+        endpoint_uuid: endpoint.uuid,
+        daily_cost_limit_micro_usd: 250_000,
+        daily_turn_limit: 7,
+        notify_on_limit: true
+      })
+
+      spend!(member, endpoint, 120_000)
+      spend!(member, endpoint, 30_000)
+
+      {:ok, view, _html} = live(conn, @path)
+      row = "#agent-user-#{member.uuid}"
+
+      assert has_element?(view, "#{row}-model", "Own model")
+      assert has_element?(view, "#{row}-limits", "0.25")
+      assert has_element?(view, "#{row}-limits", "10")
+      assert has_element?(view, "#{row}-limits", "7")
+      assert has_element?(view, "#{row}-day", "0.15")
+      assert has_element?(view, "#{row}-month", "0.15")
+      assert has_element?(view, "#{row}-notify[data-on]")
+    end
+
+    test "a user without settings shows the module defaults and no spending", %{conn: conn} do
+      member = user_with(["agent"], "member")
+      default = endpoint_fixture(%{name: "Module model", model: "a/with-tools"})
+      {:ok, _} = PhoenixKit.Settings.update_setting("agent_default_endpoint_uuid", default.uuid)
+
+      {:ok, view, _html} = live(conn, @path)
+      row = "#agent-user-#{member.uuid}"
+
+      assert has_element?(view, "#{row}-model", "Module model")
+      assert has_element?(view, "#{row}-limits", "200")
+      assert has_element?(view, "#{row}-day", "0")
+      refute has_element?(view, "#{row}-notify[data-on]")
+      refute has_element?(view, "#{row}-status[data-off]")
+    end
+
+    test "a user the assistant is switched off for is marked", %{conn: conn} do
+      member = user_with(["agent"], "member")
+      Repo.insert!(%UserSettings{user_uuid: member.uuid, enabled: false})
+
+      {:ok, view, _html} = live(conn, @path)
+
+      assert has_element?(view, "#agent-user-#{member.uuid}-status[data-off]")
+    end
+  end
+
+  describe "with agent.manage: the form" do
+    setup %{conn: conn} do
+      admin = manager()
+      member = user_with(["agent"], "member")
+      with_tools = endpoint_fixture(%{name: "Fast", model: "a/with-tools"})
+      no_tools = endpoint_fixture(%{name: "Plain", model: "a/no-tools"})
+      other = endpoint_fixture(%{name: "Other", provider: "deepseek", model: "deepseek-chat"})
+
+      %{
+        conn: log_in(conn, admin),
+        admin: admin,
+        member: member,
+        with_tools: with_tools,
+        no_tools: no_tools,
+        other: other
+      }
+    end
+
+    defp open(conn, member) do
+      {:ok, view, _html} = live(conn, @path)
+      view |> element("#agent-user-configure-#{member.uuid}") |> render_click()
+      assert has_element?(view, "#agent-user-form")
+      view
+    end
+
+    test "opens for one user with the settings as they are", ctx do
+      Repo.insert!(%UserSettings{
+        user_uuid: ctx.member.uuid,
+        system_prompt: "Be brief.",
+        daily_cost_limit_micro_usd: 500_000,
+        daily_turn_limit: 9
+      })
+
+      view = open(ctx.conn, ctx.member)
+
+      assert has_element?(
+               view,
+               "#agent-user-form textarea[name='user_settings[system_prompt]']",
+               "Be brief."
+             )
+
+      assert has_element?(
+               view,
+               "#agent-user-form input[name='user_settings[daily_turn_limit]'][value='9']"
+             )
+
+      assert has_element?(
+               view,
+               "#agent-user-form input[name='user_settings[daily_cost_limit_usd]'][value='0.5']"
+             )
+
+      assert has_element?(
+               view,
+               "#agent-user-form input[name='user_settings[monthly_cost_limit_usd]'][value='']"
+             )
+    end
+
+    test "the choice is the phoenix_kit_ai endpoints, with the ones without tools marked", ctx do
+      view = open(ctx.conn, ctx.member)
+      option = fn endpoint -> "#agent-user-endpoint option[value='#{endpoint.uuid}']" end
+
+      assert has_element?(view, option.(ctx.with_tools))
+      assert has_element?(view, option.(ctx.no_tools))
+      assert has_element?(view, option.(ctx.other))
+
+      # The listing arrives after the form opens.
+      _ = render_async(view)
+
+      refute has_element?(view, option.(ctx.with_tools), "no tools")
+      assert has_element?(view, option.(ctx.no_tools), "no tools")
+      assert has_element?(view, option.(ctx.other), "unknown")
+    end
+
+    test "saves, records who in Activity, and shows the new values in the list", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      view
+      |> form("#agent-user-form",
+        user_settings: %{
+          endpoint_uuid: ctx.with_tools.uuid,
+          system_prompt: "ADMIN-SECRET-PROMPT",
+          daily_cost_limit_usd: "2,5",
+          daily_turn_limit: "12",
+          notify_on_limit: "true",
+          enabled: ""
+        }
+      )
+      |> render_submit()
+
+      assert has_element?(view, "#flash-info")
+      refute has_element?(view, "#agent-user-form")
+
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+      assert row.endpoint_uuid == ctx.with_tools.uuid
+      assert row.system_prompt == "ADMIN-SECRET-PROMPT"
+      assert row.daily_cost_limit_micro_usd == 2_500_000
+      assert row.daily_turn_limit == 12
+      assert row.notify_on_limit
+      assert row.updated_by_uuid == ctx.admin.uuid
+
+      assert [entry] = activity()
+      assert entry.actor_uuid == ctx.admin.uuid
+      assert entry.target_uuid == ctx.member.uuid
+      refute inspect(entry) =~ "ADMIN-SECRET-PROMPT"
+
+      assert has_element?(view, "#agent-user-#{ctx.member.uuid}-model", "Fast")
+      assert has_element?(view, "#agent-user-#{ctx.member.uuid}-limits", "2.5")
+    end
+
+    test "switching the user off", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      view |> form("#agent-user-form", user_settings: %{enabled: "false"}) |> render_submit()
+
+      assert %UserSettings{enabled: false} = Repo.get!(UserSettings, ctx.member.uuid)
+      assert has_element?(view, "#agent-user-#{ctx.member.uuid}-status[data-off]")
+    end
+
+    test "blank fields go back to the module default", ctx do
+      Repo.insert!(%UserSettings{
+        user_uuid: ctx.member.uuid,
+        endpoint_uuid: ctx.with_tools.uuid,
+        daily_turn_limit: 9
+      })
+
+      view = open(ctx.conn, ctx.member)
+
+      view
+      |> form("#agent-user-form", user_settings: %{endpoint_uuid: "", daily_turn_limit: ""})
+      |> render_submit()
+
+      assert %UserSettings{endpoint_uuid: nil, daily_turn_limit: nil} =
+               Repo.get!(UserSettings, ctx.member.uuid)
+    end
+
+    test "an invalid value is shown as an error and nothing is saved", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      for {field, value} <- [
+            daily_turn_limit: "lots",
+            daily_turn_limit: "-3",
+            daily_cost_limit_usd: "much",
+            monthly_cost_limit_usd: "0,0000001",
+            max_attachment_mb: "1.5"
+          ] do
+        view |> form("#agent-user-form", user_settings: %{field => value}) |> render_submit()
+
+        assert has_element?(view, "#agent-user-form p.text-error"), "#{field}=#{value}"
+      end
+
+      assert Repo.get(UserSettings, ctx.member.uuid) == nil
+      assert activity() == []
+    end
+
+    test "the typed text stays in the form after an error", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      view
+      |> form("#agent-user-form",
+        user_settings: %{system_prompt: "KEEP-THIS", daily_turn_limit: "lots"}
+      )
+      |> render_submit()
+
+      assert has_element?(view, "#agent-user-form textarea", "KEEP-THIS")
+    end
+
+    test "what the form does not offer cannot be written by a forged submit", ctx do
+      stranger = user_with(["agent"], "stranger")
+      view = open(ctx.conn, ctx.member)
+
+      render_hook(view, "save_user", %{
+        "user_settings" => %{
+          "daily_turn_limit" => "4",
+          "personal_instructions" => "FORGED",
+          "busy_turn_ref" => "forged",
+          "busy_since" => "2026-01-01T00:00:00Z",
+          "updated_by_uuid" => stranger.uuid,
+          "notify_user_uuids" => [stranger.uuid],
+          "user_uuid" => stranger.uuid
+        },
+        "user_uuid" => stranger.uuid
+      })
+
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+      assert row.daily_turn_limit == 4
+      assert row.personal_instructions == nil
+      assert row.busy_turn_ref == nil
+      assert row.busy_since == nil
+      assert row.updated_by_uuid == ctx.admin.uuid
+      assert row.notify_user_uuids == []
+      assert Repo.get(UserSettings, stranger.uuid) == nil
+    end
+
+    test "an endpoint that was not offered is refused", ctx do
+      tts = endpoint_fixture(%{name: "Voice", model: "a/some-tts"})
+      view = open(ctx.conn, ctx.member)
+
+      render_hook(view, "save_user", %{"user_settings" => %{"endpoint_uuid" => tts.uuid}})
+      assert Repo.get(UserSettings, ctx.member.uuid) == nil
+
+      render_hook(view, "save_user", %{
+        "user_settings" => %{"endpoint_uuid" => Ecto.UUID.generate()}
+      })
+
+      assert Repo.get(UserSettings, ctx.member.uuid) == nil
+      assert has_element?(view, "#agent-user-form p.text-error")
+    end
+
+    test "a user without the agent permission cannot be opened or saved", ctx do
+      stranger = user_with(["dashboard"], "stranger")
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      render_hook(view, "configure", %{"user" => stranger.uuid})
+      refute has_element?(view, "#agent-user-form")
+
+      render_hook(view, "save_user", %{"user_settings" => %{"daily_turn_limit" => "1"}})
+      assert Repo.get(UserSettings, stranger.uuid) == nil
+
+      render_hook(view, "configure", %{"user" => "nonsense"})
+      refute has_element?(view, "#agent-user-form")
+    end
+
+    test "events without their fields change nothing and do not crash", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      render_hook(view, "save_user", %{})
+      render_hook(view, "save_user", %{"user_settings" => %{"daily_turn_limit" => "1"}})
+      render_hook(view, "configure", %{})
+      render_hook(view, "cancel", %{})
+
+      assert has_element?(view, "#agent-users")
+      assert Repo.aggregate(UserSettings, :count) == 0
+    end
+
+    test "cancel closes the form", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      view |> element("#agent-user-cancel") |> render_click()
+
+      refute has_element?(view, "#agent-user-form")
+    end
+
+    test "agent.manage is checked again at every submit", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      [role] =
+        ctx.admin
+        |> Roles.get_user_roles()
+        |> Enum.reject(&(&1 in ["Owner", "Admin", "User"]))
+        |> Enum.map(&Roles.get_role_by_name/1)
+
+      :ok = Permissions.revoke_permission(role.uuid, "agent.manage")
+
+      view |> form("#agent-user-form", user_settings: %{daily_turn_limit: "1"}) |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      assert Repo.get(UserSettings, ctx.member.uuid) == nil
+      assert activity() == []
+    end
+
+    test "nor does a revoked right let the form open", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      [role] =
+        ctx.admin
+        |> Roles.get_user_roles()
+        |> Enum.reject(&(&1 in ["Owner", "Admin", "User"]))
+        |> Enum.map(&Roles.get_role_by_name/1)
+
+      :ok = Permissions.revoke_permission(role.uuid, "agent.manage")
+
+      render_hook(view, "configure", %{"user" => ctx.member.uuid})
+
+      refute has_element?(view, "#agent-user-form")
+    end
+  end
+
+  describe "without agent.manage" do
+    test "the page does not open for a user who only uses the assistant", %{conn: conn} do
+      conn = log_in(conn, user_with(["agent"], "user"))
+
+      assert {:error, {:live_redirect, %{to: to}}} = live(conn, @path)
+      refute to =~ "agent/users"
+    end
+
+    test "nobody signed in is sent away", %{conn: conn} do
+      assert {:error, {:live_redirect, _}} = live(conn, @path)
+    end
+  end
+end

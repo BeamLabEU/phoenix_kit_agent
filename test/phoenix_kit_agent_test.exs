@@ -69,6 +69,21 @@ defmodule PhoenixKitAgentTest do
       assert tab.live_view == {PhoenixKitAgent.Web.SettingsLive, :index}
     end
 
+    test "admin_tabs/0: Admin → Agent, with Users under it, both under agent.manage" do
+      assert [parent, users] = PhoenixKitAgent.admin_tabs()
+
+      assert parent.id == :admin_agent
+      assert parent.path == "agent"
+      assert parent.permission == "agent.manage"
+      assert parent.redirect_to_first_subtab
+
+      assert users.parent == :admin_agent
+      assert users.path == "agent/users"
+      assert users.level == :admin
+      assert users.permission == "agent.manage"
+      assert users.live_view == {PhoenixKitAgent.Web.UsersLive, :index}
+    end
+
     test "before_user_delete/1 is defined" do
       assert function_exported?(PhoenixKitAgent, :before_user_delete, 1)
     end

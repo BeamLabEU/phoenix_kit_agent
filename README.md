@@ -16,9 +16,36 @@ library for attachments and the cleanup when a user is deleted; the chats and
 their messages (`PhoenixKitAgent.Conversations` — session-bound, owner-only,
 with a PubSub topic per chat) and the read-only turn loop
 (`PhoenixKitAgent.Turns` — locks, rounds of model and tool calls over the
-session's own read tools, stop and deadline). Not built yet: the chat panel
-(Dock), per-user settings screens, spending and turn limits, and attachment
-processing.
+session's own read tools, stop and deadline), the per-user settings
+(`PhoenixKitAgent.UserConfig` — the user's own value, else the module default:
+the model, the admin's prompt, the limits, the on/off switch and the personal
+instructions), the system prompt put together in the order of priority
+(`PhoenixKitAgent.Prompt`) and Admin → AI Agent → Users, where an admin with
+`agent.manage` sees every user's model, limits and spending and sets them. Not
+built yet: the chat panel (Dock), enforcing the spending and turn limits and
+the notices about them, and attachment processing.
+
+## Configuration
+
+```elixir
+# Optional: text the host adds to the assistant's system prompt (what an order
+# is, the statuses, the language of the answer). `Mod.fun(%{user_uuid:, locale:})`
+# when exported with one argument, else `Mod.fun()`; returns a string or nil.
+# An exception or a result that is not a string skips the addendum.
+config :phoenix_kit_agent, prompt_addendum: {MyApp.Agent, :prompt}
+```
+
+The system prompt of a turn is, in this order: the module's prompt (Settings →
+AI Agent), the host's addendum, the admin's prompt for the user, the user's
+personal instructions (marked as ranking below the rest), and the context of the
+session — the user's name, the role the session acts as, the locale, the date
+and time in the site time zone and, if the host passes `page:` to
+`PhoenixKitAgent.Turns.start/6`, the page path (and an order number, if given).
+
+The Settings page has one switch only an Owner can change,
+`agent_capture_ai_content`: when on, the bodies of the assistant's requests are
+written to the AI request journal and every holder of the `ai` permission reads
+them on `/admin/ai/usage`.
 
 ## Installation
 

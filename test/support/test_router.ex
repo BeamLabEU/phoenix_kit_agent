@@ -17,13 +17,14 @@ defmodule PhoenixKitAgent.Test.Router do
     plug(:protect_from_forgery)
   end
 
-  scope "/en/admin/settings", PhoenixKitAgent.Web do
+  scope "/en/admin", PhoenixKitAgent.Web do
     pipe_through(:browser)
 
     live_session :agent_test,
       layout: {PhoenixKitAgent.Test.Layouts, :app},
       on_mount: {PhoenixKitAgent.Test.Hooks, :assign_scope} do
-      live("/agent", SettingsLive, :index)
+      live("/settings/agent", SettingsLive, :index)
+      live("/agent/users", UsersLive, :index)
     end
   end
 end

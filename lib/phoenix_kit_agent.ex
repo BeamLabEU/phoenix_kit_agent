@@ -114,6 +114,40 @@ defmodule PhoenixKitAgent do
   end
 
   @impl PhoenixKit.Module
+  def admin_tabs do
+    [
+      Tab.new!(
+        id: :admin_agent,
+        label: "AI Agent",
+        gettext_backend: PhoenixKitAgent.Gettext,
+        icon: "hero-sparkles",
+        path: "agent",
+        priority: 650,
+        level: :admin,
+        permission: "agent.manage",
+        match: :prefix,
+        group: :admin_modules,
+        subtab_display: :when_active,
+        highlight_with_subtabs: false,
+        redirect_to_first_subtab: true
+      ),
+      Tab.new!(
+        id: :admin_agent_users,
+        label: "Users",
+        gettext_backend: PhoenixKitAgent.Gettext,
+        icon: "hero-users",
+        path: "agent/users",
+        priority: 651,
+        level: :admin,
+        permission: "agent.manage",
+        parent: :admin_agent,
+        match: :exact,
+        live_view: {PhoenixKitAgent.Web.UsersLive, :index}
+      )
+    ]
+  end
+
+  @impl PhoenixKit.Module
   def settings_tabs do
     [
       Tab.new!(
