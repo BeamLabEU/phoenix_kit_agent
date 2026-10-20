@@ -98,8 +98,8 @@ defmodule PhoenixKitAgent.MixProject do
 
       # Model calls, endpoints, credentials, budget and the request journal
       # come from phoenix_kit_ai; this module only adds the chat layer.
-      # Integration pin until release: the timujinne fork's
-      # integration/andi-2026-10 branch (upstream + #38, tool calling).
+      # Integration pin until release: the fork's integration branch
+      # (upstream + #38, tool calling).
       pk_dep(:phoenix_kit_ai,
         git: "https://github.com/timujinne/phoenix_kit_ai.git",
         ref: "06cc9ff9c8030e73bac47748cb07350617aa14f6",
