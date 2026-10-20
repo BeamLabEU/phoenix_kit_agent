@@ -22,7 +22,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
   alias PhoenixKit.Users.Roles
   alias PhoenixKitAgent.{Config, Conversations, UserConfig}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message, UserSettings}
-  alias PhoenixKitAgent.Test.{Files, LogProbe, Tools}
+  alias PhoenixKitAgent.Test.{Endpoint, Files, LogProbe, Tools}
   alias PhoenixKitAgent.Web.Dock
 
   @stub __MODULE__
@@ -55,7 +55,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
     {:ok, _} = Roles.assign_role(user, role.name)
     {ref, token} = session_fixture(user)
 
-    %{conn: conn, user: user, ref: ref, token: token}
+    %{conn: conn, user: user, role: role, ref: ref, token: token}
   end
 
   # ── helpers ─────────────────────────────────────────────────────────
@@ -63,11 +63,12 @@ defmodule PhoenixKitAgent.Web.DockTest do
   defp dock(ctx, opts \\ []) do
     cookie = Keyword.get(opts, :cookie, %{"user_token" => ctx.token})
     user_uuid = Keyword.get(opts, :user_uuid, ctx.user.uuid)
+    locale = Keyword.get(opts, :locale, "en")
 
     {:ok, view, _html} =
       ctx.conn
       |> Plug.Test.init_test_session(cookie)
-      |> live_isolated(Dock, session: %{"user_uuid" => user_uuid, "locale" => "en"})
+      |> live_isolated(Dock, session: %{"user_uuid" => user_uuid, "locale" => locale})
 
     view
   end
@@ -76,11 +77,11 @@ defmodule PhoenixKitAgent.Web.DockTest do
     view |> element("#pk-agent-chat-#{chat.uuid} [data-role=open]") |> render_click()
   end
 
-  defp send_text(view, text) do
+  defp send_text(view, text, page \\ "/en/admin/orders/7") do
     # The page is set by the `.Composer` hook in a browser, as the form goes.
     view
     |> form("#pk-agent-composer", message: %{text: text})
-    |> render_submit(%{message: %{page: "/en/admin/orders/7"}})
+    |> render_submit(%{message: %{page: page}})
   end
 
   defp text_answer(text) do
@@ -186,6 +187,9 @@ defmodule PhoenixKitAgent.Web.DockTest do
   end
 
   defp at(seconds_ago), do: DateTime.add(DateTime.utc_now(), -seconds_ago, :second)
+
+  # The chat topics the panel's process listens to.
+  defp subscriptions(view), do: Registry.keys(:phoenix_kit_internal_pubsub, view.pid)
 
   # ── the header widget ───────────────────────────────────────────────
 
@@ -345,15 +349,57 @@ defmodule PhoenixKitAgent.Web.DockTest do
       refute has_element?(view, "#pk-agent-more-chats")
     end
 
-    test "a new chat goes to the top and is opened", ctx do
-      conversation_fixture(ctx.user, %{title: "Old one"})
+    test "New chat writes nothing until the first message, which makes the chat", ctx do
+      old = conversation_fixture(ctx.user, %{title: "Old one"})
       view = dock(ctx)
+      open_chat(view, old)
 
       view |> element("#pk-agent-new-chat") |> render_click()
 
-      assert [new] = Enum.filter(chats_of(ctx.user), &is_nil(&1.title))
+      assert [%Conversation{title: "Old one"}] = chats_of(ctx.user)
+      refute has_element?(view, "#pk-agent-panel[data-conversation]")
+      assert subscriptions(view) == []
+
+      answer_next(text_answer("Hello."))
+      send_text(view, "A fresh question")
+      eventually(view, &(&1 =~ "Hello."))
+
+      assert [new] = Enum.filter(chats_of(ctx.user), &(&1.uuid != old.uuid))
       assert hd(chat_ids(render(view))) == "pk-agent-chat-#{new.uuid}"
       assert has_element?(view, "#pk-agent-panel[data-conversation='#{new.uuid}']")
+    end
+
+    test "the title of a new chat and the order of the list follow its messages", ctx do
+      older = conversation_fixture(ctx.user, %{title: "Older"})
+      older |> Ecto.Changeset.change(last_message_at: at(600)) |> Repo.update!()
+      newer = conversation_fixture(ctx.user, %{title: "Newer"})
+      newer |> Ecto.Changeset.change(last_message_at: at(60)) |> Repo.update!()
+
+      view = dock(ctx)
+
+      assert chat_ids(render(view)) == [
+               "pk-agent-chat-#{newer.uuid}",
+               "pk-agent-chat-#{older.uuid}"
+             ]
+
+      open_chat(view, older)
+      answer_next(text_answer("Fine."))
+      send_text(view, "Back to this one")
+      eventually(view, &(&1 =~ "Fine."))
+
+      assert chat_ids(render(view)) == [
+               "pk-agent-chat-#{older.uuid}",
+               "pk-agent-chat-#{newer.uuid}"
+             ]
+
+      view |> element("#pk-agent-new-chat") |> render_click()
+      answer_next(text_answer("Sure."))
+      send_text(view, "Name me by this")
+      eventually(view, &(&1 =~ "Sure."))
+
+      assert has_element?(view, "#pk-agent-panel h2", "Name me by this")
+      [top | _] = chat_ids(render(view))
+      assert has_element?(view, "##{top}", "Name me by this")
     end
 
     test "renames and archives the user's own chat", ctx do
@@ -441,6 +487,11 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert [%Message{role: "user"}, %Message{role: "assistant"}] = messages(ctx.chat)
     end
 
+    test "the input is left to the browser, so a re-render never wipes a draft", ctx do
+      view = dock(ctx)
+      assert has_element?(view, "#pk-agent-input[phx-update=ignore]")
+    end
+
     test "a message without an open chat makes one", ctx do
       view = dock(ctx)
       answer_next(text_answer("Hi"))
@@ -500,6 +551,99 @@ defmodule PhoenixKitAgent.Web.DockTest do
       send_text(view, "Now?")
       assert has_element?(view, "#pk-agent-dock-error")
       refute render(view) =~ "conversation_busy"
+      # The turn that holds the chat is shown, so the Stop the text speaks of is there.
+      assert has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-waiting")
+    end
+
+    test "a second send while the turn runs is let go without a word", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      hang_next()
+
+      send_text(view, "First")
+      assert_receive {:model_waiting, _}, 3_000
+
+      send_text(view, "Second")
+
+      refute has_element?(view, "#pk-agent-dock-error")
+      assert [%Message{role: "user", content: "First"}] = messages(ctx.chat)
+    end
+
+    test "a page that is not a path of the site never reaches the model", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      answer_next(text_answer("Ok."))
+
+      send_text(view, "Where am I?", "https://evil.example/phish")
+      eventually(view, &(&1 =~ "Ok."))
+
+      assert_received {:model_request, body}
+      refute Jason.encode!(body) =~ "evil.example"
+    end
+
+    test "the tools get the language and the address of the site as their context", ctx do
+      Application.put_env(:phoenix_kit_agent, :test_tool_listener, self())
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :test_tool_listener) end)
+
+      view = dock(ctx, locale: "et")
+      open_chat(view, ctx.chat)
+
+      answer_next(
+        tool_answer([
+          %{
+            "id" => "c1",
+            "type" => "function",
+            "function" => %{"name" => "agenttest_list_items", "arguments" => "{}"}
+          }
+        ])
+      )
+
+      answer_next(text_answer("Done."))
+      send_text(view, "List them")
+
+      assert_receive {:agent_test_tool, "agenttest.list_items", _input, tool_ctx}, 3_000
+      assert tool_ctx.language == "et"
+      assert tool_ctx.base_url == Endpoint.url()
+      eventually(view, &(&1 =~ "Done."))
+    end
+
+    test "a send while a file is still read waits for it, and makes no turn", ctx do
+      Repo.insert!(%Attachment{
+        conversation_uuid: ctx.chat.uuid,
+        user_uuid: ctx.user.uuid,
+        filename: "slow.pdf",
+        content_type: "application/pdf",
+        size_bytes: 10,
+        kind: "pdf",
+        status: "pending",
+        truncated: false
+      })
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      send_text(view, "Read it")
+
+      assert has_element?(view, "#pk-agent-dock-error", "Wait until the files are read.")
+      assert messages(ctx.chat) == []
+      assert lock_of(ctx.chat) == {nil, nil}
+    end
+
+    test "a send while a file is still uploading waits for it", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      view
+      |> file_input("#pk-agent-composer", :files, [
+        %{name: "half.txt", content: String.duplicate("a", 4_000), type: "text/plain"}
+      ])
+      |> render_upload("half.txt", 50)
+
+      send_text(view, "Now")
+
+      assert has_element?(view, "#pk-agent-dock-error", "Wait until the files are read.")
+      assert messages(ctx.chat) == []
     end
 
     test "an exception at the start does not take the panel down", ctx do
@@ -509,10 +653,11 @@ defmodule PhoenixKitAgent.Web.DockTest do
       # The monitor's handshake time is read as the turn starts.
       Application.put_env(:phoenix_kit_agent, :turn_handshake_ms, :not_a_number)
 
+      monitor = Process.monitor(view.pid)
       send_text(view, "Break it")
 
-      assert Process.alive?(view.pid)
       assert has_element?(view, "#pk-agent-dock-error")
+      refute_received {:DOWN, ^monitor, :process, _, _}
       assert lock_of(ctx.chat) == {nil, nil}
       refute render(view) =~ "ArithmeticError"
     end
@@ -598,6 +743,22 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert has_element?(view, "#pk-agent-waiting")
       assert messages(chat) == []
     end
+
+    test "Stop on a turn that runs nowhere says so, instead of leaving a dead end", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Gone"})
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: UUIDv7.generate()]
+      )
+
+      view = dock(ctx)
+      open_chat(view, chat)
+      view |> element("#pk-agent-stop") |> render_click()
+
+      refute has_element?(view, "#pk-agent-stop")
+      refute has_element?(view, "#pk-agent-waiting")
+      assert has_element?(view, "#pk-agent-dock-error", "no longer running")
+    end
   end
 
   # ── attachments ────────────────────────────────────────────────────
@@ -618,6 +779,15 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
     defp attachments_of(chat) do
       Repo.all(from(a in Attachment, where: a.conversation_uuid == ^chat.uuid))
+    end
+
+    defp upload_refs(html) do
+      html
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("#pk-agent-attachments li[id^=pk-agent-upload-]")
+      |> Enum.map(fn node ->
+        node |> LazyHTML.attribute("id") |> hd() |> String.replace_prefix("pk-agent-upload-", "")
+      end)
     end
 
     test "a file is added to the open chat, read, and goes with the message", ctx do
@@ -654,6 +824,49 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert attachments_of(ctx.chat) == []
     end
 
+    test "a cancel of an upload that is not there changes nothing", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      monitor = Process.monitor(view.pid)
+
+      input =
+        file_input(view, "#pk-agent-composer", :files, [
+          %{name: "half.txt", content: String.duplicate("a", 4_000), type: "text/plain"}
+        ])
+
+      render_upload(input, "half.txt", 50)
+      [entry_ref] = view |> render() |> upload_refs()
+
+      render_click(view, "cancel_upload", %{"ref" => "nope"})
+      render_click(view, "cancel_upload", %{"ref" => entry_ref})
+      render_click(view, "cancel_upload", %{"ref" => entry_ref})
+
+      refute has_element?(view, "#pk-agent-upload-#{entry_ref}")
+      refute_received {:DOWN, ^monitor, :process, _, _}
+      assert attachments_of(ctx.chat) == []
+    end
+
+    test "an exception while a file is added is a notice; nothing of it is logged", ctx do
+      secret = "Secret-#{System.unique_integer([:positive])}"
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      monitor = Process.monitor(view.pid)
+
+      # The bounds are read as the file is added: a malformed override raises there.
+      Application.put_env(:phoenix_kit_agent, :attachment_limits, secret)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :attachment_limits) end)
+
+      {_, logs} =
+        LogProbe.capture(fn ->
+          upload(view, "File-#{secret}.txt", "text", "text/plain")
+          eventually(view, &(&1 =~ "pk-agent-dock-error"))
+        end)
+
+      refute_received {:DOWN, ^monitor, :process, _, _}
+      for line <- logs, do: refute(line =~ secret, "leaked to the log: " <> line)
+      refute Enum.any?(logs, &(&1 =~ "FunctionClauseError" and &1 =~ "Keyword"))
+    end
+
     test "a failed file is shown with its reason and can be discarded", ctx do
       view = dock(ctx)
       open_chat(view, ctx.chat)
@@ -680,6 +893,140 @@ defmodule PhoenixKitAgent.Web.DockTest do
       view |> element("#pk-agent-discard-#{failed.uuid}") |> render_click()
       refute has_element?(view, "#pk-agent-att-#{failed.uuid}")
       assert attachments_of(ctx.chat) == []
+    end
+  end
+
+  # ── the feed and its chat ──────────────────────────────────────────
+
+  describe "the feed" do
+    setup ctx do
+      %{chat: conversation_fixture(ctx.user, %{title: "Here"})}
+    end
+
+    defp turn_message!(chat, attrs) do
+      {:ok, message} = Conversations.add_turn_message(chat.user_uuid, chat.uuid, attrs)
+      message
+    end
+
+    test "only the open chat is listened to", ctx do
+      other = conversation_fixture(ctx.user, %{title: "There"})
+      view = dock(ctx)
+
+      open_chat(view, ctx.chat)
+      assert subscriptions(view) == [Conversations.topic(ctx.chat.uuid)]
+
+      open_chat(view, other)
+      assert subscriptions(view) == [Conversations.topic(other.uuid)]
+
+      view |> element("#pk-agent-archive-#{other.uuid}") |> render_click()
+      assert subscriptions(view) == []
+    end
+
+    test "a message of another of the user's chats does not enter the feed", ctx do
+      other = conversation_fixture(ctx.user, %{title: "There"})
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      elsewhere = turn_message!(other, %{role: "assistant", content: "Words from elsewhere"})
+      send(view.pid, {:agent_message_added, other.uuid, elsewhere.uuid})
+
+      refute render(view) =~ "Words from elsewhere"
+    end
+
+    test "the end of another turn, or of a turn in another chat, keeps the indicator", ctx do
+      other = conversation_fixture(ctx.user, %{title: "There"})
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      hang_next()
+
+      send_text(view, "Wait")
+      assert_receive {:model_waiting, _}, 3_000
+      {_since, turn_ref} = lock_of(ctx.chat)
+
+      send(view.pid, {:agent_turn_finished, ctx.chat.uuid, UUIDv7.generate()})
+      send(view.pid, {:agent_turn_finished, other.uuid, turn_ref})
+
+      assert has_element?(view, "#pk-agent-waiting")
+      assert has_element?(view, "#pk-agent-stop")
+    end
+
+    test "a message committed out of order is still shown", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      shown = turn_message!(ctx.chat, %{role: "assistant", content: "Shown first"})
+      send(view.pid, {:agent_message_added, ctx.chat.uuid, shown.uuid})
+      eventually(view, &(&1 =~ "Shown first"))
+
+      # Written before the shown one, committed after it.
+      late = turn_message!(ctx.chat, %{role: "assistant", content: "Late but here"})
+
+      Repo.update_all(from(m in Message, where: m.uuid == ^late.uuid),
+        set: [inserted_at: DateTime.add(shown.inserted_at, -5, :second)]
+      )
+
+      send(view.pid, {:agent_message_added, ctx.chat.uuid, late.uuid})
+      eventually(view, &(&1 =~ "Late but here"))
+    end
+
+    test "a long chat opens at its end; the earlier messages come on request", ctx do
+      for n <- 1..60, do: turn_message!(ctx.chat, %{role: "notice", content: "Note #{n}."})
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      notes = fn ->
+        render(view)
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("#pk-agent-feed [data-role=notice]")
+        |> Enum.map(&LazyHTML.text/1)
+        |> Enum.map(&String.trim/1)
+      end
+
+      shown = notes.()
+      assert length(shown) < 60
+      assert List.last(shown) == "Note 60."
+      refute "Note 1." in shown
+
+      view |> element("#pk-agent-earlier") |> render_click()
+
+      assert notes.() == Enum.map(1..60, &"Note #{&1}.")
+      refute has_element?(view, "#pk-agent-earlier")
+    end
+  end
+
+  # ── a session that changes under the panel ─────────────────────────
+
+  describe "a session that ends or loses the right after the mount" do
+    setup ctx do
+      %{chat: conversation_fixture(ctx.user, %{title: "Kept"})}
+    end
+
+    test "a revoked session gets nothing more", ctx do
+      view = dock(ctx)
+      assert has_element?(view, "#pk-agent-chat-#{ctx.chat.uuid}")
+
+      :ok = Auth.delete_user_session_token(ctx.token)
+
+      open_chat(view, ctx.chat)
+      refute has_element?(view, "#pk-agent-panel[data-conversation]")
+      assert has_element?(view, "#pk-agent-dock-error")
+
+      send_text(view, "Still there?")
+      assert [%Conversation{uuid: uuid}] = chats_of(ctx.user)
+      assert uuid == ctx.chat.uuid
+      assert messages(ctx.chat) == []
+    end
+
+    test "a right taken away refuses the next event", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      :ok = Permissions.revoke_permission(ctx.role.uuid, "agent")
+
+      send_text(view, "May I?")
+      assert has_element?(view, "#pk-agent-dock-error")
+      assert messages(ctx.chat) == []
     end
   end
 

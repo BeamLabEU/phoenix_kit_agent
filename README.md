@@ -40,14 +40,19 @@ panel on the right, about 400 px wide (it can be dragged wider), which narrows
 the page; on a phone it takes the whole screen. The panel has the feed, the
 input with a paper clip for files, "Stop", an indicator of what the assistant
 is doing (thinking / calling a tool), and a small form for the user's own
-personal instructions. Open or closed, the chosen chat and the width are kept
-in the browser (`localStorage`) and come back after a navigation or a reload.
+personal instructions. "New chat" empties the panel; the chat is made with its
+first message or file, and takes its title from that message. A long chat opens
+at its end, with "Earlier messages" above. Open or closed, the chosen chat and
+the width are kept in the browser (`localStorage`) and come back after a
+navigation or a reload; the text being written is never wiped by an update of
+the panel.
 
 What the panel shows of a chat: the user's messages, the model's answers as
 markdown without anything that loads by itself — no `<img>` with an outside
 address (a picture in an answer is its alt text), no raw HTML, every link
 opening in a new tab with `rel="noopener noreferrer nofollow"` and its domain
-written beside it — the notices, and each tool call folded to its summary (the
+written beside it (an address whose host is not plain ASCII is written as text,
+not linked) — the notices, and each tool call folded to its summary (the
 tool, the outcome, how many it found), never what the tool returned. A chat
 whose turn was lost with its node (a restart) gets the notice "the answer was
 interrupted" when it is opened, and is free again.
@@ -60,6 +65,9 @@ user. It does not log events (LiveView would log their parameters, the user's
 text). The panel's classes come from the module's sources (`css_sources/0`),
 and its browser hooks are runtime colocated hooks, so the host bundles nothing
 for it; it needs core's admin layout with header widgets and the dock column.
+The tools called from the panel get the user's locale and the endpoint's URL as
+their request context, and the client address only when the host's LiveView
+socket passes `:peer_data` and `:x_headers` in its `connect_info`.
 
 ## Attachments
 

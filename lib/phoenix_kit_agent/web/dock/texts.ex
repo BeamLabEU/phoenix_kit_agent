@@ -58,6 +58,13 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
     do: gettext("You have used all your assistant turns for today.")
 
   def refusal(:not_running), do: gettext("Nothing is running in this chat.")
+
+  def refusal(:turn_lost),
+    do:
+      gettext(
+        "This answer is no longer running here. The chat will be free again in a few minutes."
+      )
+
   def refusal(:files_pending), do: gettext("Wait until the files are read.")
 
   def refusal(reason) when reason in [:file_unreadable, :empty_file],

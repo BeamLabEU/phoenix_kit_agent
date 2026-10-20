@@ -37,7 +37,8 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
 (`PhoenixKitAgent.Attachments` with `Attachments.Detect`, `Extract`, `Processor`,
 `Cmd`, `Bounds`, `Unzip`, `Jpeg`, `Work`) and the chat panel
 (`PhoenixKitAgent.Web.Dock`, the module's header widget, with
-`Web.Dock.Components`, `Web.Dock.Texts` and `Web.Markdown`).
+`Web.Dock.Panel` (markup and hooks), `Web.Dock.Components`, `Web.Dock.Texts`
+and `Web.Markdown`).
 
 - **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins to the
   `timujinne` forks' `integration/andi-2026-10` branches (the session-actor API,
@@ -105,9 +106,13 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
   The LiveView runs with `log: false` (event parameters are the user's text);
   an exception at a turn's start is caught and logged as its class only. The
   path given to `Attachments.add/4` is LiveView's own upload file
-  (`consume_uploaded_entry/3` with `:postpone` until `add/4` is done). Browser
-  hooks are runtime colocated hooks (`runtime` attribute), since a dependency's
-  extracted hooks would not reach the host's bundle.
+  (`consume_uploaded_entry/3` with `:postpone` until `add/4` is done), and
+  `add/4` runs in its task under a guard that logs only the exception's class.
+  Browser hooks are runtime colocated hooks (`runtime` attribute), since a
+  dependency's extracted hooks would not reach the host's bundle; they live in
+  `Web.Dock.Panel` with the elements that use them (a colocated hook is named
+  after its module). An element a hook owns is `phx-update="ignore"` (the
+  composer's textarea).
 - **Prompt input from a browser** (`page:`, `locale:` of `Turns.start/6`) is
   untrusted: `PhoenixKitAgent.Prompt` drops a value with a control character and
   cuts a long one.

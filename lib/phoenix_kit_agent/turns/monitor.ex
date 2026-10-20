@@ -167,7 +167,12 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   defp handshake_ms,
     do: Application.get_env(:phoenix_kit_agent, :turn_handshake_ms, @handshake_ms)
 
-  defp stop_grace_ms,
+  @doc """
+  The grace period, in ms, a task asked to stop has before it is killed
+  (`:turn_stop_grace_ms`, default 30 s).
+  """
+  @spec stop_grace_ms() :: non_neg_integer()
+  def stop_grace_ms,
     do: Application.get_env(:phoenix_kit_agent, :turn_stop_grace_ms, @stop_grace_ms)
 
   @doc """
