@@ -169,12 +169,16 @@ cover descriptions at all (only the turn limit and the `phoenix_kit_ai` budget
 stop them): such an endpoint reports no cost to count.
 
 The limits are checked when a turn starts; a turn that started under them runs
-to its end. A limit used up refuses the turn with a notice in the chat. The
+to its end. A limit used up refuses the turn with a notice in the chat (one per
+chat, limit and period, however often the user tries again). Money counts every
+journal row with a cost, a failed call's included. The
 user is told in the app at 80 % of a limit and when it is reached; the
 watchers (setting `agent_limit_watchers`, empty meaning every Owner, plus the
 user's own `notify_user_uuids`) get a notification of type `agent_limit` when
 the user's `notify_on_limit` is on, and whenever the `phoenix_kit_ai` budget
-refuses the user's assistant — each at most once per limit and period.
+refuses the user's assistant — each at most once per limit and period; with
+`notify_on_limit` switched on later in a period, the watchers still hear of
+that period.
 
 "Stop" and the turn deadline ask the turn to stop between its steps, so a model
 call under way finishes and its cost reaches the journal; a turn still running
@@ -195,8 +199,14 @@ The system prompt of a turn is, in this order: the module's prompt (Settings →
 AI Agent), the host's addendum, the admin's prompt for the user, the user's
 personal instructions (marked as ranking below the rest), and the context of the
 session — the user's name, the role the session acts as, the locale, the date
-and time in the site time zone and, if the host passes `page:` to
+(not the time, so the prompt stays cacheable) in the site time zone and, if the
+host passes `page:` to
 `PhoenixKitAgent.Turns.start/6`, the page path (and an order number, if given).
+
+The admin pages check every event against the scope of the browser session
+as it is now — the role it acts as, a logout — not the user's default role. An
+Owner's assistant settings are changed by an Owner only, and a settings form
+opened before another admin's save does not overwrite it.
 
 The Settings page has one switch only an Owner can change,
 `agent_capture_ai_content`: when on, the bodies of the assistant's requests are

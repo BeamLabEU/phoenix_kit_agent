@@ -24,7 +24,7 @@ defmodule PhoenixKitAgent.UserConfig do
       revoked one, a user without `agent` or one switched off is refused. The
       write replaces that one column, so nothing an admin set can change
       through it.
-    * An admin — `admin_update/3`, with the scope of a person who holds
+    * An admin — `admin_update/4`, with the scope of a person who holds
       `agent.manage` (checked again here, so a caller that forgets is refused).
       It writes the switch, the model, the admin's prompt, the limits and the
       notice flags (`UserSettings.admin_changeset/2`) and records who changed

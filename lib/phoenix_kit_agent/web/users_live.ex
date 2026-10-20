@@ -4,7 +4,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   the model they use, their limits, what they spent today and this month and
   whether a limit being hit is reported — and a form to set one user's
   settings (the switch, the model, the admin's prompt, the limits, the notice
-  flag; `PhoenixKitAgent.UserConfig.admin_update/3`).
+  flag; `PhoenixKitAgent.UserConfig.admin_update/4`).
 
   Needs `agent.manage`. The tab is registered under that key; the page checks
   it again on mount and on every event that opens or saves a form, against the

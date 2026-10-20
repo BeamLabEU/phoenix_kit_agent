@@ -22,7 +22,7 @@ Settings → AI Agent page (`PhoenixKitAgent.Config`,
 only the user's text and never reads raw tool results) and the read-only turn
 loop (`PhoenixKitAgent.Turns` with `Turns.Monitor`, `Runner`, `Locks`, `Tools`),
 the per-user settings (`PhoenixKitAgent.UserConfig`: `effective/1` is the one
-place a turn reads them — user value, else module default; `admin_update/3`
+place a turn reads them — user value, else module default; `admin_update/4`
 for an admin with `agent.manage`, which logs field names to Activity;
 `put_personal_instructions/3` for the user's own text), the system prompt
 (`PhoenixKitAgent.Prompt`, spec §7.1, with the host's `prompt_addendum`), the
@@ -51,15 +51,23 @@ and `Web.Markdown`).
 - **Permissions:** `agent` (use the assistant) and `agent.manage` (defaults,
   other users' settings, spending; core auto-grants it to Admin). Do not add an
   `agent.view_all`: it would be auto-granted to Admin too.
-- **Admin pages:** every event re-checks the permission against fresh scopes
-  (`PhoenixKitAgent.Web.Access`): `agent.manage` for the Users page and the
+- **Admin pages:** every event re-checks the permission against the socket's
+  scope and the scope of the session as it is now
+  (`PhoenixKitAgent.Web.Access`: `assign_session/2` in mount takes the session
+  reference in the connected mount; `session_scope/1` is
+  `SessionRef.scope_for_session/2` — the session's active role, never a scope
+  rebuilt from the user by uuid): `agent.manage` for the Users page and the
   Settings page, and `Scope.owner?` — not just the tab's `agent.manage`, which
-  an Admin holds — for `agent_capture_ai_content`. A form takes only the fields
-  it offers; the user being edited is the one the server opened, never a
-  submitted uuid.
+  an Admin holds — for `agent_capture_ai_content` and for changing an Owner's
+  settings. A form takes only the fields it offers; the user being edited is
+  the one the server opened, never a submitted uuid; a save is refused when
+  the shown values changed since the form opened (`admin_update/4`,
+  `expected:`). Pages keep endpoints as `Models.summary/1`, never the row
+  with its API key.
 - **Money and turns:** money only from the AI journal (`user_uuid` +
   `metadata.source = "agent"`), never from the module's own messages; every
-  model call of the module passes `user_uuid:` and `source: "agent"`. Turns
+  model call of the module passes `user_uuid:` and `source: "agent"`; every
+  journal row with a cost counts, whatever its status. Turns
   from the `user` messages with a `turn_ref`. The limit check runs under the
   locks, so the previous turn's spending is in. A turn is never killed
   outright: "Stop" and the deadline ask it to stop between steps
