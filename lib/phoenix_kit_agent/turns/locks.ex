@@ -16,6 +16,8 @@ defmodule PhoenixKitAgent.Turns.Locks do
   a running turn checks before each round that it still holds both
   (`held?/3`): a turn whose lock was taken over stops there. Times are the
   database's (`now()`), so the TTL does not depend on the clocks of the nodes.
+  Neither statement touches `updated_at` of a settings row: that stays the
+  time the settings themselves last changed.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -66,8 +68,6 @@ defmodule PhoenixKitAgent.Turns.Locks do
   @doc "Releases both locks if `turn_ref` still holds them."
   @spec release(String.t(), String.t(), String.t()) :: :ok
   def release(user_uuid, conversation_uuid, turn_ref) do
-    now = DateTime.utc_now()
-
     repo().update_all(
       from(c in Conversation,
         where: c.uuid == ^conversation_uuid and c.busy_turn_ref == ^turn_ref
@@ -77,7 +77,7 @@ defmodule PhoenixKitAgent.Turns.Locks do
 
     repo().update_all(
       from(s in UserSettings, where: s.user_uuid == ^user_uuid and s.busy_turn_ref == ^turn_ref),
-      set: [busy_since: nil, busy_turn_ref: nil, updated_at: now]
+      set: [busy_since: nil, busy_turn_ref: nil]
     )
 
     :ok
@@ -103,7 +103,7 @@ defmodule PhoenixKitAgent.Turns.Locks do
     take =
       from(s in UserSettings,
         where: is_nil(s.busy_since) or s.busy_since < ^stale,
-        update: [set: [busy_since: ^now, busy_turn_ref: ^turn_ref, updated_at: ^now]]
+        update: [set: [busy_since: ^now, busy_turn_ref: ^turn_ref]]
       )
 
     {count, _} =

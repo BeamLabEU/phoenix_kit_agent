@@ -51,4 +51,22 @@ defmodule PhoenixKitAgent.Turns.LocksTest do
     :ok = Locks.release(ctx.user.uuid, ctx.chat.uuid, "t1")
     refute Locks.held?(ctx.user.uuid, ctx.chat.uuid, "t1")
   end
+
+  test "taking and releasing the user's lock leaves the settings' updated_at alone", ctx do
+    changed = ~U[2026-01-02 03:04:05.000000Z]
+
+    Repo.insert!(%UserSettings{
+      user_uuid: ctx.user.uuid,
+      daily_turn_limit: 3,
+      updated_at: changed
+    })
+
+    :ok = Locks.acquire(ctx.user.uuid, ctx.chat.uuid, "t1", @ttl_s)
+    assert Repo.get!(UserSettings, ctx.user.uuid).updated_at == changed
+
+    :ok = Locks.release(ctx.user.uuid, ctx.chat.uuid, "t1")
+    settings = Repo.get!(UserSettings, ctx.user.uuid)
+    assert settings.updated_at == changed
+    assert settings.daily_turn_limit == 3
+  end
 end
