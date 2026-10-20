@@ -12,6 +12,7 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.{Auth, Permissions, Roles}
   alias PhoenixKitAgent.Schemas.UserSettings
+  alias PhoenixKitAgent.Test.LogProbe
   alias PhoenixKitAgent.UserConfig
 
   @path "/en/admin/agent/users"
@@ -264,6 +265,25 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
 
       assert has_element?(view, "#agent-user-#{ctx.member.uuid}-model", "Fast")
       assert has_element?(view, "#agent-user-#{ctx.member.uuid}-limits", "2.5")
+    end
+
+    test "the prompt for the user never reaches the log", ctx do
+      secret = "SecretUserPrompt-#{System.unique_integer([:positive])}"
+      view = open(ctx.conn, ctx.member)
+
+      {_, logs} =
+        LogProbe.capture(fn ->
+          view
+          |> form("#agent-user-form", user_settings: %{system_prompt: secret})
+          |> render_change()
+
+          view
+          |> form("#agent-user-form", user_settings: %{system_prompt: secret})
+          |> render_submit()
+        end)
+
+      assert Repo.get!(UserSettings, ctx.member.uuid).system_prompt == secret
+      for line <- logs, do: refute(line =~ secret, "leaked to the log: " <> line)
     end
 
     test "switching the user off", ctx do

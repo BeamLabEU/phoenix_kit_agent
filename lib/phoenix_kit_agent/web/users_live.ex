@@ -32,7 +32,9 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   as `PhoenixKitAgent.Models.summary/1` — never the endpoint row with its key.
   """
 
-  use Phoenix.LiveView
+  # `log: false`: LiveView would log every event with its parameters —
+  # the prompt an admin writes for a user among them.
+  use Phoenix.LiveView, log: false
   use Gettext, backend: PhoenixKitAgent.Gettext
 
   import PhoenixKitWeb.Components.Core.Button, only: [button: 1]

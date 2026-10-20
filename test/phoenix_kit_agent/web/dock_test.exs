@@ -756,6 +756,8 @@ defmodule PhoenixKitAgent.Web.DockTest do
       send_text(view, "Hello there")
 
       assert has_element?(view, "#pk-agent-dock-error", "No model is chosen")
+      # It says where the model is chosen.
+      assert has_element?(view, "#pk-agent-dock-error", "Settings → AI Agent")
       refute has_element?(view, "#pk-agent-panel[data-conversation]")
       assert chat_ids(render(view)) == [ctx.chat.uuid] |> Enum.map(&"pk-agent-chat-#{&1}")
 

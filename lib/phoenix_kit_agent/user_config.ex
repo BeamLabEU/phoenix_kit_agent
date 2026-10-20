@@ -132,6 +132,24 @@ defmodule PhoenixKitAgent.UserConfig do
     |> repo().all()
   end
 
+  @doc """
+  The people who may be chosen to be told when someone reaches a limit
+  (`agent_limit_watchers`, spec §7.4): active users who hold `agent.manage`
+  through a role, the Owners, and whoever is a watcher now, by e-mail.
+  """
+  @spec watcher_candidates() :: [User.t()]
+  def watcher_candidates do
+    owners = "Owner" |> Roles.users_with_role() |> Enum.map(& &1.uuid)
+    managers = Enum.uniq(Permissions.users_with_permission(@manage) ++ owners)
+    watchers = Config.limit_watchers()
+
+    from(u in User,
+      where: (u.uuid in ^managers and u.is_active == true) or u.uuid in ^watchers,
+      order_by: [asc: u.email, asc: u.uuid]
+    )
+    |> repo().all()
+  end
+
   @doc "Whether `user_uuid` is one of `agent_users/0`."
   @spec agent_user?(term()) :: boolean()
   def agent_user?(user_uuid) do

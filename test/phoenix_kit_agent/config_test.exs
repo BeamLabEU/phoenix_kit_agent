@@ -6,8 +6,11 @@ defmodule PhoenixKitAgent.ConfigTest do
 
   use PhoenixKitAgent.DataCase, async: false
 
+  import Ecto.Query, only: [from: 2]
+
   alias PhoenixKit.Settings
   alias PhoenixKitAgent.Config
+  alias PhoenixKitAgent.Test.LogProbe
 
   describe "defaults" do
     test "the limits are $1 a day, $10 a month, 200 turns, 20 MB files, 5 per message" do
@@ -128,6 +131,69 @@ defmodule PhoenixKitAgent.ConfigTest do
     test "a watcher that is not a uuid is refused, nothing is saved" do
       assert {:error, :invalid_uuid} = Config.put_limit_watchers([Ecto.UUID.generate(), "x"], [])
       assert Config.limit_watchers() == []
+    end
+  end
+
+  describe "the default and the vision model" do
+    test "are set to an AI endpoint that chats, and back to none" do
+      endpoint = endpoint_fixture()
+
+      assert {:ok, _} = Config.put_default_endpoint(endpoint.uuid, [])
+      assert {:ok, _} = Config.put_vision_endpoint(endpoint.uuid, [])
+      assert Config.default_endpoint_uuid() == endpoint.uuid
+      assert Config.vision_endpoint_uuid() == endpoint.uuid
+
+      assert {:ok, _} = Config.put_default_endpoint(nil, [])
+      assert {:ok, _} = Config.put_vision_endpoint(nil, [])
+      assert Config.default_endpoint_uuid() == nil
+      assert Config.vision_endpoint_uuid() == nil
+    end
+
+    test "an endpoint that does not exist, does not chat, or is not a uuid is refused" do
+      embedder = endpoint_fixture(%{model: "openai/text-embedding-3-small"})
+      assert PhoenixKitAI.Endpoint.kind(embedder) != :chat
+
+      for uuid <- [Ecto.UUID.generate(), embedder.uuid, "not-a-uuid", ""] do
+        assert {:error, :invalid_endpoint} = Config.put_default_endpoint(uuid, [])
+        assert {:error, :invalid_endpoint} = Config.put_vision_endpoint(uuid, [])
+      end
+
+      assert Settings.get_setting("agent_default_endpoint_uuid", nil) in [nil, ""]
+      assert Settings.get_setting("agent_vision_endpoint_uuid", nil) in [nil, ""]
+    end
+  end
+
+  describe "the module prompt in the Activity log" do
+    defp prompt_entries do
+      Repo.all(
+        from(a in PhoenixKit.Activity.Entry,
+          where:
+            a.action == "agent.settings_updated" or
+              fragment("?->>'key' = ?", a.metadata, "agent_system_prompt")
+        )
+      )
+    end
+
+    test "a change is recorded with who made it, never with the text — nor logged" do
+      user = user_fixture()
+      secret = "SecretPrompt-#{System.unique_integer([:positive])}"
+
+      {result, logs} =
+        LogProbe.capture(fn -> Config.put_system_prompt(secret, actor_uuid: user.uuid) end)
+
+      assert {:ok, _} = result
+      assert Config.system_prompt() == secret
+      for line <- logs, do: refute(line =~ secret, "leaked to the log: " <> line)
+
+      assert [entry] = prompt_entries()
+      assert entry.action == "agent.settings_updated"
+      assert entry.actor_uuid == user.uuid
+      assert entry.metadata["fields"] == ["system_prompt"]
+      refute inspect(entry) =~ secret
+
+      # The same text again is no change.
+      assert {:ok, _} = Config.put_system_prompt(secret, actor_uuid: user.uuid)
+      assert length(prompt_entries()) == 1
     end
   end
 

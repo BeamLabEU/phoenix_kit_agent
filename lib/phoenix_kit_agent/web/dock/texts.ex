@@ -35,7 +35,10 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   def refusal(:ai_disabled), do: gettext("The AI module is switched off.")
 
   def refusal(:no_endpoint),
-    do: gettext("No model is chosen for the assistant yet. Ask an administrator.")
+    do:
+      gettext(
+        "No model is chosen for the assistant yet. An administrator chooses one in Settings → AI Agent, or one for you in AI Agent → Users."
+      )
 
   def refusal(:invalid_attachments),
     do: gettext("A file is not ready or not in this chat. Remove it and try again.")

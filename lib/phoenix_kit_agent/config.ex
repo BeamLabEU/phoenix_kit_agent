@@ -30,6 +30,15 @@ defmodule PhoenixKitAgent.Config do
   Core keeps a string setting to 1000 characters, so the two settings that can
   be longer — the module prompt and the watchers — are JSON settings
   (`value_json`), written by `put_system_prompt/2` and `put_limit_watchers/2`.
+  The two models are written by `put_default_endpoint/2` and
+  `put_vision_endpoint/2`, which take only an AI endpoint that chats.
+
+  Every writer records the change with who made it (`actor_uuid:` in `opts`)
+  in the core Activity log: through the settings history (`setting.changed`,
+  with the values before and after) — except the module prompt, whose text
+  must not be kept there (nor in the query log that history's write goes
+  to): it is written without that history, and its change is recorded as
+  `agent.settings_updated` with the field name only.
 
   `agent_capture_ai_content` is on only when it reads exactly `"true"`: then the
   bodies of the assistant's model calls are written to the AI request journal,
@@ -40,11 +49,13 @@ defmodule PhoenixKitAgent.Config do
 
   import Ecto.Changeset
 
+  alias PhoenixKit.Activity
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Settings
   alias PhoenixKit.Settings.History
   alias PhoenixKit.Utils.Number
   alias PhoenixKitAgent.Schemas.Message
+  alias PhoenixKitAI.Endpoint
 
   @module "agent"
   @micro_per_usd 1_000_000
@@ -139,8 +150,9 @@ defmodule PhoenixKitAgent.Config do
   Sets the module's system prompt (`agent_system_prompt`); a blank one means
   none. NUL characters are cut (the database refuses them); a prompt over
   #{@prompt_max} characters is `{:error, changeset}` and nothing is written —
-  it goes into every request. `opts` go to `PhoenixKit.Settings`
-  (`actor_uuid:`, `source:`). The caller checks `agent.manage`.
+  it goes into every request. A change is recorded in the Activity log as
+  `agent.settings_updated` by `actor_uuid:` (in `opts`), with the field name
+  and never the text (see the moduledoc). The caller checks `agent.manage`.
   """
   @spec put_system_prompt(String.t() | nil, keyword()) ::
           {:ok, term()} | {:error, Ecto.Changeset.t()}
@@ -151,15 +163,76 @@ defmodule PhoenixKitAgent.Config do
       |> validate_length(:text, max: @prompt_max)
 
     if changeset.valid? do
-      Settings.update_json_setting_with_module(
-        @prompt_key,
-        %{"text" => get_field(changeset, :text) || ""},
-        @module,
-        opts
-      )
+      text = get_field(changeset, :text) || ""
+      changed? = stored_prompt() != text
+
+      # `history: false`: the settings history would keep the text, and log it.
+      with {:ok, setting} <-
+             Settings.update_json_setting_with_module(
+               @prompt_key,
+               %{"text" => text},
+               @module,
+               history: false
+             ) do
+        if changed?, do: log_change(["system_prompt"], opts)
+        {:ok, setting}
+      end
     else
       {:error, %{changeset | action: :update}}
     end
+  end
+
+  @doc """
+  Sets the AI endpoint the assistant uses by default
+  (`agent_default_endpoint_uuid`), or none (`nil`). Only an existing endpoint
+  that chats is taken; anything else is `{:error, :invalid_endpoint}` and
+  nothing is written. `opts` go to `PhoenixKit.Settings` (`actor_uuid:`,
+  `source:`). The caller checks `agent.manage`.
+  """
+  @spec put_default_endpoint(String.t() | nil, keyword()) ::
+          {:ok, term()} | {:error, :invalid_endpoint | Ecto.Changeset.t()}
+  def put_default_endpoint(uuid, opts),
+    do: put_endpoint("agent_default_endpoint_uuid", uuid, opts)
+
+  @doc """
+  Sets the AI endpoint that describes pictures for a model that does not see
+  them (`agent_vision_endpoint_uuid`), or none (`nil`); as
+  `put_default_endpoint/2`.
+  """
+  @spec put_vision_endpoint(String.t() | nil, keyword()) ::
+          {:ok, term()} | {:error, :invalid_endpoint | Ecto.Changeset.t()}
+  def put_vision_endpoint(uuid, opts), do: put_endpoint("agent_vision_endpoint_uuid", uuid, opts)
+
+  defp put_endpoint(key, nil, opts),
+    do: Settings.update_setting_with_module(key, "", @module, opts)
+
+  defp put_endpoint(key, uuid, opts) when is_binary(uuid) do
+    with {:ok, uuid} <- Ecto.UUID.cast(uuid),
+         %Endpoint{} = endpoint <- PhoenixKitAI.get_endpoint(uuid),
+         :chat <- Endpoint.kind(endpoint) do
+      Settings.update_setting_with_module(key, uuid, @module, opts)
+    else
+      _not_a_chat_endpoint -> {:error, :invalid_endpoint}
+    end
+  end
+
+  defp put_endpoint(_key, _other, _opts), do: {:error, :invalid_endpoint}
+
+  defp stored_prompt do
+    case json_setting(@prompt_key) do
+      %{"text" => text} when is_binary(text) -> text
+      _none -> ""
+    end
+  end
+
+  defp log_change(fields, opts) do
+    Activity.log(@module, "agent.settings_updated",
+      actor_uuid: Keyword.get(opts, :actor_uuid),
+      resource_type: "agent_settings",
+      metadata: %{"fields" => fields}
+    )
+
+    :ok
   end
 
   @doc """

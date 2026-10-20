@@ -52,9 +52,9 @@ defmodule PhoenixKitAgent.Models do
 
   @doc """
   The endpoints a user can be given: enabled ones that chat (not speech,
-  embedding or image models), by name. `include: uuid` adds that endpoint even
-  if it can no longer be picked — the one a user has now, so that saving the
-  form does not drop it unnoticed.
+  embedding or image models), by name. `include: uuid` (or a list of uuids)
+  adds that endpoint even if it can no longer be picked — the one a user has
+  now, so that saving the form does not drop it unnoticed.
   """
   @spec list_endpoints(keyword()) :: [Endpoint.t()]
   def list_endpoints(opts \\ []) do
@@ -62,7 +62,7 @@ defmodule PhoenixKitAgent.Models do
 
     endpoints
     |> Enum.filter(&(Endpoint.kind(&1) == :chat))
-    |> add_current(Keyword.get(opts, :include))
+    |> add_current(opts |> Keyword.get(:include) |> List.wrap())
     |> Enum.sort_by(&{String.downcase(&1.name || ""), &1.uuid})
   end
 
@@ -96,6 +96,17 @@ defmodule PhoenixKitAgent.Models do
     from(e in Endpoint, where: e.uuid in ^Enum.uniq(uuids))
     |> RepoHelper.repo().all()
     |> tools_support()
+  end
+
+  @doc """
+  `image_input_support/1` for the endpoints with these uuids, read again from
+  the database (one that is gone is left out).
+  """
+  @spec image_input_support_of([String.t()]) :: %{String.t() => support()}
+  def image_input_support_of(uuids) when is_list(uuids) do
+    from(e in Endpoint, where: e.uuid in ^Enum.uniq(uuids))
+    |> RepoHelper.repo().all()
+    |> image_input_support()
   end
 
   @doc "Whether each endpoint's model takes tools (see the moduledoc): `%{endpoint_uuid => support}`."
@@ -172,15 +183,19 @@ defmodule PhoenixKitAgent.Models do
 
   # ── internals ─────────────────────────────────────────────────────────
 
-  defp add_current(endpoints, uuid) when is_binary(uuid) do
-    cond do
-      Enum.any?(endpoints, &(&1.uuid == uuid)) -> endpoints
-      current = PhoenixKitAI.get_endpoint(uuid) -> [current | endpoints]
-      true -> endpoints
-    end
-  end
+  defp add_current(endpoints, uuids) do
+    Enum.reduce(uuids, endpoints, fn
+      uuid, acc when is_binary(uuid) ->
+        cond do
+          Enum.any?(acc, &(&1.uuid == uuid)) -> acc
+          current = PhoenixKitAI.get_endpoint(uuid) -> [current | acc]
+          true -> acc
+        end
 
-  defp add_current(endpoints, _none), do: endpoints
+      _none, acc ->
+        acc
+    end)
+  end
 
   defp openrouter?(%Endpoint{provider: provider}) when is_binary(provider),
     do: Endpoint.base_provider(provider) == "openrouter"
