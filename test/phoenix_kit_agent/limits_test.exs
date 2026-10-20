@@ -294,6 +294,24 @@ defmodule PhoenixKitAgent.LimitsTest do
       reached
     end
 
+    test "the user's notice is in the user's language, the watchers' in the site's", ctx do
+      Gettext.put_locale(PhoenixKitAgent.Gettext, "et")
+      settings = limits!(ctx.user, daily_turn_limit: 1, notify_on_limit: true)
+      turns!(ctx.user, 1)
+
+      reached!(ctx, settings)
+
+      assert [mine] = notifications(ctx.user)
+
+      assert mine.metadata["notification_text"] ==
+               "Oled täna kasutanud ära kõik oma 1 AI-assistendi päringut."
+
+      assert [theirs] = notifications(ctx.owner)
+
+      assert theirs.metadata["notification_text"] ==
+               "#{ctx.user.email} has used all 1 AI assistant turns for today."
+    end
+
     test "the user is told in the app; with notify_on_limit, the watchers too — once", ctx do
       settings = limits!(ctx.user, daily_turn_limit: 1, notify_on_limit: true)
       turns!(ctx.user, 1)

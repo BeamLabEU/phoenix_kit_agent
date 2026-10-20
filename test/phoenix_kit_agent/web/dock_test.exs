@@ -414,6 +414,16 @@ defmodule PhoenixKitAgent.Web.DockTest do
       refute has_element?(view, "#pk-agent-more-chats")
     end
 
+    test "the button and the list speak the user's language", ctx do
+      view = dock(ctx, locale: "et")
+      assert has_element?(view, "#pk-agent-dock-button[aria-label='AI-assistent']")
+      assert has_element?(view, "#pk-agent-new-chat", "Uus vestlus")
+      assert has_element?(view, "#pk-agent-chats", "Vestlusi veel pole.")
+
+      view = dock(ctx, locale: "uk")
+      assert has_element?(view, "#pk-agent-new-chat", "Новий чат")
+    end
+
     test "New chat writes nothing until the first message, which makes the chat", ctx do
       old = conversation_fixture(ctx.user, %{title: "Old one"})
       view = dock(ctx)

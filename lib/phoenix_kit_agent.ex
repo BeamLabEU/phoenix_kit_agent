@@ -34,6 +34,7 @@ defmodule PhoenixKitAgent do
   """
 
   use PhoenixKit.Module
+  use Gettext, backend: PhoenixKitAgent.Gettext
 
   alias PhoenixKit.Dashboard.Tab
   alias PhoenixKit.Settings
@@ -101,16 +102,18 @@ defmodule PhoenixKitAgent do
   def permission_metadata do
     %{
       key: module_key(),
-      label: "AI Agent",
+      label: gettext_noop("AI Agent"),
       icon: "hero-sparkles",
-      description: "Use the AI assistant, with the rights of one's own session",
+      description: gettext_noop("Use the AI assistant, with the rights of one's own session"),
       gettext_backend: PhoenixKitAgent.Gettext,
       sub_permissions: [
         %{
           key: "manage",
-          label: "Manage the AI assistant",
+          label: gettext_noop("Manage the AI assistant"),
           description:
-            "Edit the module defaults and other users' assistant settings, and see everyone's spending"
+            gettext_noop(
+              "Edit the module defaults and other users' assistant settings, and see everyone's spending"
+            )
         }
       ]
     }
@@ -121,7 +124,7 @@ defmodule PhoenixKitAgent do
     [
       Tab.new!(
         id: :admin_agent,
-        label: "AI Agent",
+        label: gettext_noop("AI Agent"),
         gettext_backend: PhoenixKitAgent.Gettext,
         icon: "hero-sparkles",
         path: "agent",
@@ -138,7 +141,7 @@ defmodule PhoenixKitAgent do
       ),
       Tab.new!(
         id: :admin_agent_users,
-        label: "Users",
+        label: gettext_noop("Users"),
         gettext_backend: PhoenixKitAgent.Gettext,
         icon: "hero-users",
         path: "agent/users",
@@ -151,7 +154,7 @@ defmodule PhoenixKitAgent do
       ),
       Tab.new!(
         id: :admin_agent_spending,
-        label: "Spending",
+        label: gettext_noop("Spending"),
         gettext_backend: PhoenixKitAgent.Gettext,
         icon: "hero-banknotes",
         path: "agent/spending",
@@ -189,7 +192,7 @@ defmodule PhoenixKitAgent do
     [
       Tab.new!(
         id: :admin_settings_agent,
-        label: "AI Agent",
+        label: gettext_noop("AI Agent"),
         gettext_backend: PhoenixKitAgent.Gettext,
         icon: "hero-sparkles",
         path: "agent",

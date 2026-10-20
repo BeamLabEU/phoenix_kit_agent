@@ -16,6 +16,12 @@ defmodule PhoenixKitAgent.Test.Hooks do
   alias PhoenixKit.Users.Auth.Scope
 
   def on_mount(:assign_scope, _params, session, socket) do
+    # Core's locale hook puts the path's language on the process; a test names it.
+    if locale = session["locale"] do
+      Gettext.put_locale(PhoenixKitAgent.Gettext, locale)
+      Gettext.put_locale(PhoenixKitWeb.Gettext, locale)
+    end
+
     case user(session) do
       %Auth.User{} = user ->
         {:cont,

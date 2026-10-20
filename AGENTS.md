@@ -191,3 +191,4 @@ checkout, export `<APP>_PATH` (the dep's app name upper-cased plus `_PATH`, e.g.
   prompt — may reach `Logger` (message, metadata or crash report): log the
   class of a failure only. `test/support/log_probe.ex` checks whole log events
   for it.
+- Every text a person sees goes through `PhoenixKitAgent.Gettext`; the catalogues (`priv/gettext`: en, et, ru, uk, fr, de) are complete — a new msgid is translated in all of them (`test/phoenix_kit_agent/translations_test.exs` checks it). No new language is added.

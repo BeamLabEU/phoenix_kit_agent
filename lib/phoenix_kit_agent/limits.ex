@@ -58,6 +58,8 @@ defmodule PhoenixKitAgent.Limits do
   chat. A notice that cannot be sent is logged as the class of the failure.
   """
 
+  use Gettext, backend: PhoenixKitAgent.Gettext
+
   import Ecto.Query, only: [from: 2]
 
   require Logger
@@ -306,46 +308,97 @@ defmodule PhoenixKitAgent.Limits do
   defp user_email(user_uuid) do
     case Auth.get_user(user_uuid) do
       %{email: email} -> email
-      nil -> "A user"
+      nil -> gettext("A user")
     end
   end
 
   # ── texts ─────────────────────────────────────────────────────────────
 
   defp warn_text(%{kind: :daily_turns, used: used, limit: limit}),
-    do: "You have used #{used} of your #{limit} AI assistant turns for today."
-
-  defp warn_text(%{kind: kind, used: used, limit: limit}),
     do:
-      "You have used 80% of your #{period_word(kind)} spending limit for the AI assistant " <>
-        "($#{Spend.format_usd(used)} of $#{Spend.format_usd(limit)})."
+      gettext("You have used %{used} of your %{limit} AI assistant turns for today.",
+        used: used,
+        limit: limit
+      )
+
+  defp warn_text(%{kind: :daily_cost, used: used, limit: limit}),
+    do:
+      gettext(
+        "You have used 80% of your daily spending limit for the AI assistant ($%{used} of $%{limit}).",
+        used: Spend.format_usd(used),
+        limit: Spend.format_usd(limit)
+      )
+
+  defp warn_text(%{kind: :monthly_cost, used: used, limit: limit}),
+    do:
+      gettext(
+        "You have used 80% of your monthly spending limit for the AI assistant ($%{used} of $%{limit}).",
+        used: Spend.format_usd(used),
+        limit: Spend.format_usd(limit)
+      )
 
   defp reached_text(%{kind: :daily_turns, limit: limit}),
-    do: "You have used all your #{limit} AI assistant turns for today."
+    do: gettext("You have used all your %{limit} AI assistant turns for today.", limit: limit)
 
-  defp reached_text(%{kind: kind, limit: limit}),
+  defp reached_text(%{kind: :daily_cost, limit: limit}),
     do:
-      "You have reached your #{period_word(kind)} spending limit for the AI assistant " <>
-        "($#{Spend.format_usd(limit)})."
+      gettext("You have reached your daily spending limit for the AI assistant ($%{limit}).",
+        limit: Spend.format_usd(limit)
+      )
+
+  defp reached_text(%{kind: :monthly_cost, limit: limit}),
+    do:
+      gettext("You have reached your monthly spending limit for the AI assistant ($%{limit}).",
+        limit: Spend.format_usd(limit)
+      )
+
+  # The watchers are other people than the one whose process this is, and one
+  # text goes to all of them: it is written in the site's default language.
+  defp for_watchers(fun) do
+    locale = PhoenixKit.Config.default_locale() |> String.split("-") |> hd()
+    Gettext.with_locale(PhoenixKitAgent.Gettext, locale, fun)
+  end
 
   defp watcher_text(email, %{kind: :daily_turns, limit: limit}),
-    do: "#{email} has used all #{limit} AI assistant turns for today."
-
-  defp watcher_text(email, %{kind: kind, limit: limit}),
     do:
-      "#{email} has reached the #{period_word(kind)} AI assistant spending limit " <>
-        "($#{Spend.format_usd(limit)})."
+      for_watchers(fn ->
+        gettext("%{email} has used all %{limit} AI assistant turns for today.",
+          email: email,
+          limit: limit
+        )
+      end)
+
+  defp watcher_text(email, %{kind: :daily_cost, limit: limit}),
+    do:
+      for_watchers(fn ->
+        gettext("%{email} has reached the daily AI assistant spending limit ($%{limit}).",
+          email: email,
+          limit: Spend.format_usd(limit)
+        )
+      end)
+
+  defp watcher_text(email, %{kind: :monthly_cost, limit: limit}),
+    do:
+      for_watchers(fn ->
+        gettext("%{email} has reached the monthly AI assistant spending limit ($%{limit}).",
+          email: email,
+          limit: Spend.format_usd(limit)
+        )
+      end)
 
   defp budget_text(email, scope),
-    do: "The AI budget (#{budget_scope(scope)}) refused the AI assistant of #{email}."
+    do:
+      for_watchers(fn ->
+        gettext("The AI budget (%{scope}) refused the AI assistant of %{email}.",
+          scope: budget_scope(scope),
+          email: email
+        )
+      end)
 
   defp budget_scope(scope) when scope in [:global, :endpoint, :user, :user_calls],
     do: Atom.to_string(scope)
 
   defp budget_scope(_other), do: "limit"
-
-  defp period_word(:daily_cost), do: "daily"
-  defp period_word(:monthly_cost), do: "monthly"
 
   # A notice is never worth a turn: a failure is logged as its class only.
   defp safely(fun) do

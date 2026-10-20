@@ -107,6 +107,17 @@ defmodule PhoenixKitAgent.Web.SpendingLiveTest do
       assert has_element?(view, "#agent-spending-empty")
       assert has_element?(view, "#agent-spending-total-month", "0.00")
     end
+
+    test "the page is in the language of the user", ctx do
+      {:ok, view, _html} =
+        ctx.conn |> Plug.Test.init_test_session(%{"locale" => "et"}) |> live(@path)
+
+      assert has_element?(
+               view,
+               "#agent-spending-empty",
+               "Keegi ei kasutanud assistenti sel kuul."
+             )
+    end
   end
 
   describe "without agent.manage" do

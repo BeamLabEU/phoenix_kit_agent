@@ -54,6 +54,8 @@ turn_check_ms:`), so a turn whose end never reached it is let go of, with the
 messages it left.
 Notices are shown in the user's language by their code.
 
+The interface speaks English, Estonian, Russian, Ukrainian, French and German (`priv/gettext`; `mix gettext.extract --merge` after a change of a text).
+
 What the panel shows of a chat: the user's messages, the model's answers as
 markdown without anything that loads by itself — no `<img>` with an outside
 address (a picture in an answer is its alt text), no raw HTML, every link
