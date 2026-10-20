@@ -69,6 +69,12 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
         "This answer is no longer running here. The chat will be free again in a few minutes."
       )
 
+  def refusal(:stop_unanswered),
+    do:
+      gettext(
+        "The answer has not stopped yet. Press Stop again, or wait: if it is no longer running, the chat will be free again in a few minutes."
+      )
+
   def refusal(:files_pending), do: gettext("Wait until the files are read.")
 
   def refusal(reason) when reason in [:file_unreadable, :empty_file],

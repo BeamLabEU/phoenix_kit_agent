@@ -83,6 +83,9 @@ and `Web.Markdown`).
   the chat's lock is within its TTL, is broadcast on `agent:turn:<turn_ref>`
   (`Monitor.broadcast_stop/1`, the ref only); the monitor subscribes to the
   topic of each turn it runs. Ownership is checked in `Turns.stop/4`, before.
+  Nothing answers a Stop but the turn's end: the panel offers Stop again
+  (`:stop_unanswered`) when that end has not come within
+  `stop_grace_ms + turn_check_ms`.
 - **Attachments:** session-bound like `Conversations` (`impersonated:` in the
   options); only the owner adds, reads, discards or gets the address of a
   file, an Owner/Admin of the site included. Bytes live in the hidden library

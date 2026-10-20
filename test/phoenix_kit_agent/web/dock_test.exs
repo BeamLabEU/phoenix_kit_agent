@@ -21,9 +21,10 @@ defmodule PhoenixKitAgent.Web.DockTest do
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Permissions
   alias PhoenixKit.Users.Roles
-  alias PhoenixKitAgent.{Config, Conversations, UserConfig}
+  alias PhoenixKitAgent.{Config, Conversations, Turns, UserConfig}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message, UserSettings}
   alias PhoenixKitAgent.Test.{Endpoint, Files, LogProbe, Tools}
+  alias PhoenixKitAgent.Turns.Monitor
   alias PhoenixKitAgent.Web.Dock
 
   @stub __MODULE__
@@ -1030,6 +1031,94 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert_receive {:agent_stop_turn, ^elsewhere}, 1_000
       assert has_element?(view, "#pk-agent-waiting[data-activity=stopping]")
       refute has_element?(view, "#pk-agent-dock-error")
+    end
+
+    test "a Stop no node answers gives Stop back after the grace period; " <>
+           "pressed again, it asks again",
+         ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Unanswered"})
+      elsewhere = UUIDv7.generate()
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: elsewhere]
+      )
+
+      :ok = PubSub.subscribe("agent:turn:" <> elsewhere)
+
+      view = dock(ctx)
+      open_chat(view, chat)
+      pid = view.pid
+      :erlang.trace(pid, true, [:receive])
+
+      view |> element("#pk-agent-stop") |> render_click()
+      assert_receive {:agent_stop_turn, ^elsewhere}, 1_000
+      assert has_element?(view, "#pk-agent-stop[disabled]")
+
+      assert_receive {:trace, ^pid, :receive, {:pk_agent_stop_unanswered, ^elsewhere}},
+                     Monitor.stop_grace_ms() + 10_000
+
+      assert has_element?(view, "#pk-agent-dock-error", "has not stopped")
+      assert has_element?(view, "#pk-agent-waiting")
+      refute has_element?(view, "#pk-agent-stop[disabled]")
+
+      view |> element("#pk-agent-stop") |> render_click()
+      assert_receive {:agent_stop_turn, ^elsewhere}, 1_000
+      assert has_element?(view, "#pk-agent-waiting[data-activity=stopping]")
+      assert lock_of(chat) |> elem(1) == elsewhere
+    end
+
+    test "a Stop whose turn ends in time leaves no complaint behind", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Answered"})
+      listen(ctx, chat)
+      hang_next()
+
+      view = dock(ctx)
+      open_chat(view, chat)
+      send_text(view, "Hi")
+      assert_receive {:model_waiting, _}, 3_000
+      {_since, turn_ref} = lock_of(chat)
+      pid = view.pid
+      :erlang.trace(pid, true, [:receive])
+
+      view |> element("#pk-agent-stop") |> render_click()
+      await_turn_end(view, chat)
+
+      assert_receive {:trace, ^pid, :receive, {:pk_agent_stop_unanswered, ^turn_ref}},
+                     Monitor.stop_grace_ms() + 10_000
+
+      refute has_element?(view, "#pk-agent-dock-error")
+      refute has_element?(view, "#pk-agent-waiting")
+    end
+
+    test "Stop while the monitor restarts says the answer is no longer running here", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Restarting"})
+      listen(ctx, chat)
+      hang_next()
+
+      view = dock(ctx)
+      open_chat(view, chat)
+      send_text(view, "Hi")
+      assert_receive {:model_waiting, _}, 3_000
+      {_since, turn_ref} = lock_of(chat)
+
+      name = PhoenixKitAgent.Turns.Monitor
+      monitor = Process.whereis(name)
+      true = Process.unregister(name)
+
+      on_exit(fn ->
+        if Process.alive?(monitor) and Process.whereis(name) == nil,
+          do: Process.register(monitor, name)
+      end)
+
+      view |> element("#pk-agent-stop") |> render_click()
+      true = Process.register(monitor, name)
+
+      assert has_element?(view, "#pk-agent-dock-error", "no longer running here")
+      refute has_element?(view, "#pk-agent-stop")
+      assert lock_of(chat) |> elem(1) == turn_ref
+
+      :ok = Turns.stop(ctx.ref, false, chat.uuid, turn_ref)
+      await_turn_end(view, chat)
     end
 
     test "Stop on a turn whose lock has expired since the chat was opened frees it", ctx do

@@ -60,9 +60,11 @@ defmodule PhoenixKitAgent.Web.Dock do
   turn, with its "Stop".
   "Stop" asks the turn to stop — on whichever node runs it (`Turns.stop/4`
   passes the request on over PubSub while the chat's lock is within its
-  time); a turn lost with its node shows "Stopping…" until its lock expires,
-  then the chat is free. When `Turns.stop/4` finds no such turn, the chat's
-  lock says what to show. The indicator says whether the model thinks or a
+  time); nothing answers it but the turn's end, so when that has not come
+  within the grace period and one more check of the lock, the panel says the
+  answer has not stopped and offers "Stop" again (a turn lost with its node
+  frees the chat when its lock expires). When `Turns.stop/4` finds no such
+  turn, the chat's lock says what to show. The indicator says whether the model thinks or a
   tool is called; in the browser it gives up after the deadline of a turn and
   its grace period (`Monitor.stop_grace_ms/0`), counted again for each turn
   and after a lost connection is found again.
@@ -394,7 +396,7 @@ defmodule PhoenixKitAgent.Web.Dock do
     with %{uuid: uuid} <- socket.assigns.conversation,
          turn_ref when is_binary(turn_ref) <- socket.assigns.turn_ref do
       case Turns.stop(socket.assigns.ref, socket.assigns.impersonated?, uuid, turn_ref) do
-        :ok -> {:noreply, assign(socket, activity: :stopping, error: nil)}
+        :ok -> {:noreply, socket |> assign(activity: :stopping, error: nil) |> await_stop()}
         {:error, :not_running} -> {:noreply, after_lost_stop(socket, uuid, turn_ref)}
         {:error, reason} -> {:noreply, refused(socket, reason)}
       end
@@ -690,11 +692,27 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
+  # A Stop is told nothing back: the turn's end over the chat's topic is the
+  # answer. When none has come within the grace period and one more check of
+  # the lock (`info({:pk_agent_stop_unanswered, _}, _)`), Stop is offered
+  # again — the request may have been lost between nodes, or no node runs the
+  # turn any more (its lock then frees the chat when it expires).
+  defp await_stop(socket) do
+    Process.send_after(
+      self(),
+      {:pk_agent_stop_unanswered, socket.assigns.turn_ref},
+      Monitor.stop_grace_ms() + turn_check_ms()
+    )
+
+    socket
+  end
+
   # "Stop" found no such turn. The chat's lock says what it is now: a newer
-  # turn is shown instead; the same turn still in its lock's time (it changed
-  # between the two reads) is said to be lost, rather than offer a Stop that
-  # cannot work; else the chat is free (a lost turn past its time is settled,
-  # its notice comes over the topic).
+  # turn is shown instead; the same turn still in its lock's time (its task is
+  # here but the monitor is restarting — the task goes with it — or the lock
+  # changed between the two reads) is said to be lost, rather than offer a
+  # Stop that cannot work; else the chat is free (a lost turn past its time is
+  # settled, its notice comes over the topic).
   defp after_lost_stop(socket, uuid, turn_ref) do
     %{ref: ref, impersonated?: impersonated?} = socket.assigns
     socket = assign(socket, turn_ref: nil, activity: nil)
@@ -860,6 +878,28 @@ defmodule PhoenixKitAgent.Web.Dock do
   @impl true
   def handle_info(_message, %{assigns: %{active?: false}} = socket), do: {:noreply, socket}
   def handle_info(message, socket), do: guarded(socket, fn -> info(message, socket) end)
+
+  # A Stop the turn's end has not answered (`await_stop/1`).
+  defp info(
+         {:pk_agent_stop_unanswered, turn_ref},
+         %{assigns: %{turn_ref: turn_ref, activity: :stopping}} = socket
+       ) do
+    case sync_turn(socket) do
+      {:running, %{assigns: %{turn_ref: ^turn_ref}} = socket} ->
+        {:noreply, socket |> assign(activity: :thinking) |> refused(:stop_unanswered)}
+
+      {:running, socket} ->
+        {:noreply, assign(socket, activity: :thinking)}
+
+      {:idle, socket} ->
+        {:noreply, catch_up(socket)}
+
+      {:error, reason, socket} ->
+        {:noreply, socket |> assign(turn_ref: nil, activity: nil) |> refused(reason)}
+    end
+  end
+
+  defp info({:pk_agent_stop_unanswered, _turn_ref}, socket), do: {:noreply, socket}
 
   # The turn shown as running, read again (`watch_turn/1`): its end may never
   # reach this panel — it came between the read of the chat and the

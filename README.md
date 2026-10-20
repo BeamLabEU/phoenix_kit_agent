@@ -201,8 +201,11 @@ after the grace period (`config :phoenix_kit_agent, turn_stop_grace_ms:`,
 default 30 000) is killed. With several nodes, a "Stop" made on a node the turn
 does not run on goes over PubSub (topic `agent:turn:<turn_ref>`, the message
 carries the turn ref only) to the node that runs it, which stops it the same
-way; who may stop is checked where "Stop" was pressed. A turn lost with its
-node shows "Stopping…" until its lock expires.
+way; who may stop is checked where "Stop" was pressed. No answer comes back but
+the turn's end: when it has not come within the grace period and one more check
+of the lock (`turn_check_ms`, default 5 000), the panel says the answer has not
+stopped and offers "Stop" again — the request may have been lost, or the turn
+was lost with its node (its lock then frees the chat when it expires).
 
 ## Configuration
 
