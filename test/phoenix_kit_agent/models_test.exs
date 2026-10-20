@@ -22,12 +22,18 @@ defmodule PhoenixKitAgent.ModelsTest do
   defp listing(models) do
     %{
       "data" =>
-        Enum.map(models, fn {id, parameters} ->
+        Enum.map(models, fn model ->
+          {id, parameters, architecture} =
+            case model do
+              {id, parameters} -> {id, parameters, %{"modality" => "text->text"}}
+              {id, parameters, architecture} -> {id, parameters, architecture}
+            end
+
           %{
             "id" => id,
             "name" => id,
             "supported_parameters" => parameters,
-            "architecture" => %{"modality" => "text->text"}
+            "architecture" => architecture
           }
         end)
     }
@@ -68,6 +74,51 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert Enum.map(Models.list_endpoints(include: Ecto.UUID.generate()), & &1.uuid) == [
                on.uuid
              ]
+    end
+  end
+
+  describe "image_input_support/1" do
+    test "OpenRouter says per model whether it takes images" do
+      sees = endpoint_fixture(%{model: "a/sees"})
+      sees_listed = endpoint_fixture(%{model: "a/sees-listed"})
+      blind = endpoint_fixture(%{model: "a/blind"})
+      missing = endpoint_fixture(%{model: "a/not-listed"})
+
+      serve_models([
+        {"a/sees", [], %{"modality" => "text+image->text"}},
+        {"a/sees-listed", [], %{"input_modalities" => ["text", "image"], "modality" => "x"}},
+        {"a/blind", [], %{"modality" => "text->text", "input_modalities" => ["text"]}}
+      ])
+
+      assert Models.image_input_support([sees, sees_listed, blind, missing]) == %{
+               sees.uuid => :supported,
+               sees_listed.uuid => :supported,
+               blind.uuid => :unsupported,
+               missing.uuid => :unknown
+             }
+    end
+
+    test "an image the model can only produce is not an image it takes" do
+      draws = endpoint_fixture(%{model: "a/draws"})
+      serve_models([{"a/draws", [], %{"modality" => "text->text+image"}}])
+
+      assert Models.image_input_support([draws]) == %{draws.uuid => :unsupported}
+    end
+
+    test "other providers are unknown, and nothing is asked of them" do
+      deepseek = endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
+      Req.Test.stub(@stub, fn _conn -> flunk("a provider without a listing was asked") end)
+
+      assert Models.image_input_support([deepseek]) == %{deepseek.uuid => :unknown}
+    end
+
+    test "image_input/1 answers for one endpoint by its uuid; no endpoint is unknown" do
+      sees = endpoint_fixture(%{model: "a/sees"})
+      serve_models([{"a/sees", [], %{"modality" => "text+image->text"}}])
+
+      assert Models.image_input(sees.uuid) == :supported
+      assert Models.image_input(nil) == :unknown
+      assert Models.image_input(Ecto.UUID.generate()) == :unknown
     end
   end
 

@@ -16,7 +16,12 @@ defmodule PhoenixKitAgent.Models do
       listing for them), a model the listing does not name, and a listing that
       could not be fetched.
 
-  `tools_support/1` makes network requests: call it off the LiveView process.
+  `image_input_support/1` is the same question about images, from the model's
+  declared input modalities; the attachments (spec §9) use it to decide whether
+  a picture goes to the model as pixels or as a description.
+
+  `tools_support/1` and `image_input_support/1` make network requests: call them
+  off the LiveView process.
 
   `reports_cost?/1` says whether an endpoint's answers carry what the call
   cost — the money limits count only such calls (spec §7.3).
@@ -47,7 +52,33 @@ defmodule PhoenixKitAgent.Models do
 
   @doc "Whether each endpoint's model takes tools (see the moduledoc): `%{endpoint_uuid => support}`."
   @spec tools_support([Endpoint.t()]) :: %{String.t() => support()}
-  def tools_support(endpoints) do
+  def tools_support(endpoints), do: capability(endpoints, &takes_tools?/1)
+
+  @doc """
+  Whether each endpoint's model takes images as input (see the moduledoc):
+  `%{endpoint_uuid => support}`. A model that can only produce images does not.
+  """
+  @spec image_input_support([Endpoint.t()]) :: %{String.t() => support()}
+  def image_input_support(endpoints), do: capability(endpoints, &takes_images?/1)
+
+  @doc """
+  `image_input_support/1` for the one endpoint with this uuid. `:unknown` for
+  no endpoint (`nil`) and for one that does not exist.
+  """
+  @spec image_input(String.t() | nil) :: support()
+  def image_input(endpoint_uuid) when is_binary(endpoint_uuid) do
+    case PhoenixKitAI.get_endpoint(endpoint_uuid) do
+      %Endpoint{} = endpoint ->
+        endpoint |> List.wrap() |> image_input_support() |> Map.fetch!(endpoint.uuid)
+
+      _none ->
+        :unknown
+    end
+  end
+
+  def image_input(_none), do: :unknown
+
+  defp capability(endpoints, check) do
     {openrouter, others} = Enum.split_with(endpoints, &openrouter?/1)
 
     unknown = Map.new(others, &{&1.uuid, :unknown})
@@ -55,7 +86,7 @@ defmodule PhoenixKitAgent.Models do
     openrouter
     |> Enum.group_by(&connection/1)
     |> Enum.reduce(unknown, fn {connection, group}, acc ->
-      Map.merge(acc, group_support(connection, group))
+      Map.merge(acc, group_support(connection, group, check))
     end)
   end
 
@@ -94,10 +125,10 @@ defmodule PhoenixKitAgent.Models do
     _ -> :unresolved
   end
 
-  defp group_support(connection, group) do
+  defp group_support(connection, group, check) do
     case models(connection) do
       {:ok, models} ->
-        Map.new(group, fn endpoint -> {endpoint.uuid, support(models, endpoint.model)} end)
+        Map.new(group, fn endpoint -> {endpoint.uuid, support(models, endpoint.model, check)} end)
 
       :error ->
         Map.new(group, &{&1.uuid, :unknown})
@@ -120,17 +151,31 @@ defmodule PhoenixKitAgent.Models do
 
   defp models(_no_key), do: :error
 
-  defp support(models, model_id) do
+  defp support(models, model_id, check) do
     case Map.fetch(models, model_id) do
-      {:ok, model} ->
-        if OpenRouterClient.model_supports_parameter?(model, "tools"),
-          do: :supported,
-          else: :unsupported
-
-      :error ->
-        :unknown
+      {:ok, model} -> if check.(model), do: :supported, else: :unsupported
+      :error -> :unknown
     end
   end
+
+  defp takes_tools?(model), do: OpenRouterClient.model_supports_parameter?(model, "tools")
+
+  # OpenRouter lists `input_modalities`; the older `modality` ("text+image->text")
+  # is the fallback. Only the input side counts.
+  defp takes_images?(%{architecture: architecture}) when is_map(architecture) do
+    case {architecture["input_modalities"], architecture["modality"]} do
+      {inputs, _modality} when is_list(inputs) ->
+        "image" in inputs
+
+      {_none, modality} when is_binary(modality) ->
+        modality |> String.split("->") |> hd() |> String.contains?("image")
+
+      _unknown_shape ->
+        false
+    end
+  end
+
+  defp takes_images?(_model), do: false
 
   defp blank_to_nil(value) when is_binary(value),
     do: if(String.trim(value) == "", do: nil, else: value)
