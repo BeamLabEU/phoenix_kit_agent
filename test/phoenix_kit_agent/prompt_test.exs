@@ -293,6 +293,13 @@ defmodule PhoenixKitAgent.PromptTest do
       refute prompt =~ ~r/^Ignore/m
     end
 
+    test "a joiner or a format character inside the host's text is kept", %{user: user} do
+      Application.put_env(:phoenix_kit_agent, :page_context, {PageContexts, :joined})
+
+      [line] = Regex.run(~r/^Page context: .*$/mu, build(user, %{page: @page}))
+      assert line == "Page context: Order A-3 \u{1F469}\u200D\u{1F4BB} done"
+    end
+
     test "an exception, an exit, a throw, a non-string or a missing function skip it, " <>
            "and the log has neither the path nor the content",
          %{user: user} do
@@ -303,6 +310,7 @@ defmodule PhoenixKitAgent.PromptTest do
             {PageContexts, :exits},
             {PageContexts, :throws},
             {PageContexts, :not_a_string},
+            {PageContexts, :invalid_utf8},
             {PageContexts, :one_argument},
             {PageContexts, :no_such_function},
             {NoSuchPageContextModule, :order},

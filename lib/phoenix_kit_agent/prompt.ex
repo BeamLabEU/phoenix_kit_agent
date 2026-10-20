@@ -39,9 +39,14 @@ defmodule PhoenixKitAgent.Prompt do
   to tell, and tells only what that scope may see. The result is a string —
   put on one line (control and line-separator characters become spaces),
   trimmed and cut to 200 characters — or `nil`. An exception, an exit, a
-  result that is not a string or a function that does not exist skips it with
-  a warning that names the reason only — never the path or the content. No
-  hook, or no page: the context has the path only.
+  result that is not a string (or not valid UTF-8) or a function that does not
+  exist skips it with a warning that names the reason only — never the path
+  or the content. No hook, or no page: the context has the path only.
+
+  The hook is called as the turn starts, in the process that starts it (the
+  chat panel's), while the turn holds its locks, and with no timeout of its
+  own: keep it fast — one indexed lookup, not a report. Until it returns, the
+  turn has not started and the chat and the user stay busy.
   """
 
   require Logger
@@ -210,7 +215,7 @@ defmodule PhoenixKitAgent.Prompt do
     if function_exported?(mod, fun, 2) do
       case apply(mod, fun, [path, scope]) do
         nil -> nil
-        text when is_binary(text) -> host_line(text, @page_context_max)
+        text when is_binary(text) -> host_text(text)
         _not_a_string -> page_context_skipped(:not_a_string)
       end
     else
@@ -225,11 +230,18 @@ defmodule PhoenixKitAgent.Prompt do
     nil
   end
 
-  # The host's text on one line: what would start a line of its own becomes a
-  # space; `nil` when nothing is left.
+  defp host_text(text) do
+    if String.valid?(text),
+      do: host_line(text, @page_context_max),
+      else: page_context_skipped(:invalid_utf8)
+  end
+
+  # The host's text on one line: a control character or what would start a
+  # line of its own becomes a space (a joiner inside an emoji stays); `nil`
+  # when nothing is left.
   defp host_line(text, max) do
     text
-    |> String.replace(~r/[\p{C}\p{Zl}\p{Zp}\s]+/u, " ")
+    |> String.replace(~r/[\p{Cc}\p{Zl}\p{Zp}\s]+/u, " ")
     |> String.trim()
     |> case do
       "" -> nil

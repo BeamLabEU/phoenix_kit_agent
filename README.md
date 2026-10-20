@@ -218,7 +218,9 @@ config :phoenix_kit_agent, prompt_addendum: {MyApp.Agent, :prompt}
 # path and the scope of the user's browser session (the role it acts as);
 # returns a string (cut to 200 characters, on one line) or nil, and tells only
 # what that scope may see. An exception or a result that is not a string skips
-# it; the log names the reason only, never the path or the text.
+# it; the log names the reason only, never the path or the text. It is called
+# as the turn starts, in the panel's process and under the turn's locks, with
+# no timeout: keep it fast.
 config :phoenix_kit_agent, page_context: {MyApp.Agent, :page_context}
 ```
 

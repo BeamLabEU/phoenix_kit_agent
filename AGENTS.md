@@ -156,6 +156,7 @@ and `Web.Markdown`).
   `Mod.fun(path, scope)` with the session's scope (the one `Turns.start/6` got
   from `SessionRef.scope_for_session/2`, never `Scope.for_user/1`); its text is
   put on one line and cut to 200 characters; a failure logs the reason only.
+  It runs in the panel's process under the turn's locks, with no timeout.
 - **Boundaries:** nothing about orders, customers or other host domain data
   lives here — the module only knows "tools from the registry". Model calls,
   budget and the request journal stay in `phoenix_kit_ai`.
