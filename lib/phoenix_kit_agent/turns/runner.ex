@@ -1,11 +1,15 @@
 defmodule PhoenixKitAgent.Turns.Runner do
   @moduledoc """
   The rounds of one turn (spec §6.1, "раунд r = 1..max_tool_rounds"), run in
-  the turn's task. Each round:
+  the turn's task. The task first stores the user's message (spec §6.1 step
+  4) and links its attachments, so a turn that never ran leaves nothing in the
+  chat. Then each round:
 
-    a. checks the session again (`Conversations.authorize_session/2`) and that
-       the AI module is on — a revoked session, a blocked user, a lost `agent`
-       permission or a switched-off assistant end the turn with a notice;
+    a. checks the session again (`Conversations.authorize_session/2`), that
+       the AI module is on and that the turn still holds its locks
+       (`Locks.held?/3`) — a revoked session, a blocked user, a lost `agent`
+       permission, a switched-off assistant or a lock taken over end the turn
+       with a notice;
     b. lists the session's tools (`Executor.visible_for/3`, `allow: :read`) and
        shows them to the model (`PhoenixKitAgent.Turns.Tools`);
     c. sends the system prompt, the history and this turn's messages;
@@ -14,8 +18,12 @@ defmodule PhoenixKitAgent.Turns.Runner do
        stored under as `attribution`);
     e. stores the answer; without tool calls the turn is over;
     f. runs each tool call — only a name shown in **this** round reaches the
-       executor (`execute_as/5`, `allow: :read`), any other is `denied` — and
-       stores each result, truncated.
+       executor (`execute_as/5`, `allow: :read`), any other is `denied`, and so
+       is every call past the 10th of the round — and stores each result,
+       truncated.
+
+  A message that cannot be stored (the database refuses it) crashes the task,
+  and the monitor writes an `interrupted` notice.
 
   Every stored message is broadcast by `PhoenixKitAgent.Conversations`. Ending
   the task (stop, deadline, crash) and the locks are
@@ -42,10 +50,22 @@ defmodule PhoenixKitAgent.Turns.Runner do
   alias PhoenixKit.API.MCP.Names
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.Conversations
-  alias PhoenixKitAgent.Schemas.{Conversation, Message}
-  alias PhoenixKitAgent.Turns.Tools
+  alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
+  alias PhoenixKitAgent.Turns.{Locks, Tools}
 
   @awaiting {__MODULE__, :awaiting_ai_request}
+
+  # The most tool calls of one round that reach the executor; the rest are
+  # denied. One answer of the model must not fan out into hundreds of calls.
+  @max_calls_per_round 10
+
+  # The model errors of `PhoenixKitAI.complete/3` kept as their own code in
+  # `messages.error`; any other is "model_error".
+  @model_errors ~w(request_timeout invalid_api_key api_key_forbidden rate_limited
+                   insufficient_credits invalid_json_response invalid_response_format
+                   no_choices_in_response endpoint_not_found endpoint_disabled
+                   endpoint_no_model integration_not_configured integration_deleted
+                   not_configured)a
 
   @typedoc "Everything a turn needs; built by `PhoenixKitAgent.Turns.start/6`."
   @type turn :: %{
@@ -54,6 +74,8 @@ defmodule PhoenixKitAgent.Turns.Runner do
           user_uuid: String.t(),
           conversation_uuid: String.t(),
           endpoint_uuid: String.t(),
+          text: String.t(),
+          attachment_uuids: [String.t()],
           system_prompt: String.t() | nil,
           history: [map()],
           request_context: keyword(),
@@ -62,9 +84,37 @@ defmodule PhoenixKitAgent.Turns.Runner do
           capture?: boolean()
         }
 
-  @doc "Runs the rounds of `turn` until the model answers without tool calls."
+  @doc """
+  Stores the user's message of `turn`, then runs its rounds until the model
+  answers without tool calls.
+  """
   @spec run(turn()) :: :ok
-  def run(turn), do: round(turn, 1, turn.history)
+  def run(turn) do
+    case Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, %{
+           turn_ref: turn.turn_ref,
+           role: "user",
+           content: turn.text
+         }) do
+      {:ok, message} ->
+        link_attachments(turn.attachment_uuids, message)
+        round(turn, 1, turn.history)
+
+      # The chat was deleted since the start: there is nowhere to answer.
+      {:error, :not_found} ->
+        :ok
+    end
+  end
+
+  defp link_attachments([], _message), do: :ok
+
+  defp link_attachments(uuids, %Message{} = message) do
+    RepoHelper.repo().update_all(
+      from(a in Attachment, where: a.uuid in ^uuids and is_nil(a.message_uuid)),
+      set: [message_uuid: message.uuid]
+    )
+
+    :ok
+  end
 
   @doc """
   The usage sink behind `PhoenixKitAgent.handle_ai_usage/1`: links an AI
@@ -99,7 +149,14 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
       case ask_model(turn, transcript, definitions) do
         {:ok, %Message{tool_calls: calls} = message} when is_list(calls) and calls != [] ->
-          results = Enum.map(calls, &run_call(turn, &1, allowed))
+          results =
+            calls
+            |> Enum.with_index(1)
+            |> Enum.map(fn
+              {call, n} when n <= @max_calls_per_round -> run_call(turn, call, allowed)
+              {call, _past_the_cap} -> run_call(turn, call, %{}, too_many_calls())
+            end)
+
           round(turn, r + 1, transcript ++ [assistant_entry(message)] ++ results)
 
         _answered_or_failed ->
@@ -113,7 +170,16 @@ defmodule PhoenixKitAgent.Turns.Runner do
   defp may_go_on(turn) do
     with {:ok, _user_uuid} <-
            Conversations.authorize_session(turn.session_ref, impersonated: false) do
-      if PhoenixKitAI.enabled?(), do: :ok, else: {:error, :ai_disabled}
+      cond do
+        not PhoenixKitAI.enabled?() ->
+          {:error, :ai_disabled}
+
+        not Locks.held?(turn.user_uuid, turn.conversation_uuid, turn.turn_ref) ->
+          {:error, :lock_lost}
+
+        true ->
+          :ok
+      end
     end
   end
 
@@ -193,10 +259,11 @@ defmodule PhoenixKitAgent.Turns.Runner do
         usage(request, response, latency_ms)
       )
 
-    Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, attrs,
-      uuid: message_uuid,
-      ai_request_uuid: request && request.uuid
-    )
+    {:ok, _message} =
+      Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, attrs,
+        uuid: message_uuid,
+        ai_request_uuid: request && request.uuid
+      )
   end
 
   # Model, tokens, cost and latency: from the journal row when the usage sink
@@ -259,23 +326,24 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
   # ── a tool call ─────────────────────────────────────────────────
 
-  defp run_call(turn, call, allowed) do
+  defp run_call(turn, call, allowed, denial \\ denied()) do
     {registry_name, outcome, result} =
       case Map.fetch(allowed, call["name"] || "") do
         {:ok, tool} -> execute(turn, tool, call["arguments"])
-        :error -> {denied_name(call["name"]), "denied", denied()}
+        :error -> {denied_name(call["name"]), "denied", denial}
       end
 
     tool_result = Tools.fit(result, turn.result_chars)
 
-    Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, %{
-      turn_ref: turn.turn_ref,
-      role: "tool",
-      tool_call_id: call["id"],
-      tool_name: registry_name,
-      tool_outcome: outcome,
-      tool_result: tool_result
-    })
+    {:ok, _message} =
+      Conversations.add_turn_message(turn.user_uuid, turn.conversation_uuid, %{
+        turn_ref: turn.turn_ref,
+        role: "tool",
+        tool_call_id: call["id"],
+        tool_name: registry_name,
+        tool_outcome: outcome,
+        tool_result: tool_result
+      })
 
     %{
       role: "tool",
@@ -319,6 +387,13 @@ defmodule PhoenixKitAgent.Turns.Runner do
   defp denied,
     do: %{"error" => "denied", "message" => "This tool is not available to you here."}
 
+  defp too_many_calls do
+    %{
+      "error" => "denied",
+      "message" => "Too many tool calls at once; at most #{@max_calls_per_round} run per round."
+    }
+  end
+
   # The registry name when the model's name maps to one, else its own name.
   defp denied_name(name) when is_binary(name), do: name |> Names.resolve(:admin) |> clip()
   defp denied_name(_none), do: nil
@@ -337,6 +412,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   defp stop_text(:ai_disabled), do: "The AI module is switched off."
   defp stop_text(:rate_limited), do: "Too many requests at once; try again in a minute."
   defp stop_text(:not_found), do: "This chat is gone."
+  defp stop_text(:lock_lost), do: "The answer was interrupted. Try again."
   defp stop_text(_other), do: "The assistant stopped."
 
   defp notice(turn, error, content, fields \\ []) do
@@ -352,7 +428,10 @@ defmodule PhoenixKitAgent.Turns.Runner do
   end
 
   defp error_code({:budget_exceeded, _scope}), do: "budget_exceeded"
-  defp error_code(reason), do: reason |> inspect() |> clip()
+  defp error_code({:api_error, _status}), do: "api_error"
+  defp error_code({:connection_error, _reason}), do: "connection_error"
+  defp error_code(reason) when reason in @model_errors, do: Atom.to_string(reason)
+  defp error_code(_reason), do: "model_error"
 
   defp model_error_text({:budget_exceeded, _scope}), do: "The AI budget is used up."
   defp model_error_text(_reason), do: "The model did not answer. Try again."

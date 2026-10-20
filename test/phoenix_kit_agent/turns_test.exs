@@ -173,6 +173,23 @@ defmodule PhoenixKitAgent.TurnsTest do
 
   defp tool_names(body), do: Enum.map(body["tools"] || [], & &1["function"]["name"])
 
+  # Suspends the monitor for the rest of the test; it is resumed at the end
+  # even when the test fails half-way.
+  defp suspend_monitor do
+    monitor = Process.whereis(PhoenixKitAgent.Turns.Monitor)
+    :ok = :sys.suspend(monitor)
+
+    on_exit(fn ->
+      try do
+        :sys.resume(monitor)
+      catch
+        :exit, _not_suspended_or_gone -> :ok
+      end
+    end)
+
+    monitor
+  end
+
   defp stop_all_turns do
     for pid <- Task.Supervisor.children(PhoenixKitAgent.Turns.TaskSupervisor) do
       ref = Process.monitor(pid)
@@ -298,8 +315,30 @@ defmodule PhoenixKitAgent.TurnsTest do
       await_end(ctx.chat, turn_ref)
 
       assert [%Message{role: "user"}, %Message{role: "notice"} = notice] = messages(ctx.chat)
-      assert notice.error =~ "api_error"
+      assert notice.error == "api_error"
       assert is_binary(notice.ai_request_uuid)
+      assert unlocked?(ctx)
+    end
+
+    test "a model error is stored under a fixed code", ctx do
+      error_next(429)
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert %Message{role: "notice", error: "rate_limited"} = List.last(messages(ctx.chat))
+    end
+
+    test "an answer that cannot be stored ends the turn with a notice", ctx do
+      bad = put_in(text_answer("Hi."), ["usage", "prompt_tokens"], -1)
+      answer_next(bad)
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert [%Message{role: "user"}, %Message{role: "notice", error: "interrupted"}] =
+               messages(ctx.chat)
+
       assert unlocked?(ctx)
     end
 
@@ -440,6 +479,24 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert %Message{tool_outcome: "error"} = Enum.find(messages(ctx.chat), &(&1.role == "tool"))
     end
 
+    test "tool calls past the tenth of a round are denied, the executor is not called", ctx do
+      calls = for i <- 1..12, do: call("c#{i}", "agenttest_list_items", %{"query" => "q#{i}"})
+      answer_next(tool_answer(calls))
+      answer_next(text_answer("Many."))
+
+      turn_ref = start!(ctx, "Many")
+      await_end(ctx.chat, turn_ref)
+
+      outcomes =
+        for %Message{role: "tool"} = m <- messages(ctx.chat), do: {m.tool_call_id, m.tool_outcome}
+
+      assert outcomes ==
+               Enum.map(1..10, &{"c#{&1}", "ok"}) ++ [{"c11", "denied"}, {"c12", "denied"}]
+
+      for i <- 1..10, do: assert_received({:agent_test_tool, _, %{"query" => "q" <> _}, _})
+      refute_received {:agent_test_tool, _, _, _}
+    end
+
     test "a long result is cut to agent_tool_result_chars, marked truncated", ctx do
       {:ok, _} = Settings.update_setting("agent_tool_result_chars", "500")
 
@@ -548,6 +605,20 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert messages(ctx.chat) == []
     end
 
+    test "a message longer than agent_history_chars is refused", ctx do
+      {:ok, _} = Settings.update_setting("agent_history_chars", "1000")
+
+      assert {:error, :message_too_long} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, String.duplicate("x", 1001))
+
+      assert messages(ctx.chat) == []
+      assert unlocked?(ctx)
+
+      answer_next(text_answer("ok"))
+      turn_ref = start!(ctx, String.duplicate("x", 1000))
+      await_end(ctx.chat, turn_ref)
+    end
+
     test "without an endpoint there is no turn", ctx do
       {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", "none")
       assert {:error, :no_endpoint} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
@@ -623,6 +694,33 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert unlocked?(ctx)
     end
 
+    test "a lock older than the deadline but within its 60 s grace still blocks", ctx do
+      aged = DateTime.add(DateTime.utc_now(), -(300 + 30), :second)
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+        set: [busy_since: aged, busy_turn_ref: "slow"]
+      )
+
+      assert {:error, :conversation_busy} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+      assert messages(ctx.chat) == []
+    end
+
+    test "a turn whose lock was taken over stops at its next round", ctx do
+      answer_next(tool_answer([call("c1", "agenttest_list_items", %{})]), fn ->
+        Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+          set: [busy_since: DateTime.utc_now(), busy_turn_ref: "newer"]
+        )
+      end)
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert_received {:model_request, _}
+      refute_received {:model_request, _}
+      assert %Message{role: "notice", error: "lock_lost"} = List.last(messages(ctx.chat))
+      assert {_, "newer"} = lock_of(ctx.chat)
+    end
+
     test "a fresh lock of a turn that is gone still blocks until its TTL", ctx do
       Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
         set: [busy_since: DateTime.utc_now(), busy_turn_ref: "other"]
@@ -664,6 +762,39 @@ defmodule PhoenixKitAgent.TurnsTest do
       await_end(ctx.chat, turn_ref)
     end
 
+    test "stop of a chat whose lock names another chat's turn stops nothing", ctx do
+      other_chat = conversation_fixture(ctx.user)
+
+      hang_next()
+      turn_ref = start!(ctx, "Hi")
+      assert_receive {:model_waiting, _pid}, 5_000
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^other_chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: turn_ref]
+      )
+
+      assert {:error, :not_running} = Turns.stop(ctx.ref, false, other_chat.uuid)
+      assert [{_pid, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
+
+      :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid)
+      await_end(ctx.chat, turn_ref)
+    end
+
+    test "stop with a turn ref stops that turn only", ctx do
+      hang_next()
+      turn_ref = start!(ctx, "Hi")
+      assert_receive {:model_waiting, _pid}, 5_000
+
+      assert {:error, :not_running} =
+               Turns.stop(ctx.ref, false, ctx.chat.uuid, UUIDv7.generate())
+
+      assert [{_pid, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
+
+      assert :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref)
+      await_end(ctx.chat, turn_ref)
+      assert unlocked?(ctx)
+    end
+
     test "stop with no turn running", ctx do
       assert {:error, :not_running} = Turns.stop(ctx.ref, false, ctx.chat.uuid)
     end
@@ -678,6 +809,49 @@ defmodule PhoenixKitAgent.TurnsTest do
                messages(ctx.chat)
 
       assert unlocked?(ctx)
+    end
+
+    @tag timeout: 60_000
+    test "a deadline_ms above agent_turn_deadline_s is cut to the setting", ctx do
+      {:ok, _} = Settings.update_setting("agent_turn_deadline_s", "10")
+
+      hang_next()
+      turn_ref = start!(ctx, "Hi", deadline_ms: 3_600_000)
+      assert_receive {:model_waiting, _pid}, 5_000
+
+      chat_uuid = ctx.chat.uuid
+      assert_receive {:agent_turn_finished, ^chat_uuid, ^turn_ref}, 15_000
+      assert %Message{role: "notice", error: "deadline"} = List.last(messages(ctx.chat))
+    end
+
+    test "a deadline that fires after the answer is complete writes no notice", ctx do
+      test = self()
+
+      Req.Test.expect(@stub, fn conn ->
+        send(test, {:model_waiting, self()})
+
+        receive do
+          :answer -> Req.Test.json(conn, text_answer("Done."))
+        end
+      end)
+
+      turn_ref = start!(ctx, "Hi", deadline_ms: 100)
+      assert_receive {:model_waiting, stub}, 5_000
+      [{task, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
+
+      monitor = suspend_monitor()
+      # The deadline passes while the monitor cannot act on it.
+      Process.sleep(300)
+
+      down = Process.monitor(task)
+      send(stub, :answer)
+      assert_receive {:DOWN, ^down, :process, ^task, :normal}, 5_000
+
+      :ok = :sys.resume(monitor)
+      await_end(ctx.chat, turn_ref)
+
+      assert [%Message{role: "user"}, %Message{role: "assistant", content: "Done."}] =
+               messages(ctx.chat)
     end
 
     test "a session revoked during the turn stops it with a notice", ctx do
@@ -708,6 +882,59 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert_received {:model_request, _}
       refute_received {:model_request, _}
       assert %Message{role: "notice", error: "forbidden"} = List.last(messages(ctx.chat))
+    end
+  end
+
+  # ── a start that fails half-way ─────────────────────────────────────
+
+  describe "a start that fails after the locks" do
+    test "a start the monitor takes too late never runs and leaves nothing", ctx do
+      Application.put_env(:phoenix_kit_agent, :turn_handshake_ms, 100)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :turn_handshake_ms) end)
+
+      monitor = suspend_monitor()
+
+      assert {:error, {:monitor_unavailable, _}} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+
+      assert unlocked?(ctx)
+      assert messages(ctx.chat) == []
+
+      # The monitor now takes the late start; the task it starts gets no
+      # go-ahead and ends without a model call or a word in the chat.
+      hang_next()
+      :ok = :sys.resume(monitor)
+      _ = :sys.get_state(monitor)
+
+      for pid <- Task.Supervisor.children(PhoenixKitAgent.Turns.TaskSupervisor) do
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :not_started}}, 2_000
+      end
+
+      chat_uuid = ctx.chat.uuid
+      assert_receive {:agent_turn_finished, ^chat_uuid, _turn_ref}, 2_000
+      refute_received {:model_waiting, _}
+      assert messages(ctx.chat) == []
+      assert unlocked?(ctx)
+
+      # And the user's next turn, in another chat, runs alone.
+      Application.delete_env(:phoenix_kit_agent, :turn_handshake_ms)
+      other_chat = conversation_fixture(ctx.user)
+      :ok = Conversations.subscribe(ctx.ref, other_chat.uuid, @me)
+      assert {:ok, next} = Turns.start(ctx.ref, false, other_chat.uuid, "Again")
+      assert_receive {:model_waiting, _}, 5_000
+
+      :ok = Turns.stop(ctx.ref, false, other_chat.uuid)
+      await_end(other_chat, next)
+    end
+
+    test "an exception after the locks are taken frees them", ctx do
+      assert_raise FunctionClauseError, fn ->
+        Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi", [], request_context: :not_a_keyword)
+      end
+
+      assert unlocked?(ctx)
+      assert messages(ctx.chat) == []
     end
   end
 

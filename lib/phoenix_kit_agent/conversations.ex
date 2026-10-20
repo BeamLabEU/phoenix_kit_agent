@@ -119,6 +119,14 @@ defmodule PhoenixKitAgent.Conversations do
     end)
   end
 
+  @doc false
+  # `get_conversation/3` without the messages, for `PhoenixKitAgent.Turns`:
+  # the same checks, and the chat row only.
+  @spec owned_conversation(session_ref(), term(), keyword()) ::
+          {:ok, Conversation.t()} | {:error, refusal()}
+  def owned_conversation(session_ref, conversation_uuid, opts),
+    do: with_owned(session_ref, conversation_uuid, opts, &{:ok, &1})
+
   @doc "Renames a chat. A blank title or one over 200 characters is an `{:error, changeset}`."
   @spec rename_conversation(session_ref(), term(), term(), keyword()) ::
           {:ok, Conversation.t()} | {:error, refusal() | Ecto.Changeset.t()}

@@ -12,7 +12,10 @@ defmodule PhoenixKitAgent.Turns.Locks do
   free or older than its TTL (`busy_since < now - ttl`), so a lock left by a
   node that went down frees itself. No advisory lock: it would hold a pool
   connection for the whole turn. A lock is released only by the turn that
-  holds it (`busy_turn_ref`), so a late release cannot free a newer turn.
+  holds it (`busy_turn_ref`), so a late release cannot free a newer turn, and
+  a running turn checks before each round that it still holds both
+  (`held?/3`): a turn whose lock was taken over stops there. Times are the
+  database's (`now()`), so the TTL does not depend on the clocks of the nodes.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -28,11 +31,11 @@ defmodule PhoenixKitAgent.Turns.Locks do
   @spec acquire(String.t(), String.t(), String.t(), pos_integer()) ::
           :ok | {:error, :conversation_busy | :turn_in_flight}
   def acquire(user_uuid, conversation_uuid, turn_ref, ttl_s) do
-    now = DateTime.utc_now()
-    stale = DateTime.add(now, -ttl_s, :second)
-
     result =
       repo().transaction(fn ->
+        now = db_now()
+        stale = DateTime.add(now, -ttl_s, :second)
+
         with :ok <- lock_conversation(user_uuid, conversation_uuid, turn_ref, now, stale),
              :ok <- lock_user(user_uuid, turn_ref, now, stale) do
           :ok
@@ -45,6 +48,19 @@ defmodule PhoenixKitAgent.Turns.Locks do
       {:ok, :ok} -> :ok
       {:error, _reason} = error -> error
     end
+  end
+
+  @doc "Whether `turn_ref` holds both locks."
+  @spec held?(String.t(), String.t(), String.t()) :: boolean()
+  def held?(user_uuid, conversation_uuid, turn_ref) do
+    repo().exists?(
+      from(c in Conversation,
+        where: c.uuid == ^conversation_uuid and c.busy_turn_ref == ^turn_ref
+      )
+    ) and
+      repo().exists?(
+        from(s in UserSettings, where: s.user_uuid == ^user_uuid and s.busy_turn_ref == ^turn_ref)
+      )
   end
 
   @doc "Releases both locks if `turn_ref` still holds them."
@@ -107,6 +123,12 @@ defmodule PhoenixKitAgent.Turns.Locks do
       )
 
     if count == 1, do: :ok, else: {:error, :turn_in_flight}
+  end
+
+  # `now()` is the transaction's start, the same for both locks.
+  defp db_now do
+    %{rows: [[now]]} = repo().query!("SELECT now()")
+    now
   end
 
   defp repo, do: RepoHelper.repo()
