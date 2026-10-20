@@ -9,6 +9,15 @@ defmodule PhoenixKitAgent.Spend do
   `cost_cents` of the journal, whatever its name says), and only endpoints that
   report a cost add to it.
 
+  Every row with a cost counts, whatever its `status`: a call that failed or
+  timed out after the provider billed it is money spent all the same. Today
+  `phoenix_kit_ai` writes a cost only on its `"success"` rows (a failed call is
+  logged with `cost_cents` `NULL`, which adds nothing), so the sums equal a
+  success-only count. For the same reason the queries do not filter on
+  `status = 'success'` and cannot use core's partial index
+  `phoenix_kit_ai_requests_user_spend_idx`; they go by the journal's
+  `user_uuid` index and the month's window.
+
   The windows are calendar days and months in the **site time zone**
   (Settings → `time_zone`; `PhoenixKit.Utils.TimeZone`), each from its local
   midnight to the next one — so a day that has 23 or 25 hours is counted right.

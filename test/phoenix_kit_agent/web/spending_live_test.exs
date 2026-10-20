@@ -77,18 +77,28 @@ defmodule PhoenixKitAgent.Web.SpendingLiveTest do
 
     test "spending of an earlier day of the month counts for the month only", ctx do
       member = user_with(["agent"], "member")
+
+      # A site time zone where today is not the first of the month: the dates
+      # at UTC+14 and UTC-12 (legacy offset settings) are always one or two
+      # days apart, so one of them is not the first.
+      zone =
+        Enum.find(["14", "-12"], fn zone ->
+          {:ok, _} = PhoenixKit.Settings.update_setting("time_zone", zone)
+          %{day: {day_start, _}, month: {month_start, _}} = PhoenixKitAgent.Spend.windows()
+          DateTime.compare(day_start, month_start) == :gt
+        end)
+
+      assert zone
+      {:ok, _} = PhoenixKit.Settings.update_setting("time_zone", zone)
       {day_start, _} = PhoenixKitAgent.Spend.windows().day
-      {month_start, _} = PhoenixKitAgent.Spend.windows().month
 
-      if DateTime.compare(day_start, month_start) == :gt do
-        spend!(member, ctx.endpoint, 40_000, at: DateTime.add(day_start, -60, :second))
-        spend!(member, ctx.endpoint, 10_000)
+      spend!(member, ctx.endpoint, 40_000, at: DateTime.add(day_start, -60, :second))
+      spend!(member, ctx.endpoint, 10_000)
 
-        {:ok, view, _html} = live(ctx.conn, @path)
+      {:ok, view, _html} = live(ctx.conn, @path)
 
-        assert has_element?(view, "#agent-spending-#{member.uuid}-day", "0.01")
-        assert has_element?(view, "#agent-spending-#{member.uuid}-month", "0.05")
-      end
+      assert has_element?(view, "#agent-spending-#{member.uuid}-day", "0.01")
+      assert has_element?(view, "#agent-spending-#{member.uuid}-month", "0.05")
     end
 
     test "nobody spent anything", ctx do

@@ -15,12 +15,12 @@ defmodule PhoenixKitAgent.SpendTest do
     %{user: user_fixture("spender"), endpoint: endpoint_fixture()}
   end
 
-  defp spend!(user, endpoint, cost, at, metadata \\ %{"source" => "agent"}) do
+  defp spend!(user, endpoint, cost, at, metadata \\ %{"source" => "agent"}, status \\ "success") do
     Repo.insert!(%PhoenixKitAI.Request{
       endpoint_uuid: endpoint.uuid,
       user_uuid: user.uuid,
       model: endpoint.model,
-      status: "success",
+      status: status,
       cost_cents: cost,
       metadata: metadata,
       inserted_at: at
@@ -97,6 +97,31 @@ defmodule PhoenixKitAgent.SpendTest do
       spend!(ctx.user, ctx.endpoint, 4, ~U[2026-01-15 22:00:00Z])
 
       assert %{day_micro_usd: 4} = Spend.for_users([ctx.user.uuid], now)[ctx.user.uuid]
+    end
+
+    test "the day ends at the next local midnight; later rows count for the month only", ctx do
+      # 15 July in Tallinn runs from 21:00Z on the 14th to 21:00Z on the 15th.
+      now = ~U[2026-07-15 12:00:00Z]
+
+      spend!(ctx.user, ctx.endpoint, 1, ~U[2026-07-15 20:59:59Z])
+      spend!(ctx.user, ctx.endpoint, 10, ~U[2026-07-15 21:00:00Z])
+      spend!(ctx.user, ctx.endpoint, 100, ~U[2026-07-20 08:00:00Z])
+
+      assert %{day_micro_usd: 1, month_micro_usd: 111} =
+               Spend.for_users([ctx.user.uuid], now)[ctx.user.uuid]
+    end
+
+    test "a call that failed but has a cost is money spent; one without a cost is not", ctx do
+      now = ~U[2026-07-15 12:00:00Z]
+      at = ~U[2026-07-15 08:00:00Z]
+
+      spend!(ctx.user, ctx.endpoint, 40, at, %{"source" => "agent"}, "error")
+      spend!(ctx.user, ctx.endpoint, 2, at, %{"source" => "agent"}, "timeout")
+      spend!(ctx.user, ctx.endpoint, nil, at, %{"source" => "agent"}, "error")
+      spend!(ctx.user, ctx.endpoint, 5, at)
+
+      assert %{day_micro_usd: 47, month_micro_usd: 47} =
+               Spend.for_users([ctx.user.uuid], now)[ctx.user.uuid]
     end
 
     test "a sum over what one row can hold is still a whole number", ctx do

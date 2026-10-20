@@ -7,8 +7,8 @@ defmodule PhoenixKitAgent.Limits do
 
     * Money — `PhoenixKitAgent.Spend`: the user's rows of the AI request
       journal whose `metadata.source` is `"agent"`, so a call that describes
-      an attachment counts as well as a model call of a turn. Micro-dollars,
-      `$1 = 1_000_000`.
+      an attachment counts as well as a model call of a turn; every row with
+      a cost, a failed call's included. Micro-dollars, `$1 = 1_000_000`.
     * Turns — the user's `user` messages with a `turn_ref` (one per turn), in
       any of their chats.
 
