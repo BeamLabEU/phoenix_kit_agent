@@ -77,6 +77,35 @@ defmodule PhoenixKitAgent.Web.MarkdownTest do
     end
   end
 
+  test "a link of another scheme with a host is only text" do
+    for url <- ["ftp://example.org/x", "gopher://example.org/x", "mailto://example.org"] do
+      out = html("[get](#{url})")
+      refute out =~ "<a", "made a link of #{url}"
+      assert out =~ "get"
+    end
+  end
+
+  test "a path with letters beyond ASCII still makes a link, encoded" do
+    for {url, encoded} <- [
+          {"https://a.ee/õun", "https://a.ee/%C3%B5un"},
+          {"https://ru.wikipedia.org/wiki/Москва",
+           "https://ru.wikipedia.org/wiki/%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0"}
+        ] do
+      fragment = doc("[x](#{url})")
+      [link] = fragment |> LazyHTML.query("a") |> Enum.to_list()
+      assert LazyHTML.attribute(link, "href") == [encoded]
+      assert LazyHTML.attribute(link, "rel") == ["noopener noreferrer nofollow"]
+    end
+  end
+
+  test "a host beyond ASCII is no link, but its address is kept as text" do
+    fragment = doc("[the shop](https://müük.ee/a)")
+
+    assert fragment |> LazyHTML.query("a") |> Enum.count() == 0
+    assert LazyHTML.text(fragment) =~ "the shop"
+    assert fragment |> LazyHTML.query("[data-link-address]") |> LazyHTML.text() =~ "müük.ee/a"
+  end
+
   test "ordinary markdown keeps its shape, escaped" do
     fragment =
       doc("""

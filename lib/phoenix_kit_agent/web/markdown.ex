@@ -13,7 +13,9 @@ defmodule PhoenixKitAgent.Web.Markdown do
     * A link is an `http`/`https` address only (anything else is its text),
       opens in a new tab with `rel="noopener noreferrer nofollow"`, and has
       its domain written beside it, so a text cannot pass for another site.
-      Nothing is fetched for a link (no preview).
+      Letters beyond ASCII in its path are percent-encoded; a host beyond
+      ASCII makes no link, its address is written as text beside the link's
+      text. Nothing is fetched for a link (no preview).
 
   The tree comes from `MDEx.parse_document/2` and is written out here, every
   text escaped; a node this module does not know is shown by its children or
@@ -103,15 +105,23 @@ defmodule PhoenixKitAgent.Web.Markdown do
   defp block(%MDEx.Image{nodes: nodes}), do: nodes(nodes)
 
   defp block(%MDEx.Link{url: url, nodes: nodes}) do
-    case domain(url) do
-      {:ok, domain} ->
+    case link_target(url) do
+      {:ok, href, domain} ->
         [
           ~s(<a href="),
-          esc(url),
+          esc(href),
           ~s(" target="_blank" rel="noopener noreferrer nofollow" class="link link-primary">),
           nodes(nodes),
           ~s(</a> <span data-link-domain class="text-xs opacity-60">\(),
           esc(domain),
+          ")</span>"
+        ]
+
+      {:text, address} ->
+        [
+          nodes(nodes),
+          ~s( <span data-link-address class="text-xs opacity-60 break-all">\(),
+          esc(address),
           ")</span>"
         ]
 
@@ -132,18 +142,26 @@ defmodule PhoenixKitAgent.Web.Markdown do
 
   defp row(other), do: block(other)
 
-  defp domain(url) when is_binary(url) do
-    case URI.new(url) do
+  # Where a link may go: an `http`/`https` address with an ASCII host. Letters
+  # beyond ASCII in the rest of it are percent-encoded. A host beyond ASCII is
+  # no link (it could pass for another site, and the browser would show it
+  # otherwise than it is written), but its address is kept as text.
+  defp link_target(url) when is_binary(url) do
+    href = URI.encode(url, &(&1 < 0x80))
+
+    case URI.new(href) do
       {:ok, %URI{scheme: scheme, host: host}}
       when scheme in ["http", "https"] and is_binary(host) and host != "" ->
-        {:ok, String.downcase(host)}
+        if String.contains?(host, "%"),
+          do: {:text, url},
+          else: {:ok, href, String.downcase(host)}
 
       _not_a_web_address ->
         :error
     end
   end
 
-  defp domain(_url), do: :error
+  defp link_target(_url), do: :error
 
   defp esc(text), do: text |> html_escape() |> Phoenix.HTML.safe_to_string()
 end
