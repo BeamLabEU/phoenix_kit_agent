@@ -306,7 +306,14 @@ defmodule PhoenixKitAgent.LimitsTest do
       assert [theirs] = notifications(ctx.owner)
       assert theirs.metadata["notification_text"] =~ ctx.user.email
 
-      assert [%LimitEvent{limit_kind: "daily_turns", used: 1, limit: 1}] = events(ctx.user)
+      # One event for the user, one for the watchers.
+      day = today_key()
+      watchers_day = "w:" <> day
+
+      assert [
+               %LimitEvent{limit_kind: "daily_turns", period_key: ^day, used: 1, limit: 1},
+               %LimitEvent{limit_kind: "daily_turns", period_key: ^watchers_day}
+             ] = Enum.sort_by(events(ctx.user), &String.length(&1.period_key))
     end
 
     test "without notify_on_limit the watchers hear nothing", ctx do

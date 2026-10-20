@@ -59,7 +59,7 @@ defmodule PhoenixKitAgent.Turns do
 
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Config, Conversations, Limits, Prompt, UserConfig}
+  alias PhoenixKitAgent.{Config, Conversations, Limits, Prompt, Spend, UserConfig}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
   alias PhoenixKitAgent.Turns.{History, Locks, Monitor}
 
@@ -139,8 +139,8 @@ defmodule PhoenixKitAgent.Turns do
   (`PhoenixKitAgent.Turns.Monitor`). Its locks are then released and the
   chat's topic hears `:agent_turn_finished`; `:ok` means the request was
   made. With `turn_ref`, only that turn is stopped — a newer one in the chat
-  keeps running. `{:error, :not_running}` when no such turn runs there;
-  someone else's chat is `{:error, :not_found}`.
+  keeps running. `{:error, :not_running}` when no such turn runs there (or
+  the monitor is restarting); someone else's chat is `{:error, :not_found}`.
   """
   @spec stop(Conversations.session_ref(), boolean(), term(), String.t() | nil) ::
           :ok | {:error, refusal()}
@@ -298,9 +298,15 @@ defmodule PhoenixKitAgent.Turns do
 
   defp started({:ok, _pid}, _conversation, turn_ref, _user), do: {:ok, turn_ref}
 
+  # The notice is written while the locks are still held, so two refused
+  # starts cannot both find the chat without one.
   defp started({:error, {:limit_reached, reached}}, conversation, turn_ref, user) do
-    Locks.release(conversation.user_uuid, conversation.uuid, turn_ref)
-    limit_reached(conversation, turn_ref, user.settings, reached)
+    try do
+      limit_reached(conversation, turn_ref, user.settings, reached)
+    after
+      Locks.release(conversation.user_uuid, conversation.uuid, turn_ref)
+    end
+
     {:error, {:limit_reached, reached.kind}}
   end
 
@@ -320,18 +326,36 @@ defmodule PhoenixKitAgent.Turns do
       :erlang.raise(kind, reason, stacktrace)
   end
 
-  # The chat says why nothing happened; the user (and, if they are to be
-  # told, the watchers) hear of the limit once per period.
+  # The chat says why nothing happened — once per limit and period, however
+  # often the user tries again; the user (and, if they are to be told, the
+  # watchers) hear of the limit once per period.
   defp limit_reached(conversation, turn_ref, settings, reached) do
-    _ =
-      Conversations.add_turn_message(conversation.user_uuid, conversation.uuid, %{
-        turn_ref: turn_ref,
-        role: "notice",
-        content: limit_text(reached.kind),
-        error: limit_code(reached.kind)
-      })
+    code = limit_code(reached.kind)
+
+    unless notice_in_period?(conversation, code, reached.kind) do
+      _ =
+        Conversations.add_turn_message(conversation.user_uuid, conversation.uuid, %{
+          turn_ref: turn_ref,
+          role: "notice",
+          content: limit_text(reached.kind),
+          error: code
+        })
+    end
 
     Limits.announce_reached(settings, reached)
+  end
+
+  defp notice_in_period?(conversation, code, kind) do
+    windows = Spend.windows()
+    {from, _to} = if kind == :monthly_cost, do: windows.month, else: windows.day
+
+    repo().exists?(
+      from(m in Message,
+        where:
+          m.conversation_uuid == ^conversation.uuid and m.role == "notice" and m.error == ^code and
+            m.inserted_at >= ^from
+      )
+    )
   end
 
   defp limit_code(:daily_cost), do: "daily_cost_limit"

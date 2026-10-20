@@ -44,7 +44,10 @@ defmodule PhoenixKitAgent.Limits do
       (the same key, so an unread warning becomes the new text), and, only
       when the user's `notify_on_limit` is on, a notification of type
       `"agent_limit"` to the watchers (`create_many/2`, which respects a
-      watcher who switched that type off).
+      watcher who switched that type off). The two have their own events —
+      the watchers' period key is `w:<period>`, written only when they are
+      told — so `notify_on_limit` switched on later in the period still
+      tells the watchers of that period, once.
     * The `phoenix_kit_ai` budget used up (`ai_budget_reached/2`) — the
       watchers, at most once a day per user (event kind `ai_budget`).
 
@@ -144,10 +147,19 @@ defmodule PhoenixKitAgent.Limits do
           text: reached_text(status),
           icon: @icon
         })
-
-        if settings.notify_on_limit, do: tell_watchers(user_uuid, &watcher_text(&1, status))
       end
     end)
+
+    # The watchers' own event, written only when they are told: switched on
+    # later in the period, `notify_on_limit` still reaches them.
+    if settings.notify_on_limit do
+      safely(fn ->
+        if first?(user_uuid, Atom.to_string(kind), "w:" <> period, status.used, status.limit),
+          do: tell_watchers(user_uuid, &watcher_text(&1, status))
+      end)
+    end
+
+    :ok
   end
 
   @doc """

@@ -1364,11 +1364,58 @@ defmodule PhoenixKitAgent.TurnsTest do
     end
   end
 
+  describe "the monitor while it restarts" do
+    test "a stop is refused, not raised; the turn runs on", ctx do
+      hang_next()
+      turn_ref = start!(ctx, "Hi")
+      assert_receive {:model_waiting, _pid}, 5_000
+
+      name = PhoenixKitAgent.Turns.Monitor
+      monitor = Process.whereis(name)
+      true = Process.unregister(name)
+
+      on_exit(fn ->
+        if Process.alive?(monitor) and Process.whereis(name) == nil,
+          do: Process.register(monitor, name)
+      end)
+
+      result = Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref)
+      true = Process.register(monitor, name)
+
+      assert result == {:error, :not_running}
+      assert :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid, turn_ref)
+      await_end(ctx.chat, turn_ref)
+    end
+  end
+
   # ── a chat deleted while its turn runs ──────────────────────────────
 
   describe "a chat deleted mid-turn" do
+    # Has the turn's task tell the test how it ended: called in that task (a
+    # model answer's `before`), it returns once a watcher monitors it.
+    defp watch_turn_task(test) do
+      task = self()
+
+      spawn(fn ->
+        ref = Process.monitor(task)
+        send(task, :watching)
+
+        receive do
+          {:DOWN, ^ref, :process, ^task, reason} -> send(test, {:turn_task_down, reason})
+        end
+      end)
+
+      receive do
+        :watching -> :ok
+      end
+    end
+
     test "the turn ends quietly: no notice, no further model call", ctx do
+      test = self()
+
       answer_next(tool_answer([call("c1", "agenttest_list_items", %{})]), fn ->
+        watch_turn_task(test)
+
         Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
           set: [status: "deleted"]
         )
@@ -1388,13 +1435,70 @@ defmodule PhoenixKitAgent.TurnsTest do
 
       assert [%Message{role: "user"}] = messages(ctx.chat)
       assert unlocked?(ctx)
+      assert_receive {:turn_task_down, {:shutdown, :chat_gone}}, 5_000
       refute Enum.any?(logs, &(&1 =~ "terminating"))
+      refute Enum.any?(logs, &(&1 =~ "a turn crashed"))
+    end
+
+    test "deleted after a round was stored: the next round does not call the model", ctx do
+      # The chat is deleted in the same transaction that stores the tool
+      # result, so every write of the round goes through and only the check
+      # before the next round sees the chat gone.
+      Repo.query!("""
+      CREATE FUNCTION pg_temp.agent_delete_chat_on_tool() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.role = 'tool' THEN
+          UPDATE phoenix_kit_agent_conversations SET status = 'deleted'
+          WHERE uuid = NEW.conversation_uuid;
+        END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER agent_delete_chat_on_tool AFTER INSERT ON phoenix_kit_agent_messages
+      FOR EACH ROW EXECUTE FUNCTION pg_temp.agent_delete_chat_on_tool()
+      """)
+
+      test = self()
+
+      answer_next(tool_answer([call("c1", "agenttest_list_items", %{})]), fn ->
+        watch_turn_task(test)
+      end)
+
+      {turn_ref, logs} =
+        LogProbe.capture(fn ->
+          turn_ref = start!(ctx, "Hi")
+          await_end(ctx.chat, turn_ref)
+          turn_ref
+        end)
+
+      assert is_binary(turn_ref)
+      assert_received {:model_request, _}
+      refute_received {:model_request, _}
+      assert_receive {:turn_task_down, {:shutdown, :chat_gone}}, 5_000
+
+      assert [%Message{role: "user"}, %Message{role: "assistant"}, %Message{role: "tool"}] =
+               messages(ctx.chat)
+
+      assert unlocked?(ctx)
+      refute Enum.any?(logs, &(&1 =~ "a turn crashed"))
     end
   end
 
   # ── what the model answers ──────────────────────────────────────────
 
   describe "the model's answer" do
+    test "an answer of NUL characters only is the empty-answer notice", ctx do
+      answer_next(text_answer(<<0, 0>> <> " " <> <<0>>))
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert [%Message{role: "user"}, %Message{role: "notice", error: "empty_answer"}] =
+               messages(ctx.chat)
+    end
+
     test "a tool call without a name is not run, stored or replayed", ctx do
       nameless = %{"id" => "n1", "type" => "function", "function" => %{"arguments" => "{}"}}
       blank = call("n2", " ", %{})
@@ -1505,8 +1609,11 @@ defmodule PhoenixKitAgent.TurnsTest do
       kept = Enum.reject(older, &Map.has_key?(Jason.decode!(&1["content"]), "omitted"))
       stubbed = older -- kept
 
-      assert stubbed != []
-      assert hd(older) in stubbed
+      # 10 × ~414 characters of the newest round leave room for two older
+      # results: the two newest of them are kept, the eight before them stubbed.
+      assert length(stubbed) == 8
+      assert stubbed == Enum.take(older, 8)
+      assert kept == Enum.take(older, -2)
       assert Enum.all?(newest, &(Jason.decode!(&1["content"])["items"] != nil))
 
       for stub <- stubbed do
@@ -1601,17 +1708,75 @@ defmodule PhoenixKitAgent.TurnsTest do
 
       assert notifications_of(owner) == []
       assert [_one] = notifications_of(ctx.user)
-      assert length(messages(ctx.chat)) == 2
 
-      # Switched on later the same day: the period was already announced.
+      # Switched on later the same day: the watchers were not told of this
+      # period yet, so they are now — once; the user is not told again.
       Repo.update_all(from(s in UserSettings, where: s.user_uuid == ^ctx.user.uuid),
         set: [notify_on_limit: true]
+      )
+
+      for _ <- 1..2 do
+        assert {:error, {:limit_reached, :daily_turns}} =
+                 Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+      end
+
+      assert [%{metadata: %{"notification_text" => text}}] = notifications_of(owner)
+      assert text =~ ctx.user.email
+      assert [_one] = notifications_of(ctx.user)
+    end
+
+    test "a refusal repeated in one period leaves one notice in the chat", ctx do
+      limits!(ctx.user, daily_turn_limit: 0)
+      other_chat = conversation_fixture(ctx.user)
+
+      for _ <- 1..3 do
+        assert {:error, {:limit_reached, :daily_turns}} =
+                 Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+      end
+
+      assert [%Message{role: "notice", error: "daily_turn_limit"}] = messages(ctx.chat)
+
+      # Another chat says it once too.
+      assert {:error, {:limit_reached, :daily_turns}} =
+               Turns.start(ctx.ref, false, other_chat.uuid, "Hi")
+
+      assert [%Message{role: "notice", error: "daily_turn_limit"}] = messages(other_chat)
+
+      # Another limit is another notice.
+      Repo.update_all(from(s in UserSettings, where: s.user_uuid == ^ctx.user.uuid),
+        set: [daily_turn_limit: 10]
+      )
+
+      spend!(ctx.user, ctx.endpoint, 1_000_000)
+
+      assert {:error, {:limit_reached, :daily_cost}} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
+
+      assert Enum.map(messages(ctx.chat), & &1.error) == ["daily_turn_limit", "daily_cost_limit"]
+      assert unlocked?(ctx)
+    end
+
+    test "a notice of an earlier period does not stand for this one", ctx do
+      limits!(ctx.user, daily_turn_limit: 0)
+      {day_start, _} = PhoenixKitAgent.Spend.windows().day
+
+      {:ok, _} =
+        Conversations.add_turn_message(ctx.user.uuid, ctx.chat.uuid, %{
+          turn_ref: "earlier",
+          role: "notice",
+          content: "You have used all your assistant turns for today.",
+          error: "daily_turn_limit"
+        })
+
+      Repo.update_all(from(m in Message, where: m.conversation_uuid == ^ctx.chat.uuid),
+        set: [inserted_at: DateTime.add(day_start, -60, :second)]
       )
 
       assert {:error, {:limit_reached, :daily_turns}} =
                Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")
 
-      assert notifications_of(owner) == []
+      assert [%Message{turn_ref: "earlier"}, %Message{error: "daily_turn_limit"}] =
+               messages(ctx.chat)
     end
 
     test "with notify_on_limit the watchers hear of it once a period", ctx do
@@ -1852,6 +2017,50 @@ defmodule PhoenixKitAgent.TurnsTest do
       await_end(ctx.chat, turn_ref)
 
       assert [%Message{role: "user"}] = messages(ctx.chat)
+    end
+  end
+
+  describe "a stop that arrives during a tool call" do
+    test "the next tool call of the same answer does not run", ctx do
+      chat_uuid = ctx.chat.uuid
+      ref = ctx.ref
+
+      Application.put_env(:phoenix_kit_agent, :test_tool_hook, fn
+        _name, %{"say" => "first"} ->
+          :ok = Turns.stop(ref, false, chat_uuid)
+          # The monitor has passed the request on to this task.
+          _ = :sys.get_state(Monitor)
+          :ok
+
+        _name, _input ->
+          :ok
+      end)
+
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :test_tool_hook) end)
+
+      answer_next(
+        tool_answer([
+          call("c1", "agenttest_list_items", %{"say" => "first"}),
+          call("c2", "agenttest_list_items", %{"say" => "second"})
+        ])
+      )
+
+      turn_ref = start!(ctx, "Two tools")
+      await_end(ctx.chat, turn_ref)
+
+      assert_received {:agent_test_tool, "agenttest.list_items", %{"say" => "first"}, _}
+      refute_received {:agent_test_tool, _, %{"say" => "second"}, _}
+      assert_received {:model_request, _}
+      refute_received {:model_request, _}
+
+      # A stop asked for by the user writes no notice.
+      assert [
+               %Message{role: "user"},
+               %Message{role: "assistant"},
+               %Message{role: "tool", tool_call_id: "c1"}
+             ] = messages(ctx.chat)
+
+      assert unlocked?(ctx)
     end
   end
 

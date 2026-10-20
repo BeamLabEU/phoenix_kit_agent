@@ -178,11 +178,19 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   @doc """
   Asks the turn whose task is `pid` to stop (`reason` `:stopped`); it is
   killed if it has not stopped within the grace period. Asynchronous.
+  `{:error, :not_running}` while the monitor is not up (it restarts, and its
+  tasks go with it).
   """
-  @spec request_stop(pid(), :stopped) :: :ok
+  @spec request_stop(pid(), :stopped) :: :ok | {:error, :not_running}
   def request_stop(pid, :stopped = reason) when is_pid(pid) do
-    send(__MODULE__, {:request_stop, pid, reason})
-    :ok
+    case Process.whereis(__MODULE__) do
+      nil ->
+        {:error, :not_running}
+
+      monitor ->
+        send(monitor, {:request_stop, pid, reason})
+        :ok
+    end
   end
 
   @doc """
@@ -376,6 +384,7 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   defp without_arguments(stacktrace) do
     Enum.map(stacktrace, fn
       {module, fun, args, location} when is_list(args) -> {module, fun, length(args), location}
+      {fun, args, location} when is_list(args) -> {fun, length(args), location}
       frame -> frame
     end)
   end

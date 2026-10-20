@@ -11,7 +11,9 @@ defmodule PhoenixKitAgent.Test.Tools do
   | `agenttest.write_item` | write | `agenttest.items:write` | `dashboard` |
 
   Every handler sends `{:agent_test_tool, name, input, ctx}` to the process in
-  `Application.get_env(:phoenix_kit_agent, :test_tool_listener)`.
+  `Application.get_env(:phoenix_kit_agent, :test_tool_listener)`, and then
+  calls the function in `:test_tool_hook`, if one is set, with the tool's name
+  and input — in the process that runs the tool (the turn's task).
   `agenttest.write_item` also really writes: the setting `agenttest_written`.
   `agenttest.list_items` with `"size" => n` answers about `n` characters, and
   with `"say" => text` answers `text` as its only item.
@@ -64,6 +66,11 @@ defmodule PhoenixKitAgent.Test.Tools do
   defp notify(name, input, ctx) do
     case Application.get_env(:phoenix_kit_agent, :test_tool_listener) do
       pid when is_pid(pid) -> send(pid, {:agent_test_tool, name, input, ctx})
+      _ -> :ok
+    end
+
+    case Application.get_env(:phoenix_kit_agent, :test_tool_hook) do
+      hook when is_function(hook, 2) -> hook.(name, input)
       _ -> :ok
     end
   end

@@ -346,7 +346,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   defp store_answer(turn, message_uuid, response, request, latency_ms) do
     content =
       case PhoenixKitAI.extract_content(response) do
-        {:ok, text} when is_binary(text) -> text
+        {:ok, text} when is_binary(text) -> Message.strip_nul(text)
         _no_text -> nil
       end
 
