@@ -1072,27 +1072,27 @@ msgstr "Keegi jõudis AI-assistendi kulu- või vestlusringide limiidini või AI 
 #: lib/phoenix_kit_agent/limits.ex:407
 #, elixir-autogen, elixir-format
 msgid "The AI budget of the endpoint refused the AI assistant of %{email}."
-msgstr "Lõpp-punkti AI eelarve keeldus kasutaja %{email} AI-assistendist."
+msgstr "Lõpp-punkti AI eelarve lükkas tagasi kasutaja %{email} AI-assistendi päringu."
 
 #: lib/phoenix_kit_agent/limits.ex:415
 #, elixir-autogen, elixir-format
 msgid "The AI budget of the user refused the AI assistant of %{email}."
-msgstr "Kasutaja AI eelarve keeldus kasutaja %{email} AI-assistendist."
+msgstr "Kasutaja AI eelarve lükkas tagasi kasutaja %{email} AI-assistendi päringu."
 
 #: lib/phoenix_kit_agent/limits.ex:429
 #, elixir-autogen, elixir-format
 msgid "The AI budget refused the AI assistant of %{email}."
-msgstr "AI eelarve keeldus kasutaja %{email} AI-assistendist."
+msgstr "AI eelarve lükkas tagasi kasutaja %{email} AI-assistendi päringu."
 
 #: lib/phoenix_kit_agent/limits.ex:421
 #, elixir-autogen, elixir-format
 msgid "The AI call limit of the user refused the AI assistant of %{email}."
-msgstr "Kasutaja AI-päringute limiit keeldus kasutaja %{email} AI-assistendist."
+msgstr "Kasutaja %{email} AI-assistendi päring lükati tagasi kasutaja AI-päringute limiidi tõttu."
 
 #: lib/phoenix_kit_agent/limits.ex:401
 #, elixir-autogen, elixir-format
 msgid "The overall AI budget refused the AI assistant of %{email}."
-msgstr "AI üldeelarve keeldus kasutaja %{email} AI-assistendist."
+msgstr "AI üldeelarve lükkas tagasi kasutaja %{email} AI-assistendi päringu."
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:483
 #: lib/phoenix_kit_agent/web/users_live.ex:541

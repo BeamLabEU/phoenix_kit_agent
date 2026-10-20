@@ -425,7 +425,7 @@ defmodule PhoenixKitAgent.LimitsTest do
       assert length(notifications(ctx.owner)) == 2
     end
 
-    for {locale, word} <- [{"et", "keeldus"}, {"ru", "отказ"}] do
+    for {locale, word} <- [{"et", "tagasi"}, {"ru", "отказ"}] do
       test "each scope of the budget has its own sentence in the site's language (#{locale})",
            ctx do
         Application.put_env(:phoenix_kit, :default_locale, unquote(locale))
