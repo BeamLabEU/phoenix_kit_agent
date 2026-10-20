@@ -5,10 +5,10 @@ defmodule PhoenixKitAgent.Turns.Monitor do
 
     * the task returns — the turn wrote its own answer or notice;
     * the deadline passes (`agent_turn_deadline_s`, counted from the
-      go-ahead) — the task is killed and a `deadline` notice is written;
-    * the user stops it (`PhoenixKitAgent.Turns.stop/4`, exit reason
-      `{:shutdown, :stopped}`) — nothing is written, a partial answer is not
-      kept;
+      go-ahead) — the task is asked to stop (below) and a `deadline` notice
+      is written;
+    * the user stops it (`PhoenixKitAgent.Turns.stop/4`, `request_stop/2`) —
+      nothing is written, a partial answer is not kept;
     * its chat was deleted (`{:shutdown, :chat_gone}`) — nothing is written;
     * it ends in any way before its go-ahead (see below) — nothing is
       written: the turn wrote nothing yet;
@@ -22,6 +22,18 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   of their own, so a slow database delays no other start and no deadline; if
   that process cannot be started (the task supervisor is restarting), they
   run here.
+
+  ## Stopping: a request first, a kill after the grace period
+
+  Neither "Stop" nor the deadline kills the task outright: a model call under
+  way would die before `phoenix_kit_ai` writes its journal row, and what it
+  cost would be lost to the limits. The monitor sends the task a stop request,
+  which the task honours between its steps (`check_stop/0`, see
+  `PhoenixKitAgent.Turns.Runner`), and kills it only if it is still there
+  after the grace period (`:turn_stop_grace_ms`, default 30 s — within the 60
+  s a lock outlives its deadline). However the task then ends, the turn ends
+  as stopped or past its deadline. A second request, or a deadline after a
+  stop, changes nothing.
 
   ## Nothing of a turn in the log
 
@@ -67,6 +79,11 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   # process to take the start and once this for the task to be ready; the
   # task waits up to twice this for the go-ahead.
   @handshake_ms 5_000
+
+  # How long a task asked to stop may take to get there before it is killed.
+  @stop_grace_ms 30_000
+
+  @stop {__MODULE__, :stop}
 
   @typedoc """
   What kind of exit made a start fail — never the exit term itself, which can
@@ -150,6 +167,32 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   defp handshake_ms,
     do: Application.get_env(:phoenix_kit_agent, :turn_handshake_ms, @handshake_ms)
 
+  defp stop_grace_ms,
+    do: Application.get_env(:phoenix_kit_agent, :turn_stop_grace_ms, @stop_grace_ms)
+
+  @doc """
+  Asks the turn whose task is `pid` to stop (`reason` `:stopped`); it is
+  killed if it has not stopped within the grace period. Asynchronous.
+  """
+  @spec request_stop(pid(), :stopped) :: :ok
+  def request_stop(pid, :stopped = reason) when is_pid(pid) do
+    send(__MODULE__, {:request_stop, pid, reason})
+    :ok
+  end
+
+  @doc """
+  In a turn's task: ends it as `{:shutdown, reason}` if it was asked to stop,
+  else `:ok`. The turn calls it between its steps.
+  """
+  @spec check_stop() :: :ok
+  def check_stop do
+    receive do
+      {@stop, reason} -> exit({:shutdown, reason})
+    after
+      0 -> :ok
+    end
+  end
+
   @impl GenServer
   def init(_opts), do: {:ok, %{}}
 
@@ -166,8 +209,9 @@ defmodule PhoenixKitAgent.Turns.Monitor do
           pid: pid,
           deadline_ms: deadline_ms,
           timer: nil,
+          kill_timer: nil,
           running?: false,
-          deadline?: false
+          stop: nil
         }
 
         {:reply, {:ok, pid}, Map.put(turns, ref, entry)}
@@ -190,15 +234,23 @@ defmodule PhoenixKitAgent.Turns.Monitor do
     end
   end
 
-  def handle_info({:deadline, ref}, turns) do
-    case Map.fetch(turns, ref) do
-      {:ok, entry} ->
-        Process.exit(entry.pid, :kill)
-        {:noreply, Map.put(turns, ref, %{entry | deadline?: true})}
+  def handle_info({:deadline, ref}, turns), do: {:noreply, ask_to_stop(turns, ref, :deadline)}
 
-      :error ->
-        {:noreply, turns}
+  def handle_info({:request_stop, pid, reason}, turns) do
+    case Enum.find(turns, fn {_ref, entry} -> entry.pid == pid end) do
+      {ref, _entry} -> {:noreply, ask_to_stop(turns, ref, reason)}
+      nil -> {:noreply, turns}
     end
+  end
+
+  # The grace period is over and the task is still there.
+  def handle_info({:kill, ref}, turns) do
+    case Map.fetch(turns, ref) do
+      {:ok, entry} -> Process.exit(entry.pid, :kill)
+      :error -> :ok
+    end
+
+    {:noreply, turns}
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, turns) do
@@ -208,6 +260,7 @@ defmodule PhoenixKitAgent.Turns.Monitor do
 
       {entry, turns} ->
         if entry.timer, do: Process.cancel_timer(entry.timer)
+        if entry.kill_timer, do: Process.cancel_timer(entry.kill_timer)
         turn = entry.turn
         ending = ending(entry, reason)
 
@@ -221,6 +274,20 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   end
 
   def handle_info(_other, turns), do: {:noreply, turns}
+
+  # The first request wins: a deadline after "Stop" does not make the turn a
+  # deadline, and the grace period is not restarted.
+  defp ask_to_stop(turns, ref, reason) do
+    case Map.fetch(turns, ref) do
+      {:ok, %{stop: nil} = entry} ->
+        send(entry.pid, {@stop, reason})
+        kill_timer = Process.send_after(self(), {:kill, ref}, stop_grace_ms())
+        Map.put(turns, ref, %{entry | stop: reason, kill_timer: kill_timer})
+
+      _gone_or_stopping ->
+        turns
+    end
+  end
 
   # A task supervisor that is restarting is not there for a moment:
   # `start_child` then exits (`:noproc`) instead of answering.
@@ -324,8 +391,8 @@ defmodule PhoenixKitAgent.Turns.Monitor do
   # one that never got its go-ahead wrote nothing, however it ended.
   defp ending(_entry, :normal), do: :done
   defp ending(%{running?: false}, _reason), do: :not_started
-  defp ending(%{deadline?: true}, _reason), do: :deadline
-  defp ending(_entry, {:shutdown, :stopped}), do: :stopped
+  defp ending(%{stop: :deadline}, _reason), do: :deadline
+  defp ending(%{stop: :stopped}, _reason), do: :stopped
   defp ending(_entry, {:shutdown, :chat_gone}), do: :chat_gone
   defp ending(_entry, _reason), do: :interrupted
 

@@ -4,6 +4,10 @@ import Config
 #   createdb phoenix_kit_agent_test
 config :phoenix_kit_agent, ecto_repos: [PhoenixKitAgent.Test.Repo]
 
+# A turn asked to stop that is stuck in a stubbed model call is killed after
+# this; the tests of the grace period itself set a longer one.
+config :phoenix_kit_agent, turn_stop_grace_ms: 200
+
 # `PGDATABASE` lets this suite point at a database the test role isn't
 # allowed to CREATE (e.g. a shared instance) instead of the name Hex CI
 # provisions for itself. Same mechanism as core phoenix_kit's

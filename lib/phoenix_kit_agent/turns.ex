@@ -119,11 +119,15 @@ defmodule PhoenixKitAgent.Turns do
   end
 
   @doc """
-  Stops the turn running in the user's chat: its task ends at once, the
-  answer it was waiting for is not kept, and its locks are released (the
-  chat's topic hears `:agent_turn_finished`). With `turn_ref`, only that turn
-  is stopped — a newer one in the chat keeps running. `{:error, :not_running}`
-  when no such turn runs there; someone else's chat is `{:error, :not_found}`.
+  Stops the turn running in the user's chat. The turn is asked to stop and
+  ends at its next step — a model call under way is let finish, so the AI
+  journal records what it cost, but its answer is not kept — or is killed if
+  it has not stopped within the grace period
+  (`PhoenixKitAgent.Turns.Monitor`). Its locks are then released and the
+  chat's topic hears `:agent_turn_finished`; `:ok` means the request was
+  made. With `turn_ref`, only that turn is stopped — a newer one in the chat
+  keeps running. `{:error, :not_running}` when no such turn runs there;
+  someone else's chat is `{:error, :not_found}`.
   """
   @spec stop(Conversations.session_ref(), boolean(), term(), String.t() | nil) ::
           :ok | {:error, refusal()}
@@ -134,8 +138,7 @@ defmodule PhoenixKitAgent.Turns do
          :ok <- same_turn(running, turn_ref) do
       case Registry.lookup(@registry, running) do
         [{pid, ^conversation_uuid}] ->
-          Process.exit(pid, {:shutdown, :stopped})
-          :ok
+          Monitor.request_stop(pid, :stopped)
 
         _not_here ->
           {:error, :not_running}

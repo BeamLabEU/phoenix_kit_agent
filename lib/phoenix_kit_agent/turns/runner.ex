@@ -27,7 +27,19 @@ defmodule PhoenixKitAgent.Turns.Runner do
     f. runs each tool call — only a name shown in **this** round reaches the
        executor (`execute_as/5`, `allow: :read`), any other is `denied`, and so
        is every call past the 10th of the round — and stores each result,
-       truncated.
+       truncated. Before each call the turn checks that it still holds its
+       locks: a lock taken over ends the turn there, with a notice.
+
+  ## Stopping between steps
+
+  "Stop" and the deadline do not kill the task at once: the monitor asks it to
+  stop (`PhoenixKitAgent.Turns.Monitor`), and the task looks for that request
+  before it stores the user's message, before each round, as soon as the
+  model has answered and before each tool call — and then ends as
+  `{:shutdown, :stopped | :deadline}` without storing anything more (a
+  partial answer is not kept). A model call under way is let finish, so its
+  row in the AI journal — what the call cost — is written. Only a task that
+  does not get there within the grace period is killed.
 
   A message the database refuses ends the task as `{:shutdown,
   :store_failed}` (the log gets the field names and validation codes only),
@@ -61,7 +73,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.Conversations
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
-  alias PhoenixKitAgent.Turns.{Locks, Tools}
+  alias PhoenixKitAgent.Turns.{Locks, Monitor, Tools}
 
   @awaiting {__MODULE__, :awaiting_ai_request}
 
@@ -109,6 +121,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   """
   @spec run(turn()) :: :ok
   def run(turn) do
+    :ok = Monitor.check_stop()
     message = store!(turn, %{turn_ref: turn.turn_ref, role: "user", content: turn.text})
     link_attachments(turn.attachment_uuids, message)
     round(turn, 1, turn.history)
@@ -159,16 +172,14 @@ defmodule PhoenixKitAgent.Turns.Runner do
       case ask_model(turn, transcript, definitions) do
         {:ok, %Message{role: "assistant", tool_calls: calls} = message}
         when is_list(calls) and calls != [] ->
-          results =
-            calls
-            |> Enum.with_index(1)
-            |> Enum.map(fn
-              {call, n} when n <= @max_calls_per_round -> run_call(turn, call, allowed)
-              {call, _past_the_cap} -> run_call(turn, call, %{}, too_many_calls())
-            end)
+          case run_calls(turn, calls, allowed) do
+            {:ok, results} ->
+              latest = [assistant_entry(message) | results]
+              round(turn, r + 1, fit_turn(transcript, latest, turn.result_chars) ++ latest)
 
-          latest = [assistant_entry(message) | results]
-          round(turn, r + 1, fit_turn(transcript, latest, turn.result_chars) ++ latest)
+            {:error, reason} ->
+              stopped(turn, reason)
+          end
 
         _answered_or_failed ->
           :ok
@@ -180,6 +191,8 @@ defmodule PhoenixKitAgent.Turns.Runner do
   end
 
   defp may_go_on(turn) do
+    :ok = Monitor.check_stop()
+
     with {:ok, _user_uuid} <-
            Conversations.authorize_session(turn.session_ref, impersonated: false) do
       cond do
@@ -267,6 +280,10 @@ defmodule PhoenixKitAgent.Turns.Runner do
       after
         Process.delete(@awaiting)
       end
+
+    # The call is over and its journal row written: a stop asked for while it
+    # ran ends the turn here, before the answer is stored.
+    :ok = Monitor.check_stop()
 
     request = Process.delete({@awaiting, message_uuid})
     latency_ms = System.monotonic_time(:millisecond) - started
@@ -380,6 +397,31 @@ defmodule PhoenixKitAgent.Turns.Runner do
   defp encoded_arguments(arguments), do: Jason.encode!(arguments)
 
   # ── a tool call ─────────────────────────────────────────────────
+
+  # The calls of one answer, in order; before each, a stop asked for ends the
+  # turn and a lock taken over ends it with a notice.
+  defp run_calls(turn, calls, allowed) do
+    calls
+    |> Enum.with_index(1)
+    |> Enum.reduce_while({:ok, []}, fn {call, n}, {:ok, results} ->
+      :ok = Monitor.check_stop()
+
+      if Locks.held?(turn.user_uuid, turn.conversation_uuid, turn.turn_ref) do
+        result =
+          if n <= @max_calls_per_round,
+            do: run_call(turn, call, allowed),
+            else: run_call(turn, call, %{}, too_many_calls())
+
+        {:cont, {:ok, [result | results]}}
+      else
+        {:halt, {:error, :lock_lost}}
+      end
+    end)
+    |> case do
+      {:ok, results} -> {:ok, Enum.reverse(results)}
+      {:error, _reason} = error -> error
+    end
+  end
 
   defp run_call(turn, call, allowed, denial \\ denied()) do
     {registry_name, outcome, result} =

@@ -1525,6 +1525,142 @@ defmodule PhoenixKitAgent.TurnsTest do
 
   # ── nothing of a turn reaches the log (spec §8.2) ───────────────────
 
+  # ── stopping between steps ──────────────────────────────────────────
+
+  describe "stop and deadline let a model call finish" do
+    setup do
+      Application.put_env(:phoenix_kit_agent, :turn_stop_grace_ms, 5_000)
+      on_exit(fn -> Application.put_env(:phoenix_kit_agent, :turn_stop_grace_ms, 200) end)
+      :ok
+    end
+
+    # The next model request waits for `:answer`, then answers with a cost.
+    defp answer_on_demand(answer) do
+      test = self()
+
+      Req.Test.expect(@stub, fn conn ->
+        send(test, {:model_waiting, self()})
+
+        receive do
+          :answer -> Req.Test.json(conn, put_in(answer, ["usage", "cost"], 0.002))
+        end
+      end)
+    end
+
+    defp journal(user) do
+      Repo.all(
+        from(r in PhoenixKitAI.Request,
+          where: r.user_uuid == ^user.uuid and fragment("?->>'source' = 'agent'", r.metadata)
+        )
+      )
+    end
+
+    test "stop: the call finishes and its cost is in the journal; the answer is not kept",
+         ctx do
+      answer_on_demand(tool_answer([call("c1", "agenttest_list_items", %{})]))
+      turn_ref = start!(ctx, "Hi")
+      assert_receive {:model_waiting, stub}, 5_000
+      [{task, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
+      down = Process.monitor(task)
+
+      assert :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid)
+      _ = :sys.get_state(PhoenixKitAgent.Turns.Monitor)
+      send(stub, :answer)
+
+      assert_receive {:DOWN, ^down, :process, ^task, {:shutdown, :stopped}}, 5_000
+      await_end(ctx.chat, turn_ref)
+
+      assert [%Message{role: "user"}] = messages(ctx.chat)
+      assert [%{cost_cents: 2_000}] = journal(ctx.user)
+      refute_received {:agent_test_tool, _, _, _}
+      assert unlocked?(ctx)
+    end
+
+    test "the deadline: the call finishes, then the deadline notice", ctx do
+      answer_on_demand(text_answer("Late."))
+      turn_ref = start!(ctx, "Hi", deadline_ms: 100)
+      assert_receive {:model_waiting, stub}, 5_000
+      [{task, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
+      down = Process.monitor(task)
+
+      monitor = Process.whereis(PhoenixKitAgent.Turns.Monitor)
+
+      wait_until(fn ->
+        monitor |> :sys.get_state() |> Map.values() |> Enum.any?(&(&1.stop == :deadline))
+      end)
+
+      send(stub, :answer)
+      assert_receive {:DOWN, ^down, :process, ^task, {:shutdown, :deadline}}, 5_000
+      await_end(ctx.chat, turn_ref)
+
+      assert [%Message{role: "user"}, %Message{role: "notice", error: "deadline"}] =
+               messages(ctx.chat)
+
+      assert [%{cost_cents: 2_000}] = journal(ctx.user)
+      assert unlocked?(ctx)
+    end
+
+    test "a stop that comes while the model answers: no answer kept, no tool run", ctx do
+      answer_next(tool_answer([call("c1", "agenttest_list_items", %{})]), fn ->
+        :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid)
+        _ = :sys.get_state(PhoenixKitAgent.Turns.Monitor)
+      end)
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert [%Message{role: "user"}] = messages(ctx.chat)
+      refute_received {:agent_test_tool, _, _, _}
+    end
+
+    test "a turn that does not stop within the grace period is killed", ctx do
+      Application.put_env(:phoenix_kit_agent, :turn_stop_grace_ms, 100)
+
+      hang_next()
+      turn_ref = start!(ctx, "Hi")
+      assert_receive {:model_waiting, _stub}, 5_000
+      [{task, _}] = Registry.lookup(PhoenixKitAgent.Turns.Registry, turn_ref)
+      down = Process.monitor(task)
+
+      :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid)
+      assert_receive {:DOWN, ^down, :process, ^task, :killed}, 5_000
+      await_end(ctx.chat, turn_ref)
+
+      assert [%Message{role: "user"}] = messages(ctx.chat)
+      assert unlocked?(ctx)
+    end
+
+    test "a deadline after a stop does not turn it into a deadline", ctx do
+      Application.put_env(:phoenix_kit_agent, :turn_stop_grace_ms, 300)
+
+      hang_next()
+      turn_ref = start!(ctx, "Hi", deadline_ms: 150)
+      assert_receive {:model_waiting, _stub}, 5_000
+
+      :ok = Turns.stop(ctx.ref, false, ctx.chat.uuid)
+      await_end(ctx.chat, turn_ref)
+
+      assert [%Message{role: "user"}] = messages(ctx.chat)
+    end
+  end
+
+  describe "a lock taken over before the tool calls" do
+    test "the tools are not run; the turn ends with a notice", ctx do
+      answer_next(tool_answer([call("c1", "agenttest_list_items", %{})]), fn ->
+        Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+          set: [busy_since: DateTime.utc_now(), busy_turn_ref: "newer"]
+        )
+      end)
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      refute_received {:agent_test_tool, _, _, _}
+      refute Enum.any?(messages(ctx.chat), &(&1.role == "tool"))
+      assert %Message{role: "notice", error: "lock_lost"} = List.last(messages(ctx.chat))
+    end
+  end
+
   describe "the log" do
     @secret "S3CRET-7F2A"
 
