@@ -647,6 +647,53 @@ defmodule PhoenixKitAgent.ConversationsTest do
                )
     end
 
+    test "list_messages/3 gives the latest ones, and those before a message, oldest first", ctx do
+      uuids = Enum.map([ctx.question, ctx.call, ctx.tool, ctx.cut, ctx.answer], & &1.uuid)
+
+      assert {:ok, latest} =
+               Conversations.list_messages(
+                 ctx.ref,
+                 ctx.chat.uuid,
+                 @me ++ [latest: true, limit: 2]
+               )
+
+      assert Enum.map(latest, & &1.uuid) == Enum.take(uuids, -2)
+
+      assert {:ok, earlier} =
+               Conversations.list_messages(
+                 ctx.ref,
+                 ctx.chat.uuid,
+                 @me ++ [before: ctx.cut.uuid, limit: 2]
+               )
+
+      assert Enum.map(earlier, & &1.uuid) == [ctx.call.uuid, ctx.tool.uuid]
+      refute inspect(earlier) =~ "Customer Smith"
+
+      assert {:ok, first} =
+               Conversations.list_messages(
+                 ctx.ref,
+                 ctx.chat.uuid,
+                 @me ++ [before: ctx.call.uuid, limit: 50]
+               )
+
+      assert Enum.map(first, & &1.uuid) == [ctx.question.uuid]
+
+      other = new_chat!(ctx.ref)
+      elsewhere = say!(ctx.ref, other, "elsewhere")
+
+      for cursor <- [elsewhere.uuid, Ecto.UUID.generate(), "junk", 5] do
+        assert {:error, :invalid_cursor} =
+                 Conversations.list_messages(ctx.ref, ctx.chat.uuid, @me ++ [before: cursor])
+      end
+
+      assert {:error, :invalid_cursor} =
+               Conversations.list_messages(
+                 ctx.ref,
+                 ctx.chat.uuid,
+                 @me ++ [after: ctx.call.uuid, before: ctx.answer.uuid]
+               )
+    end
+
     test "list_messages/3 takes at most 200 at once", ctx do
       for n <- 1..205, do: turn_say!(ctx.chat, %{role: "notice", content: "n#{n}"})
 

@@ -190,21 +190,29 @@ defmodule PhoenixKitAgent.Conversations do
   "Reading" in the moduledoc).
 
   Options (besides `impersonated:`): `:after` — the uuid of a message of this
-  chat; only the messages after it come (anything else is
-  `{:error, :invalid_cursor}`); `:limit` — default 50, at most 200. The next
-  page starts after the last message of this one.
+  chat; only the messages after it come; `:limit` — default 50, at most 200.
+  The next page starts after the last message of this one. From the other
+  end: `latest: true` — the last `limit` messages of the chat; `:before` — the
+  uuid of a message of this chat, the `limit` messages just before it (the
+  page before starts before the first message of this one). Every page is
+  oldest first. A cursor that is not a message of this chat, or `:after` with
+  `:before` / `:latest`, is `{:error, :invalid_cursor}`.
   """
   @spec list_messages(session_ref(), term(), keyword()) ::
           {:ok, [Message.t()]} | {:error, refusal() | :invalid_cursor}
   def list_messages(session_ref, conversation_uuid, opts) do
     with_owned(session_ref, conversation_uuid, opts, fn conversation ->
-      with {:ok, query} <- messages_after(conversation, Keyword.get(opts, :after)) do
+      with {:ok, query, direction} <- messages_query(conversation, opts) do
         size = messages_page_size(Keyword.get(opts, :limit))
 
         messages =
-          from(m in query, order_by: [asc: m.inserted_at, asc: m.uuid], limit: ^size)
+          from(m in query,
+            order_by: [{^direction, m.inserted_at}, {^direction, m.uuid}],
+            limit: ^size
+          )
           |> repo().all()
 
+        messages = if direction == :desc, do: Enum.reverse(messages), else: messages
         {:ok, Enum.map(messages, &for_client/1)}
       end
     end)
@@ -545,11 +553,46 @@ defmodule PhoenixKitAgent.Conversations do
 
   defp found_count(_result), do: nil
 
-  defp messages_after(conversation, nil),
-    do: {:ok, from(m in Message, where: m.conversation_uuid == ^conversation.uuid)}
+  # The messages a page is taken from, and the order it is taken in (`:desc`
+  # for a page that ends at the latest message or at `:before`).
+  defp messages_query(conversation, opts) do
+    case {Keyword.get(opts, :after), Keyword.get(opts, :before), Keyword.get(opts, :latest)} do
+      {nil, nil, latest} when latest in [nil, false] ->
+        {:ok, all_messages(conversation), :asc}
 
-  defp messages_after(conversation, after_uuid) do
-    with {:ok, uuid} <- Ecto.UUID.cast(after_uuid),
+      {nil, nil, true} ->
+        {:ok, all_messages(conversation), :desc}
+
+      {after_uuid, nil, latest} when after_uuid != nil and latest in [nil, false] ->
+        with {:ok, uuid, at} <- message_cursor(conversation, after_uuid) do
+          query =
+            from(m in all_messages(conversation),
+              where: m.inserted_at > ^at or (m.inserted_at == ^at and m.uuid > ^uuid)
+            )
+
+          {:ok, query, :asc}
+        end
+
+      {nil, before_uuid, _latest} when before_uuid != nil ->
+        with {:ok, uuid, at} <- message_cursor(conversation, before_uuid) do
+          query =
+            from(m in all_messages(conversation),
+              where: m.inserted_at < ^at or (m.inserted_at == ^at and m.uuid < ^uuid)
+            )
+
+          {:ok, query, :desc}
+        end
+
+      _both_ends ->
+        {:error, :invalid_cursor}
+    end
+  end
+
+  defp all_messages(conversation),
+    do: from(m in Message, where: m.conversation_uuid == ^conversation.uuid)
+
+  defp message_cursor(conversation, message_uuid) do
+    with {:ok, uuid} <- Ecto.UUID.cast(message_uuid),
          %DateTime{} = at <-
            repo().one(
              from(m in Message,
@@ -557,12 +600,7 @@ defmodule PhoenixKitAgent.Conversations do
                select: m.inserted_at
              )
            ) do
-      {:ok,
-       from(m in Message,
-         where:
-           m.conversation_uuid == ^conversation.uuid and
-             (m.inserted_at > ^at or (m.inserted_at == ^at and m.uuid > ^uuid))
-       )}
+      {:ok, uuid, at}
     else
       _not_a_message_here -> {:error, :invalid_cursor}
     end
