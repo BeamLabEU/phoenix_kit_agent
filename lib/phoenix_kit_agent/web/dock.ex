@@ -977,10 +977,8 @@ defmodule PhoenixKitAgent.Web.Dock do
   # here, logged as its class only, and the panel says that something went
   # wrong. The socket is the one from before the callback.
   defp guarded(socket, fun) do
-    case fun.() do
-      {:noreply, socket} -> {:noreply, watch_turn(socket)}
-      other -> other
-    end
+    {:noreply, socket} = fun.()
+    {:noreply, watch_turn(socket)}
   rescue
     exception ->
       Logger.warning("[PhoenixKitAgent] the chat panel failed: #{inspect(exception.__struct__)}")

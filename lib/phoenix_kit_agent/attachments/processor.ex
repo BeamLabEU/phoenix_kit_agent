@@ -177,24 +177,21 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   defp process(%{kind: "image"} = attachment, path, session_ref) do
     with {:ok, jpeg} <- Extract.picture(path),
-         settings = effective(attachment, session_ref),
+         settings = UserConfig.effective(attachment.user_uuid),
          {:ok, mode} <- picture_mode(settings) do
       case mode do
         :pixels ->
           {:ok, %{extracted_text: nil, truncated: false}}
 
         {:describe, vision} ->
-          describe(settings, vision, [jpeg_input(jpeg)], @describe_picture, %{}, [])
+          ask = {settings, session_ref, vision}
+          describe(ask, [jpeg_input(jpeg)], @describe_picture, %{}, [])
       end
     end
   end
 
-  # The user's settings, and the session the file was added in.
-  defp effective(attachment, session_ref),
-    do: attachment.user_uuid |> UserConfig.effective() |> Map.put(:session_ref, session_ref)
-
   defp scan(attachment, path, pages, session_ref) do
-    settings = effective(attachment, session_ref)
+    settings = UserConfig.effective(attachment.user_uuid)
 
     with {:ok, mode} <- picture_mode(settings),
          {:ok, pngs, ^pages} <- Extract.pdf_pages(path) do
@@ -217,7 +214,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
               ],
               else: []
 
-          describe(settings, vision, inputs, @describe_scan, shown, notes)
+          describe({settings, session_ref, vision}, inputs, @describe_scan, shown, notes)
       end
     end
   end
@@ -246,9 +243,10 @@ defmodule PhoenixKitAgent.Attachments.Processor do
     end
   end
 
-  defp describe(settings, vision, inputs, prompt, fields, notes) do
-    with {:ok, text} <-
-           one_at_a_time(settings.user_uuid, fn -> paid(settings, vision, inputs, prompt) end) do
+  # `ask` is who asks and whom: the user's settings, the session the file was
+  # added in, the vision endpoint.
+  defp describe({settings, _session_ref, _vision} = ask, inputs, prompt, fields, notes) do
+    with {:ok, text} <- one_at_a_time(settings.user_uuid, fn -> paid(ask, inputs, prompt) end) do
       {text, clipped?} = Extract.clip(text)
 
       notes =
@@ -262,9 +260,9 @@ defmodule PhoenixKitAgent.Attachments.Processor do
   end
 
   # The checks right before the paid call (see the moduledoc), then the call.
-  defp paid(settings, vision, inputs, prompt) do
+  defp paid({settings, session_ref, vision}, inputs, prompt) do
     with :ok <- ai_enabled(),
-         :ok <- session_alive(settings),
+         :ok <- session_alive(session_ref, settings.user_uuid),
          :ok <- within_limits(settings, vision),
          do: ask_vision(settings, vision, inputs, prompt)
   end
@@ -278,7 +276,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   # The session that added the file may still use the assistant, as its own
   # user (it was not an impersonated one: `Attachments.add/4` refuses those).
-  defp session_alive(%{session_ref: session_ref, user_uuid: user_uuid}) do
+  defp session_alive(session_ref, user_uuid) do
     case Conversations.authorize_session(session_ref, impersonated: false) do
       {:ok, ^user_uuid} -> :ok
       {:error, reason} when reason in [:forbidden, :not_found] -> {:error, :forbidden}
