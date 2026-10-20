@@ -166,6 +166,13 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   def notice("rate_limited"), do: gettext("Too many requests at once; try again in a minute.")
   def notice("not_found"), do: gettext("This chat is gone.")
   def notice("budget_exceeded"), do: gettext("The AI budget is used up.")
+
+  def notice("pictures_not_seen"),
+    do:
+      gettext(
+        "The model does not take pictures now, so they were not sent. Remove them and attach them again to have them described, or choose a model that sees."
+      )
+
   def notice(_code_with_its_own_text), do: nil
 
   @doc "The text for an error of a LiveView upload entry."

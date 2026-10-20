@@ -63,8 +63,12 @@ defmodule PhoenixKitAgent.Attachments do
   for a model that sees, are not described afterwards: later turns carry a line
   that names the picture and the assistant's own answer). When the provider
   refuses the first model call of a turn that carries pictures, the turn takes
-  its files off the message again (`PhoenixKitAgent.Turns.Runner`): after a
-  turn has ended, `list_unsent/3` is the list to show.
+  its files off the message again (`PhoenixKitAgent.Turns.Runner`) — only a
+  refusal of the request itself (400, 413, 415, 422), not a missing model or
+  a failure of the provider. So does a turn whose model is no longer known to
+  take images: the pixels are not sent, the model is not called, and a notice
+  (`pictures_not_seen`) says to attach the files again, to be described. After
+  a turn has ended, `list_unsent/3` is the list to show.
 
   ## The bytes
 
@@ -520,10 +524,12 @@ defmodule PhoenixKitAgent.Attachments do
   @doc false
   # What the turn adds to the user's message after its text, for the pixel
   # attachments among `uuids` (the user's own): the pictures as `image_url`
-  # parts for a model known to take images, else a note (a model that cannot
-  # see them, or whose abilities are not known, is not sent pixels), and a
-  # note for a picture that cannot be made. `[]` when there are none.
-  @spec model_parts([String.t()], String.t(), String.t() | nil) :: [map()]
+  # parts, and a note for a picture that cannot be made; `{:ok, []}` when there
+  # are none. The model is asked again as the turn starts: one that is not
+  # known to take images now (it was changed since the upload, or its listing
+  # says nothing) is never sent pixels — `{:error, :not_seen}`.
+  @spec model_parts([String.t()], String.t(), String.t() | nil) ::
+          {:ok, [map()]} | {:error, :not_seen}
   def model_parts(uuids, user_uuid, endpoint_uuid) do
     rows =
       repo().all(
@@ -535,14 +541,9 @@ defmodule PhoenixKitAgent.Attachments do
       |> Enum.filter(&pixels?/1)
 
     cond do
-      rows == [] ->
-        []
-
-      Models.image_input(endpoint_uuid) != :supported ->
-        [note("The attached pictures were not shown: this model is not known to see images.")]
-
-      true ->
-        Enum.flat_map(rows, &parts_of/1)
+      rows == [] -> {:ok, []}
+      Models.image_input(endpoint_uuid) != :supported -> {:error, :not_seen}
+      true -> {:ok, Enum.flat_map(rows, &parts_of/1)}
     end
   end
 

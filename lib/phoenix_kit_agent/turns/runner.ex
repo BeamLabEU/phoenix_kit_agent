@@ -22,8 +22,11 @@ defmodule PhoenixKitAgent.Turns.Runner do
        every round of this turn only — the history keeps the text — and such a
        turn is never captured into the AI journal
        (`PhoenixKitAgent.Attachments.model_parts/3`); a first model call with
-       pictures that the provider refuses (`api_error`, `model_error`) takes
-       the message's files off it, to be sent again;
+       pictures that the provider refuses as a request (`api_error` 400, 413,
+       415 or 422; not a 404 or a 5xx) takes the message's files off it, to be
+       sent again; a model that is not known to take images when the turn
+       starts is not called: the files go back, with a `pictures_not_seen`
+       notice;
     d. calls the model (`PhoenixKitAI.complete/3`, `source: "agent"`, the user,
        no cache, the module's content capture, and the uuid the answer will be
        stored under as `attribution`); a refusal of the `phoenix_kit_ai`
@@ -86,6 +89,10 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
   @awaiting {__MODULE__, :awaiting_ai_request}
 
+  # The statuses of a provider's refusal of the request itself, the ones a
+  # model that cannot take the pictures answers with (`unsend/2`).
+  @picture_refusals [400, 413, 415, 422]
+
   # The most tool calls of one round that reach the executor; the rest are
   # denied. One answer of the model must not fan out into hundreds of calls.
   @max_calls_per_round 10
@@ -132,8 +139,12 @@ defmodule PhoenixKitAgent.Turns.Runner do
   def run(turn) do
     :ok = Monitor.check_stop()
     message = store_user_message!(turn)
-    {turn, transcript} = with_pictures(Map.put(turn, :user_message_uuid, message.uuid))
-    round(turn, 1, transcript)
+    turn = Map.put(turn, :user_message_uuid, message.uuid)
+
+    case with_pictures(turn) do
+      {:ok, turn, transcript} -> round(turn, 1, transcript)
+      {:error, :not_seen} -> pictures_not_seen(turn)
+    end
   end
 
   # The pictures of this message's attachments go along with its text, in this
@@ -145,17 +156,23 @@ defmodule PhoenixKitAgent.Turns.Runner do
   # `pictures?` holds until the model has answered once: a first call that
   # fails as the provider's refusal may be a refusal of the pictures, and then
   # the files are taken off the message, to be sent again (`unsend/2`).
+  #
+  # A model that is not known to take images now gets no pixels and is not
+  # called (`pictures_not_seen/1`).
   defp with_pictures(%{attachment_uuids: []} = turn),
-    do: {Map.put(turn, :pictures?, false), turn.history}
+    do: {:ok, Map.put(turn, :pictures?, false), turn.history}
 
   defp with_pictures(turn) do
     turn = Map.put(turn, :pictures?, false)
 
     case Attachments.model_parts(turn.attachment_uuids, turn.user_uuid, turn.endpoint_uuid) do
-      [] ->
-        {turn, turn.history}
+      {:error, :not_seen} = not_seen ->
+        not_seen
 
-      parts ->
+      {:ok, []} ->
+        {:ok, turn, turn.history}
+
+      {:ok, parts} ->
         {earlier, [current]} = Enum.split(turn.history, -1)
         {notes, pictures} = Enum.split_with(parts, &(&1["type"] == "text"))
         text = Enum.reduce(notes, current.content, &(&2 <> "\n\n" <> &1["text"]))
@@ -166,8 +183,28 @@ defmodule PhoenixKitAgent.Turns.Runner do
             else: [%{"type" => "text", "text" => text} | pictures]
 
         turn = if pictures == [], do: turn, else: %{turn | capture?: false, pictures?: true}
-        {turn, earlier ++ [%{current | content: content}]}
+        {:ok, turn, earlier ++ [%{current | content: content}]}
     end
+  end
+
+  # The pictures were kept as pixels for a model that saw them when they were
+  # uploaded; the user's model does not (or is not known to) now. They go back
+  # to wait for a message, and the chat says to attach them again: a new upload
+  # is described by the vision model.
+  defp pictures_not_seen(turn) do
+    :ok =
+      Conversations.unlink_attachments(
+        turn.user_uuid,
+        turn.conversation_uuid,
+        turn.user_message_uuid
+      )
+
+    notice(
+      turn,
+      "pictures_not_seen",
+      "The model does not take pictures now, so they were not sent. " <>
+        "Remove them and attach them again to have them described, or choose a model that sees."
+    )
   end
 
   @doc """
@@ -615,22 +652,21 @@ defmodule PhoenixKitAgent.Turns.Runner do
   defp model_error_text(_reason, false), do: "The model did not answer. Try again."
 
   # The first model call that carried the message's pictures was refused by
-  # the provider (spec §9: a model that cannot take them): the files are taken
-  # off the message and wait to be sent again. A budget, a key, a timeout or
-  # the network say nothing of the pictures, and leave them where they are.
-  defp unsend(%{pictures?: true} = turn, reason) do
-    if error_code(reason) in ["api_error", "model_error"] do
-      :ok =
-        Conversations.unlink_attachments(
-          turn.user_uuid,
-          turn.conversation_uuid,
-          turn.user_message_uuid
-        )
+  # the provider as a request it does not take (spec §9: a model that cannot
+  # take them, pictures too large or of a type it does not read): the files are
+  # taken off the message and wait to be sent again. A missing model (404), a
+  # failure of the provider (5xx), a budget, a key, a timeout or the network say
+  # nothing of the pictures, and leave them where they are.
+  defp unsend(%{pictures?: true} = turn, {:api_error, status})
+       when status in @picture_refusals do
+    :ok =
+      Conversations.unlink_attachments(
+        turn.user_uuid,
+        turn.conversation_uuid,
+        turn.user_message_uuid
+      )
 
-      true
-    else
-      false
-    end
+    true
   end
 
   defp unsend(_turn, _reason), do: false

@@ -22,7 +22,7 @@ defmodule PhoenixKitAgent.AttachmentsTest do
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.{Auth, Permissions, Roles}
   alias PhoenixKitAgent.{Attachments, Conversations, Library, Models, Turns}
-  alias PhoenixKitAgent.Attachments.{Bounds, Processor, Slots, Work}
+  alias PhoenixKitAgent.Attachments.{Processor, Slots, Work}
   alias PhoenixKitAgent.Schemas.{Attachment, Message, UserSettings}
   alias PhoenixKitAgent.Test.{Files, LogProbe}
   alias PhoenixKitAI.Request
@@ -1144,11 +1144,18 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
       await_turn(ctx, turn_ref)
 
-      assert_received {:model_request, body}
-      assert [%{"role" => "user", "content" => content}] = chat_messages(body)
-      assert is_binary(content)
-      assert content =~ "sofa.png"
-      refute inspect(body) =~ "image_url"
+      # The pixels are not sent, nor is the message without them: the model is
+      # not called, the chat says why, and the file waits to be sent again.
+      refute_received {:model_request, _}
+      assert Repo.get!(Attachment, attachment.uuid).message_uuid == nil
+
+      assert [%Message{role: "user"}, %Message{role: "notice", error: "pictures_not_seen"}] =
+               Repo.all(
+                 from(m in Message,
+                   where: m.conversation_uuid == ^ctx.chat.uuid,
+                   order_by: [asc: m.inserted_at, asc: m.uuid]
+                 )
+               )
     end
 
     test "an attachment of another chat of the same user, a pending one and a foreign one are refused",
@@ -1603,7 +1610,7 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       refute_received {:model_request, _}
     end
 
-    test "a picture already shown as pixels is not sent to a model of unknown abilities",
+    test "a picture kept as pixels for a model that no longer sees is not sent: the user is told",
          ctx do
       serve_ai(main_sees: true)
       attachment = add_done!(ctx, Files.png(40, 30), "sofa.png")
@@ -1618,11 +1625,22 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
       await_turn(ctx, turn_ref)
 
-      assert_received {:model_request, body}
-      assert [%{"role" => "user", "content" => content}] = chat_messages(body)
-      assert is_binary(content)
-      assert content =~ "sofa.png"
-      refute inspect(body) =~ "image_url"
+      # No model call: neither the pixels nor the message without them.
+      refute_received {:model_request, _}
+
+      assert %Message{error: "pictures_not_seen", content: notice} =
+               Repo.one!(
+                 from(m in Message,
+                   where: m.conversation_uuid == ^ctx.chat.uuid and m.role == "notice"
+                 )
+               )
+
+      assert notice =~ "attach them again"
+
+      # The file waits to be sent again (or discarded and attached anew).
+      assert Repo.get!(Attachment, attachment.uuid).message_uuid == nil
+      assert {:ok, [%{uuid: uuid}]} = Attachments.list_unsent(ctx.ref, ctx.chat.uuid, @me)
+      assert uuid == attachment.uuid
     end
 
     test "a turn whose model fails on its pictures leaves the files unsent, to be sent again",
@@ -1670,6 +1688,34 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       for uuid <- uuids, do: assert(Repo.get!(Attachment, uuid).message_uuid == again.uuid)
     end
 
+    test "a provider that fails for another reason than the pictures keeps them with the message",
+         ctx do
+      for status <- [404, 500, 503] do
+        serve_ai(main_sees: true)
+        picture = add_done!(ctx, Files.png(40, 30), "sofa-#{status}.png")
+
+        serve_models_seeing_failing(status)
+
+        {:ok, turn_ref} =
+          Turns.start(ctx.ref, false, ctx.chat.uuid, "What is #{status}?", [picture.uuid])
+
+        await_turn(ctx, turn_ref)
+
+        refute Repo.get!(Attachment, picture.uuid).message_uuid == nil, "status #{status}"
+
+        assert %Message{error: "api_error", content: notice} =
+                 Repo.one!(
+                   from(m in Message,
+                     where: m.conversation_uuid == ^ctx.chat.uuid and m.role == "notice",
+                     order_by: [desc: m.inserted_at, desc: m.uuid],
+                     limit: 1
+                   )
+                 )
+
+        refute notice =~ "send them again", "status #{status}"
+      end
+    end
+
     test "a turn without pictures that fails keeps its files with its message", ctx do
       serve_ai()
       notes = add_done!(ctx, "Sofa 3 pcs", "notes.txt")
@@ -1709,7 +1755,7 @@ defmodule PhoenixKitAgent.AttachmentsTest do
   end
 
   # A chat model that sees, and whose every call is refused by the provider.
-  defp serve_models_seeing_failing do
+  defp serve_models_seeing_failing(status \\ 400) do
     test = self()
 
     Req.Test.stub(@stub, fn conn ->
@@ -1725,7 +1771,10 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
           conn
           |> Plug.Conn.put_resp_content_type("application/json")
-          |> Plug.Conn.send_resp(400, Jason.encode!(%{"error" => %{"message" => "no images"}}))
+          |> Plug.Conn.send_resp(
+            status,
+            Jason.encode!(%{"error" => %{"message" => "no images"}})
+          )
       end
     end)
   end
@@ -1862,49 +1911,6 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
       for n <- 1..3, do: assert(content =~ "[Attachment: f#{n}.txt]")
     end
-
-    @tag :imagemagick
-    test "a turn with only a note about a picture it could not show is still captured", ctx do
-      {:ok, _} = PhoenixKitAgent.Config.put_capture_ai_content(true, [])
-      serve_ai(main_sees: true)
-      picture = add_done!(ctx, Files.png(40, 30), "sofa.png")
-
-      # The model is changed to a blind one before the send: the picture gets a note.
-      blind = endpoint_fixture(%{name: "Blind", model: "a/blind"})
-      limits!(ctx.user, %{endpoint_uuid: blind.uuid})
-      Models.clear_cache()
-      serve_models_blind()
-
-      {:ok, turn_ref} = Turns.start(ctx.ref, false, ctx.chat.uuid, "What?", [picture.uuid])
-      await_turn(ctx, turn_ref)
-
-      assert journal_row_of_last_answer(ctx).metadata["content_redacted"] != true
-    end
-  end
-
-  defp serve_models_blind do
-    test = self()
-
-    Req.Test.stub(@stub, fn conn ->
-      case conn.request_path do
-        "/api/v1/models" ->
-          Req.Test.json(conn, %{
-            "data" => [
-              %{"id" => "a/blind", "architecture" => %{"modality" => "text->text"}}
-            ]
-          })
-
-        _ ->
-          {:ok, raw, conn} = Plug.Conn.read_body(conn)
-          send(test, {:model_request, Jason.decode!(raw)})
-
-          Req.Test.json(conn, %{
-            "model" => "a/blind",
-            "choices" => [%{"message" => %{"role" => "assistant", "content" => "ok"}}],
-            "usage" => %{"prompt_tokens" => 3, "completion_tokens" => 1, "total_tokens" => 4}
-          })
-      end
-    end)
   end
 
   defp journal_row_of_last_answer(ctx) do
