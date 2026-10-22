@@ -294,7 +294,9 @@ defmodule PhoenixKitAgent.Conversations do
   # checks it again every round, and must still be able to write the notice
   # that says the session is gone. The chat must belong to `user_uuid` (not
   # deleted). `fields` are set on the struct, never cast: `:uuid` (given to
-  # the model call before the message exists) and `:ai_request_uuid`. Never
+  # the model call before the message exists), `:ai_request_uuid`, and the
+  # links of a confirmation, `:assistant_message_uuid` and
+  # `:confirmation_uuid` (`PhoenixKitAgent.Confirmations`). Never
   # call it from a client's event, nor inside an outer transaction (the event
   # would go out before that transaction commits).
   @spec add_turn_message(String.t(), term(), map(), keyword()) ::
@@ -503,7 +505,13 @@ defmodule PhoenixKitAgent.Conversations do
     message =
       struct(
         Message,
-        [conversation_uuid: conversation.uuid] ++ Keyword.take(fields, [:uuid, :ai_request_uuid])
+        [conversation_uuid: conversation.uuid] ++
+          Keyword.take(fields, [
+            :uuid,
+            :ai_request_uuid,
+            :assistant_message_uuid,
+            :confirmation_uuid
+          ])
       )
 
     # `log: false`: the bound values are the user's text, the model's answer
