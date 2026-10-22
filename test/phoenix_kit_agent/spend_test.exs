@@ -133,6 +133,32 @@ defmodule PhoenixKitAgent.SpendTest do
     end
   end
 
+  describe "users_this_month/1" do
+    test "who called the assistant this month, without a call the AI guard refused", ctx do
+      now = ~U[2026-07-15 12:00:00Z]
+      refused = user_fixture("refused")
+      failed = user_fixture("failed")
+      gone = user_fixture("gone")
+
+      spend!(ctx.user, ctx.endpoint, 10, ~U[2026-07-15 08:00:00Z])
+      # Refused before any request was sent: never a call.
+      spend!(
+        refused,
+        ctx.endpoint,
+        nil,
+        ~U[2026-07-15 08:00:00Z],
+        %{"source" => "agent", "refused" => true},
+        "error"
+      )
+
+      # Sent, and failed: a call.
+      spend!(failed, ctx.endpoint, nil, ~U[2026-07-15 08:00:00Z], %{"source" => "agent"}, "error")
+      spend!(gone, ctx.endpoint, 10, ~U[2026-06-15 08:00:00Z])
+
+      assert Enum.sort(Spend.users_this_month(now)) == Enum.sort([ctx.user.uuid, failed.uuid])
+    end
+  end
+
   describe "windows/1" do
     test "the bounds of the day and of the month in the site time zone" do
       assert %{

@@ -95,7 +95,8 @@ defmodule PhoenixKitAgent.Spend do
   @doc """
   Everyone who used the assistant this month (the local month of `now`): a
   request in the journal or a turn. User uuids; a journal row whose user was
-  deleted has none and is left out.
+  deleted has none and is left out, and so is a call the AI guard refused
+  (`metadata.refused`): it was never made.
   """
   @spec users_this_month(DateTime.t()) :: [String.t()]
   def users_this_month(now \\ DateTime.utc_now()) do
@@ -105,6 +106,7 @@ defmodule PhoenixKitAgent.Spend do
       from(r in Request,
         where:
           not is_nil(r.user_uuid) and fragment("?->>'source' = 'agent'", r.metadata) and
+            fragment("coalesce(?->>'refused', 'false') <> 'true'", r.metadata) and
             r.inserted_at >= ^from and r.inserted_at < ^to,
         distinct: true,
         select: r.user_uuid
