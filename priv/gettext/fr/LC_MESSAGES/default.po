@@ -1132,3 +1132,28 @@ msgstr[1] "il y a %{count} minutes"
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr "à l'instant"
+
+#: lib/phoenix_kit_agent/turns/history.ex:143
+#, elixir-autogen, elixir-format
+msgid "[confirmation] cancelled: %{action}"
+msgstr "[confirmation] annulé : %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:140
+#, elixir-autogen, elixir-format
+msgid "[confirmation] done: %{action}"
+msgstr "[confirmation] effectué : %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:146
+#, elixir-autogen, elixir-format
+msgid "[confirmation] expired, nothing was done: %{action}"
+msgstr "[confirmation] expirée, rien n'a été fait : %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:155
+#, elixir-autogen, elixir-format
+msgid "[confirmation] failed: %{action}"
+msgstr "[confirmation] échec : %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:150
+#, elixir-autogen, elixir-format
+msgid "[confirmation] the data changed, a new confirmation waits: %{action}"
+msgstr "[confirmation] les données ont changé, une nouvelle confirmation attend : %{action}"

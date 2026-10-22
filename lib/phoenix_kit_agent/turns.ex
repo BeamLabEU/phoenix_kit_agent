@@ -1,7 +1,8 @@
 defmodule PhoenixKitAgent.Turns do
   @moduledoc """
   A turn of the assistant (spec §6.1): the user's message, then rounds of
-  model calls and read-only tool calls until the model answers.
+  model calls and tool calls until the model answers, or until a write waits
+  for the user's confirmation (`PhoenixKitAgent.Confirmations`).
 
   Like `PhoenixKitAgent.Conversations`, every function acts for a **live
   browser session** — the `{session_token_uuid, user_uuid}` reference of
@@ -52,7 +53,10 @@ defmodule PhoenixKitAgent.Turns do
 
   The assistant acts with the session's rights only: tools are listed and run
   by `PhoenixKit.API.Executor.visible_for/3` / `execute_as/5` with `allow:
-  :read`, for this session; there is no service user and no API key.
+  :all`, for this session; there is no service user and no API key. A write
+  is never run by the turn: core holds it for the user's click
+  (`PhoenixKitAgent.Turns.Runner`, "A write"), and only modules that let a
+  session write (core's `api_session_write_modules`) show any.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -436,9 +440,21 @@ defmodule PhoenixKitAgent.Turns do
     messages =
       repo().all(
         from(m in Message,
-          where: m.conversation_uuid == ^conversation.uuid and m.role in ["user", "assistant"],
+          where:
+            m.conversation_uuid == ^conversation.uuid and
+              (m.role in ["user", "assistant"] or
+                 (m.role == "notice" and not is_nil(m.confirmation_uuid))),
           order_by: [asc: m.inserted_at, asc: m.uuid],
-          select: struct(m, [:uuid, :role, :content, :tool_calls])
+          select:
+            struct(m, [
+              :uuid,
+              :role,
+              :content,
+              :tool_calls,
+              :tool_name,
+              :tool_outcome,
+              :confirmation_uuid
+            ])
         )
       )
 
@@ -466,7 +482,11 @@ defmodule PhoenixKitAgent.Turns do
     end
   end
 
-  defp lock_ttl_s, do: Config.turn_deadline_s() + @lock_grace_s
+  @doc false
+  # How old a turn's lock must be before another may take it over (spec §6.1
+  # step 3); `PhoenixKitAgent.Confirmations` takes the user's lock with it.
+  @spec lock_ttl_s() :: pos_integer()
+  def lock_ttl_s, do: Config.turn_deadline_s() + @lock_grace_s
 
   # ── stop ────────────────────────────────────────────────────────
 

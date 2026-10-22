@@ -1136,3 +1136,28 @@ msgstr[2] "%{count} хвилин тому"
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr "щойно"
+
+#: lib/phoenix_kit_agent/turns/history.ex:143
+#, elixir-autogen, elixir-format
+msgid "[confirmation] cancelled: %{action}"
+msgstr "[підтвердження] скасовано: %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:140
+#, elixir-autogen, elixir-format
+msgid "[confirmation] done: %{action}"
+msgstr "[підтвердження] виконано: %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:146
+#, elixir-autogen, elixir-format
+msgid "[confirmation] expired, nothing was done: %{action}"
+msgstr "[підтвердження] термін минув, нічого не зроблено: %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:155
+#, elixir-autogen, elixir-format
+msgid "[confirmation] failed: %{action}"
+msgstr "[підтвердження] не вдалося: %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:150
+#, elixir-autogen, elixir-format
+msgid "[confirmation] the data changed, a new confirmation waits: %{action}"
+msgstr "[підтвердження] дані змінилися, чекає нове підтвердження: %{action}"

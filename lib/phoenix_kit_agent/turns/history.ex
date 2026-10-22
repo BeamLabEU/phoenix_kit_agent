@@ -4,7 +4,12 @@ defmodule PhoenixKitAgent.Turns.History do
   messages and the final `assistant` answers of earlier turns, newest kept
   first, up to `agent_history_chars`. Tool calls and tool results of earlier
   turns are left out — after a loss of rights the model must not see old
-  data — and so are notices. The extracted text of a message's attachments
+  data — and so are notices, but for one kind: the outcome of a confirmation
+  card (`PhoenixKitAgent.Confirmations`) goes in as a `user` message with the
+  module's own fixed phrase in the user's language — "[confirmation] done:
+  <the tool's name>", "cancelled", "expired", "the data changed", "failed" —
+  never anything the tool returned, and never a text a person wrote. The
+  extracted text of a message's attachments
   (the user's own files) is part of that message; the attachments of one
   message share `limit` between them, so that five files cannot by themselves
   outgrow the window and push the earlier conversation out of it. A text that
@@ -13,6 +18,9 @@ defmodule PhoenixKitAgent.Turns.History do
   here: the model is not left to take part of the data for all of it.
   """
 
+  use Gettext, backend: PhoenixKitAgent.Gettext
+
+  alias PhoenixKit.API.MCP.Names
   alias PhoenixKitAgent.Attachments
   alias PhoenixKitAgent.Attachments.{Bounds, Extract}
   alias PhoenixKitAgent.Schemas.{Attachment, Message}
@@ -103,5 +111,48 @@ defmodule PhoenixKitAgent.Turns.History do
     if String.trim(content) == "", do: [], else: [%{role: "assistant", content: content}]
   end
 
+  defp entry(
+         %Message{
+           role: "notice",
+           confirmation_uuid: uuid,
+           tool_outcome: outcome,
+           tool_name: tool
+         },
+         _attachments,
+         _limit
+       )
+       when is_binary(uuid) and is_binary(tool) do
+    case confirmation_phrase(outcome, Names.to_mcp(tool)) do
+      nil -> []
+      phrase -> [%{role: "user", content: phrase}]
+    end
+  end
+
   defp entry(_tool_call_tool_result_or_notice, _attachments, _limit), do: []
+
+  @doc """
+  The phrase the model reads for the outcome of a confirmation card of the
+  tool `action` (the name the model knows it by), in the current Gettext
+  locale; `nil` for anything else.
+  """
+  @spec confirmation_phrase(term(), String.t()) :: String.t() | nil
+  def confirmation_phrase("confirmed", action),
+    do: gettext("[confirmation] done: %{action}", action: action)
+
+  def confirmation_phrase("rejected", action),
+    do: gettext("[confirmation] cancelled: %{action}", action: action)
+
+  def confirmation_phrase("expired", action),
+    do: gettext("[confirmation] expired, nothing was done: %{action}", action: action)
+
+  def confirmation_phrase("changed", action),
+    do:
+      gettext("[confirmation] the data changed, a new confirmation waits: %{action}",
+        action: action
+      )
+
+  def confirmation_phrase("failed", action),
+    do: gettext("[confirmation] failed: %{action}", action: action)
+
+  def confirmation_phrase(_other, _action), do: nil
 end

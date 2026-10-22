@@ -1132,3 +1132,28 @@ msgstr[1] "%{count} minutit tagasi"
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr "just praegu"
+
+#: lib/phoenix_kit_agent/turns/history.ex:143
+#, elixir-autogen, elixir-format
+msgid "[confirmation] cancelled: %{action}"
+msgstr "[kinnitus] tühistatud: %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:140
+#, elixir-autogen, elixir-format
+msgid "[confirmation] done: %{action}"
+msgstr "[kinnitus] tehtud: %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:146
+#, elixir-autogen, elixir-format
+msgid "[confirmation] expired, nothing was done: %{action}"
+msgstr "[kinnitus] aegus, midagi ei tehtud: %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:155
+#, elixir-autogen, elixir-format
+msgid "[confirmation] failed: %{action}"
+msgstr "[kinnitus] ebaõnnestus: %{action}"
+
+#: lib/phoenix_kit_agent/turns/history.ex:150
+#, elixir-autogen, elixir-format
+msgid "[confirmation] the data changed, a new confirmation waits: %{action}"
+msgstr "[kinnitus] andmed muutusid, uus kinnitus ootab: %{action}"
