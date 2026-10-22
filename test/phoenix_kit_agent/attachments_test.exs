@@ -21,7 +21,7 @@ defmodule PhoenixKitAgent.AttachmentsTest do
   alias PhoenixKit.Modules.Storage.{ImageProcessor, Libraries, URLSigner}
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.{Auth, Permissions, Roles}
-  alias PhoenixKitAgent.{Attachments, Conversations, Library, Models, Turns}
+  alias PhoenixKitAgent.{Attachments, Conversations, Library, Turns}
   alias PhoenixKitAgent.Attachments.{Processor, Slots, Work}
   alias PhoenixKitAgent.Schemas.{Attachment, Message, UserSettings}
   alias PhoenixKitAgent.Test.{Files, LogProbe}
@@ -1565,6 +1565,58 @@ defmodule PhoenixKitAgent.AttachmentsTest do
 
       assert attachment.status == "failed"
       assert attachment.error == "budget_exceeded"
+      refute_received {:model_request, _}
+    end
+
+    test "a user the AI guard blocked gets the guard's code, not a model error", ctx do
+      PhoenixKitAI.Guard.reset_caches()
+      on_exit(&PhoenixKitAI.Guard.reset_caches/0)
+      serve_ai(main_sees: false)
+      vision_endpoint!()
+
+      {:ok, _} =
+        PhoenixKitAI.Guard.block(scope_of(owner_fixture()), "agent.chat", ctx.user.uuid, "x", nil)
+
+      attachment = add_done!(ctx, Files.png(40, 30), "sofa.png")
+
+      assert attachment.status == "failed"
+      assert attachment.error == "task_blocked"
+      refute_received {:model_request, _}
+    end
+
+    test "a vision model the guard refuses gets its own code", ctx do
+      serve_ai(main_sees: false)
+      vision_endpoint!()
+      declare_vision!("a/eyes", "no")
+
+      attachment = add_done!(ctx, Files.png(40, 30), "sofa.png")
+
+      assert attachment.status == "failed"
+      assert attachment.error == "model_unfit"
+      refute_received {:model_request, _}
+
+      declare_vision!("a/eyes", nil)
+      {:ok, _} = Settings.update_setting("ai_guard_verified_models_only", "true")
+
+      attachment = add_done!(ctx, Files.png(41, 30), "sofa-2.png")
+      assert attachment.error == "model_unverified"
+      refute_received {:model_request, _}
+    end
+
+    test "the task's own limit reached gets its own code", ctx do
+      PhoenixKitAI.Guard.reset_caches()
+      on_exit(&PhoenixKitAI.Guard.reset_caches/0)
+      serve_ai(main_sees: false)
+      vision_endpoint!()
+
+      {:ok, _} =
+        PhoenixKitAI.TaskLimits.update_settings(scope_of(owner_fixture()), "agent.attachment", %{
+          "limits" => %{"task" => %{"requests" => %{"day" => "0"}}}
+        })
+
+      attachment = add_done!(ctx, Files.png(40, 30), "sofa.png")
+
+      assert attachment.error == "task_limit_exceeded"
       refute_received {:model_request, _}
     end
 

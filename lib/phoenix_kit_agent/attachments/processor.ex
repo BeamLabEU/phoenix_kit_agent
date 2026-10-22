@@ -48,7 +48,9 @@ defmodule PhoenixKitAgent.Attachments.Processor do
   `ai_disabled`, `session_gone`, `forbidden`, `limit_reached`,
   `budget_exceeded`, `model_error`, `timeout`, `crashed`,
   `unavailable` (no place within `queue_wait_ms`, see `Attachments.Slots`, or no
-  scratch space).
+  scratch space), and the refusals of the AI guard for the `agent.attachment`
+  task: `task_blocked`, `task_limit_exceeded`, `model_unfit`,
+  `model_unverified`, `no_provider_for_params`.
 
   The work is two processes: a *job* under `TaskSupervisor`, which waits for
   a place (at most `concurrent_jobs` jobs hold one, `jobs_per_user` of them
@@ -72,6 +74,11 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   @task_supervisor PhoenixKitAgent.Attachments.TaskSupervisor
   @worker_supervisor PhoenixKitAgent.Attachments.WorkerSupervisor
+
+  # The refusals of the AI guard a description keeps as its own code
+  # (`{reason, …}` is the code `reason`), never as `model_error`.
+  @guard_refusals ~w(task_blocked task_limit_exceeded model_unfit model_unverified
+                     no_provider_for_params)a
 
   @describe_picture "Describe this picture for someone who cannot see it. Transcribe every " <>
                       "piece of text, number and table in it exactly, then say what else it shows."
@@ -312,6 +319,9 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
       {:error, {:budget_exceeded, _scope}} ->
         {:error, :budget_exceeded}
+
+      {:error, reason} when is_tuple(reason) and elem(reason, 0) in @guard_refusals ->
+        {:error, elem(reason, 0)}
 
       _failed ->
         {:error, :model_error}
