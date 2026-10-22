@@ -65,6 +65,13 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   def refusal({:limit_reached, :daily_turns}),
     do: gettext("You have used all your assistant turns for today.")
 
+  def refusal(reason) when reason in [:task_blocked, :task_limit_exceeded],
+    do: notice(Atom.to_string(reason))
+
+  def refusal({:task_blocked, _group}), do: refusal(:task_blocked)
+
+  def refusal({:task_limit_exceeded, _scope, _unit, _period}), do: refusal(:task_limit_exceeded)
+
   def refusal(:not_running), do: gettext("Nothing is running in this chat.")
 
   def refusal(:turn_lost),
@@ -137,6 +144,16 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   def attachment_error("budget_exceeded"),
     do: gettext("The AI budget is used up, so it was not read.")
 
+  def attachment_error("task_blocked"),
+    do: gettext("The AI assistant is blocked for you, so it was not read.")
+
+  def attachment_error("task_limit_exceeded"),
+    do: gettext("The AI assistant has reached its limit for now, so it was not read.")
+
+  def attachment_error(code)
+      when code in ["model_unfit", "model_unverified", "no_provider_for_params"],
+      do: gettext("The model that reads pictures cannot be used for it now, so it was not read.")
+
   def attachment_error("model_error"), do: gettext("The model could not read it.")
   def attachment_error("timeout"), do: gettext("Reading it took too long.")
 
@@ -190,6 +207,30 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   def notice("rate_limited"), do: gettext("Too many requests at once; try again in a minute.")
   def notice("not_found"), do: gettext("This chat is gone.")
   def notice("budget_exceeded"), do: gettext("The AI budget is used up.")
+
+  def notice("task_blocked"),
+    do: gettext("The AI assistant is blocked for you. An administrator can lift the block.")
+
+  def notice("task_limit_exceeded"),
+    do: gettext("The AI assistant has reached its limit for now. Try again later.")
+
+  def notice("model_unfit"),
+    do:
+      gettext(
+        "The model chosen for the assistant cannot do what it needs. An administrator chooses another one."
+      )
+
+  def notice("model_unverified"),
+    do:
+      gettext(
+        "It is not known whether the model chosen for the assistant can do what it needs. An administrator marks what the model can do on its AI endpoint, or chooses another one."
+      )
+
+  def notice("no_provider_for_params"),
+    do:
+      gettext(
+        "No provider of the model takes the request as its AI endpoint is set up. An administrator checks the endpoint's settings."
+      )
 
   def notice("pictures_not_seen"),
     do:

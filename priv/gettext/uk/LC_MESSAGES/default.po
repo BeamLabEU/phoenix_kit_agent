@@ -214,7 +214,7 @@ msgstr "Історія, що надсилається моделі, символ
 msgid "How the assistant should answer you. It follows the site's own rules first."
 msgstr "Як асистент має вам відповідати. Спочатку діють правила самого сайту."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:146
+#: lib/phoenix_kit_agent/web/dock/texts.ex:163
 #, elixir-autogen, elixir-format
 msgid "It could not be read."
 msgstr "Прочитати не вдалося."
@@ -292,7 +292,7 @@ msgstr "Чатів поки немає."
 msgid "No model is chosen for the assistant yet. An administrator chooses one in Settings → AI Agent, or one for you in AI Agent → Users."
 msgstr "Для асистента ще не вибрано модель. Адміністратор вибирає її в розділі Налаштування → ШІ-агент, а для вас — у розділі ШІ-агент → Користувачі."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:123
+#: lib/phoenix_kit_agent/web/dock/texts.ex:130
 #, elixir-autogen, elixir-format
 msgid "No model that sees images is set up to read it."
 msgstr "Для його читання не налаштовано модель, яка бачить зображення."
@@ -323,7 +323,7 @@ msgstr "Немає"
 msgid "Not allowed: the tool was not run."
 msgstr "Не дозволено: інструмент не запускався."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:68
+#: lib/phoenix_kit_agent/web/dock/texts.ex:75
 #, elixir-autogen, elixir-format
 msgid "Nothing is running in this chat."
 msgstr "У цьому чаті нічого не виконується."
@@ -388,7 +388,7 @@ msgstr "Це налаштування може змінювати лише вл�
 msgid "Personal instructions"
 msgstr "Особисті інструкції"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:101
+#: lib/phoenix_kit_agent/web/dock/texts.ex:108
 #, elixir-autogen, elixir-format
 msgid "Pictures cannot be read: no model that sees images is set up."
 msgstr "Зображення прочитати не можна: не налаштовано модель, яка бачить зображення."
@@ -398,7 +398,7 @@ msgstr "Зображення прочитати не можна: не налаш
 msgid "Prompt for this user"
 msgstr "Промпт для цього користувача"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:141
+#: lib/phoenix_kit_agent/web/dock/texts.ex:158
 #, elixir-autogen, elixir-format
 msgid "Reading it took too long."
 msgstr "Читання зайняло надто багато часу."
@@ -457,7 +457,7 @@ msgstr "Налаштування збережено."
 msgid "Someone else changed these settings after the form was opened. Nothing was saved: open the form again."
 msgstr "Хтось інший змінив ці налаштування після відкриття форми. Нічого не збережено: відкрийте форму знову."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:112
+#: lib/phoenix_kit_agent/web/dock/texts.ex:119
 #, elixir-autogen, elixir-format
 msgid "Something went wrong. Try again in a moment."
 msgstr "Щось пішло не так. Спробуйте ще раз за хвилину."
@@ -501,12 +501,12 @@ msgstr "Вимкнено"
 msgid "Tell the watchers when this user reaches a limit"
 msgstr "Сповіщати спостерігачів, коли цей користувач досягає ліміту"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:138
+#: lib/phoenix_kit_agent/web/dock/texts.ex:145
 #, elixir-autogen, elixir-format
 msgid "The AI budget is used up, so it was not read."
 msgstr "Бюджет ШІ вичерпано, тому файл не прочитано."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:192
+#: lib/phoenix_kit_agent/web/dock/texts.ex:209
 #, elixir-autogen, elixir-format
 msgid "The AI budget is used up."
 msgstr "Бюджет ШІ вичерпано."
@@ -516,28 +516,28 @@ msgstr "Бюджет ШІ вичерпано."
 msgid "The AI endpoints of the AI module. A user without a model of their own uses the default one; without it the assistant does not answer. The vision model describes pictures for a model that does not take them."
 msgstr "Кінцеві точки ШІ з модуля ШІ. Користувач без власної моделі використовує типову; без неї асистент не відповідає. Модель для зображень описує картинки для моделі, яка їх не приймає."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:126
+#: lib/phoenix_kit_agent/web/dock/texts.ex:133
 #, elixir-autogen, elixir-format
 msgid "The AI module is switched off, so it was not read."
 msgstr "Модуль ШІ вимкнено, тому файл не прочитано."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:36
-#: lib/phoenix_kit_agent/web/dock/texts.ex:189
+#: lib/phoenix_kit_agent/web/dock/texts.ex:206
 #, elixir-autogen, elixir-format
 msgid "The AI module is switched off."
 msgstr "Модуль ШІ вимкнено."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:78
+#: lib/phoenix_kit_agent/web/dock/texts.ex:85
 #, elixir-autogen, elixir-format
 msgid "The answer has not stopped yet. Press Stop again, or wait: if it is no longer running, the chat will be free again in a few minutes."
 msgstr "Відповідь ще не зупинено. Натисніть «Зупинити» ще раз або зачекайте: якщо вона вже не виконується, чат звільниться за кілька хвилин."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:160
+#: lib/phoenix_kit_agent/web/dock/texts.ex:177
 #, elixir-autogen, elixir-format
 msgid "The answer took longer than allowed and was stopped. Try again, or ask for less at once."
 msgstr "Відповідь тривала довше, ніж дозволено, і її зупинено. Спробуйте ще раз або просіть менше за один раз."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:156
+#: lib/phoenix_kit_agent/web/dock/texts.ex:173
 #, elixir-autogen, elixir-format
 msgid "The answer was interrupted. Try again."
 msgstr "Відповідь перервано. Спробуйте ще раз."
@@ -547,7 +547,7 @@ msgstr "Відповідь перервано. Спробуйте ще раз."
 msgid "The assistant is answering in another chat. Wait for it to finish."
 msgstr "Асистент відповідає в іншому чаті. Зачекайте, поки він закінчить."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:188
+#: lib/phoenix_kit_agent/web/dock/texts.ex:205
 #, elixir-autogen, elixir-format
 msgid "The assistant is no longer available to you."
 msgstr "Асистент вам більше недоступний."
@@ -562,7 +562,7 @@ msgstr "Асистент недоступний у чужому сеансі."
 msgid "The assistant is still answering in this chat. Wait for it or press Stop."
 msgstr "Асистент ще відповідає в цьому чаті. Зачекайте або натисніть «Зупинити»."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:167
+#: lib/phoenix_kit_agent/web/dock/texts.ex:184
 #, elixir-autogen, elixir-format
 msgid "The assistant used all its tool rounds for this turn."
 msgstr "Асистент використав усі раунди інструментів для цього звернення."
@@ -587,38 +587,38 @@ msgstr "Типова модель не повідомляє вартість в�
 msgid "The defaults could not be saved. Nothing was changed."
 msgstr "Типові значення не вдалося зберегти. Нічого не змінено."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:107
+#: lib/phoenix_kit_agent/web/dock/texts.ex:114
 #, elixir-autogen, elixir-format
 msgid "The file could not be kept. Try again later."
 msgstr "Файл не вдалося зберегти. Спробуйте пізніше."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:87
+#: lib/phoenix_kit_agent/web/dock/texts.ex:94
 #, elixir-autogen, elixir-format
 msgid "The file could not be read, or it is empty."
 msgstr "Файл не вдалося прочитати, або він порожній."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:116
+#: lib/phoenix_kit_agent/web/dock/texts.ex:123
 #, elixir-autogen, elixir-format
 msgid "The file could not be read."
 msgstr "Файл не вдалося прочитати."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:270
+#: lib/phoenix_kit_agent/web/dock/texts.ex:311
 #, elixir-autogen, elixir-format
 msgid "The file could not be uploaded."
 msgstr "Файл не вдалося завантажити."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:117
+#: lib/phoenix_kit_agent/web/dock/texts.ex:124
 #, elixir-autogen, elixir-format
 msgid "The file is too large to read."
 msgstr "Файл завеликий для читання."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:89
-#: lib/phoenix_kit_agent/web/dock/texts.ex:267
+#: lib/phoenix_kit_agent/web/dock/texts.ex:96
+#: lib/phoenix_kit_agent/web/dock/texts.ex:308
 #, elixir-autogen, elixir-format
 msgid "The file is too large."
 msgstr "Файл завеликий."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:109
+#: lib/phoenix_kit_agent/web/dock/texts.ex:116
 #, elixir-autogen, elixir-format
 msgid "The file was sent already."
 msgstr "Файл уже надіслано."
@@ -633,17 +633,17 @@ msgstr "Список не вдалося прочитати. Відкрийте 
 msgid "The message is too long. Shorten it or send it as a file."
 msgstr "Повідомлення задовге. Скоротіть його або надішліть файлом."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:140
+#: lib/phoenix_kit_agent/web/dock/texts.ex:157
 #, elixir-autogen, elixir-format
 msgid "The model could not read it."
 msgstr "Модель не змогла це прочитати."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:196
+#: lib/phoenix_kit_agent/web/dock/texts.ex:237
 #, elixir-autogen, elixir-format
 msgid "The model does not take pictures now, so they were not sent. Remove them and attach them again to have them described, or choose a model that sees."
 msgstr "Модель зараз не приймає зображення, тому їх не надіслано. Приберіть їх і прикріпіть знову, щоб їх описали, або виберіть модель, яка бачить зображення."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:164
+#: lib/phoenix_kit_agent/web/dock/texts.ex:181
 #, elixir-autogen, elixir-format
 msgid "The model gave no answer. Try again."
 msgstr "Модель не дала відповіді. Спробуйте ще раз."
@@ -653,7 +653,7 @@ msgstr "Модель не дала відповіді. Спробуйте ще �
 msgid "The result was cut to fit."
 msgstr "Результат обрізано, щоб він поміщався."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:144
+#: lib/phoenix_kit_agent/web/dock/texts.ex:161
 #, elixir-autogen, elixir-format
 msgid "The server was too busy to read it. Add it again."
 msgstr "Сервер був надто зайнятий, щоб це прочитати. Додайте файл знову."
@@ -663,7 +663,7 @@ msgstr "Сервер був надто зайнятий, щоб це прочи�
 msgid "The setting could not be saved. Nothing was changed."
 msgstr "Налаштування не вдалося зберегти. Нічого не змінено."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:98
+#: lib/phoenix_kit_agent/web/dock/texts.ex:105
 #, elixir-autogen, elixir-format
 msgid "The text is not in UTF-8. Save the file as UTF-8 and add it again."
 msgstr "Текст не в кодуванні UTF-8. Збережіть файл у UTF-8 і додайте його знову."
@@ -683,12 +683,12 @@ msgstr "Інструмент завершився помилкою."
 msgid "Thinking…"
 msgstr "Думаю…"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:72
+#: lib/phoenix_kit_agent/web/dock/texts.ex:79
 #, elixir-autogen, elixir-format
 msgid "This answer is no longer running here. The chat will be free again in a few minutes."
 msgstr "Ця відповідь тут більше не виконується. Чат звільниться за кілька хвилин."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:191
+#: lib/phoenix_kit_agent/web/dock/texts.ex:208
 #, elixir-autogen, elixir-format
 msgid "This chat is gone."
 msgstr "Цей чат зник."
@@ -698,12 +698,12 @@ msgstr "Цей чат зник."
 msgid "This chat is not there any more."
 msgstr "Цього чату більше немає."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:120
+#: lib/phoenix_kit_agent/web/dock/texts.ex:127
 #, elixir-autogen, elixir-format
 msgid "This kind of file cannot be read on this server."
 msgstr "Файли цього типу не можна прочитати на цьому сервері."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:93
+#: lib/phoenix_kit_agent/web/dock/texts.ex:100
 #, elixir-autogen, elixir-format
 msgid "This kind of file is not supported. Send a picture, a PDF, an xlsx or csv sheet, or a txt or md text."
 msgstr "Цей тип файлу не підтримується. Надішліть картинку, PDF, таблицю xlsx або csv чи текст txt або md."
@@ -740,12 +740,12 @@ msgstr "Назва"
 msgid "Today"
 msgstr "Сьогодні"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:104
+#: lib/phoenix_kit_agent/web/dock/texts.ex:111
 #, elixir-autogen, elixir-format
 msgid "Too many files are waiting. Send or remove some of them first."
 msgstr "Забагато файлів чекає. Спочатку надішліть або приберіть частину з них."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:268
+#: lib/phoenix_kit_agent/web/dock/texts.ex:309
 #, elixir-autogen, elixir-format
 msgid "Too many files at once."
 msgstr "Забагато файлів одразу."
@@ -755,8 +755,8 @@ msgstr "Забагато файлів одразу."
 msgid "Too many files for one message. Remove some of them."
 msgstr "Забагато файлів для одного повідомлення. Приберіть частину з них."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:84
-#: lib/phoenix_kit_agent/web/dock/texts.ex:190
+#: lib/phoenix_kit_agent/web/dock/texts.ex:91
+#: lib/phoenix_kit_agent/web/dock/texts.ex:207
 #, elixir-autogen, elixir-format
 msgid "Too many requests at once; try again in a minute."
 msgstr "Забагато запитів одночасно; спробуйте за хвилину."
@@ -804,7 +804,7 @@ msgstr "Користувачі"
 msgid "Vision model"
 msgstr "Модель для зображень"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:82
+#: lib/phoenix_kit_agent/web/dock/texts.ex:89
 #, elixir-autogen, elixir-format
 msgid "Wait until the files are read."
 msgstr "Зачекайте, поки файли буде прочитано."
@@ -886,7 +886,7 @@ msgstr "Ви досягли денного ліміту витрат на ШІ-�
 msgid "You have reached your daily spending limit for the assistant."
 msgstr "Ви досягли денного ліміту витрат на асистента."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:171
+#: lib/phoenix_kit_agent/web/dock/texts.ex:188
 #, elixir-autogen, elixir-format
 msgid "You have reached your daily spending limit for the assistant. It resets at midnight."
 msgstr "Ви досягли денного ліміту витрат на асистента. Він обнулиться опівночі."
@@ -901,7 +901,7 @@ msgstr "Ви досягли місячного ліміту витрат на Ш
 msgid "You have reached your monthly spending limit for the assistant."
 msgstr "Ви досягли місячного ліміту витрат на асистента."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:177
+#: lib/phoenix_kit_agent/web/dock/texts.ex:194
 #, elixir-autogen, elixir-format
 msgid "You have reached your monthly spending limit for the assistant. It resets on the first day of next month."
 msgstr "Ви досягли місячного ліміту витрат на асистента. Він обнулиться першого дня наступного місяця."
@@ -931,12 +931,12 @@ msgstr "Ви використали на сьогодні всі %{limit} зве
 msgid "You have used all your assistant turns for today."
 msgstr "Ви використали на сьогодні всі звернення до асистента."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:182
+#: lib/phoenix_kit_agent/web/dock/texts.ex:199
 #, elixir-autogen, elixir-format
 msgid "You have used all your assistant turns for today. They reset at midnight."
 msgstr "Ви використали на сьогодні всі звернення до асистента. Вони обнуляться опівночі."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:132
+#: lib/phoenix_kit_agent/web/dock/texts.ex:139
 #, elixir-autogen, elixir-format
 msgid "You may not use the assistant now, so it was not read."
 msgstr "Зараз вам не можна користуватися асистентом, тому файл не прочитано."
@@ -951,17 +951,17 @@ msgstr "Зараз вам не можна користуватися асист�
 msgid "Your account still needs a referral code to use the assistant."
 msgstr "Щоб користуватися асистентом, вашому обліковому запису ще потрібен реферальний код."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:135
+#: lib/phoenix_kit_agent/web/dock/texts.ex:142
 #, elixir-autogen, elixir-format
 msgid "Your assistant limit is reached, so it was not read."
 msgstr "Ваш ліміт асистента вичерпано, тому файл не прочитано."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:129
+#: lib/phoenix_kit_agent/web/dock/texts.ex:136
 #, elixir-autogen, elixir-format
 msgid "Your session ended before it was read. Sign in and add it again."
 msgstr "Ваш сеанс закінчився до того, як файл прочитали. Увійдіть і додайте його знову."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:186
+#: lib/phoenix_kit_agent/web/dock/texts.ex:203
 #, elixir-autogen, elixir-format
 msgid "Your session has ended, so the assistant stopped."
 msgstr "Ваш сеанс закінчився, тому асистент зупинився."
@@ -1139,22 +1139,22 @@ msgstr "[підтвердження] дані змінилися, чекає н�
 msgid "Ask again"
 msgstr "Повторити"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:215
+#: lib/phoenix_kit_agent/web/dock/texts.ex:256
 #, elixir-autogen, elixir-format
 msgid "Cancelled:"
 msgstr "Скасовано:"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:214
+#: lib/phoenix_kit_agent/web/dock/texts.ex:255
 #, elixir-autogen, elixir-format
 msgid "Done:"
 msgstr "Виконано:"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:218
+#: lib/phoenix_kit_agent/web/dock/texts.ex:259
 #, elixir-autogen, elixir-format
 msgid "Failed:"
 msgstr "Не вдалося:"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:216
+#: lib/phoenix_kit_agent/web/dock/texts.ex:257
 #, elixir-autogen, elixir-format
 msgid "Ran out:"
 msgstr "Термін минув:"
@@ -1164,77 +1164,77 @@ msgstr "Термін минув:"
 msgid "Run"
 msgstr "Виконати"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:227
+#: lib/phoenix_kit_agent/web/dock/texts.ex:268
 #, elixir-autogen, elixir-format
 msgid "The assistant is answering. Try again when it has finished."
 msgstr "Асистент відповідає. Спробуйте знову, коли він закінчить."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:250
+#: lib/phoenix_kit_agent/web/dock/texts.ex:291
 #, elixir-autogen, elixir-format
 msgid "The assistant may not make changes in this part of the site now."
 msgstr "Зараз асистенту не можна вносити зміни в цьому розділі сайту."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:204
+#: lib/phoenix_kit_agent/web/dock/texts.ex:245
 #, elixir-autogen, elixir-format
 msgid "The assistant proposes a change"
 msgstr "Асистент пропонує зміну"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:261
+#: lib/phoenix_kit_agent/web/dock/texts.ex:302
 #, elixir-autogen, elixir-format
 msgid "The change cannot be made now. Try again later, or cancel it."
 msgstr "Зміна зараз неможлива. Спробуйте пізніше або скасуйте її."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:258
+#: lib/phoenix_kit_agent/web/dock/texts.ex:299
 #, elixir-autogen, elixir-format
 msgid "The change does not fit what the tool takes any more."
 msgstr "Зміна більше не відповідає тому, що приймає інструмент."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:209
+#: lib/phoenix_kit_agent/web/dock/texts.ex:250
 #, elixir-autogen, elixir-format
 msgid "The change failed"
 msgstr "Зміна не вдалася"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:206
+#: lib/phoenix_kit_agent/web/dock/texts.ex:247
 #, elixir-autogen, elixir-format
 msgid "The change was cancelled"
 msgstr "Зміну скасовано"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:205
+#: lib/phoenix_kit_agent/web/dock/texts.ex:246
 #, elixir-autogen, elixir-format
 msgid "The change was made"
 msgstr "Зміну виконано"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:207
+#: lib/phoenix_kit_agent/web/dock/texts.ex:248
 #, elixir-autogen, elixir-format
 msgid "The confirmation ran out; nothing was changed"
 msgstr "Термін підтвердження минув; нічого не змінено"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:208
+#: lib/phoenix_kit_agent/web/dock/texts.ex:249
 #, elixir-autogen, elixir-format
 msgid "The data changed — check it again below"
 msgstr "Дані змінилися — перевірте ще раз нижче"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:217
+#: lib/phoenix_kit_agent/web/dock/texts.ex:258
 #, elixir-autogen, elixir-format
 msgid "The data changed:"
 msgstr "Дані змінилися:"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:241
+#: lib/phoenix_kit_agent/web/dock/texts.ex:282
 #, elixir-autogen, elixir-format
 msgid "This change can be asked for again only once its confirmation ran out."
 msgstr "Повторити цю зміну можна лише тоді, коли минув термін її підтвердження."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:210
+#: lib/phoenix_kit_agent/web/dock/texts.ex:251
 #, elixir-autogen, elixir-format
 msgid "This change can no longer be confirmed here"
 msgstr "Цю зміну тут більше не можна підтвердити"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:245
+#: lib/phoenix_kit_agent/web/dock/texts.ex:286
 #, elixir-autogen, elixir-format
 msgid "This change cannot be confirmed: the assistant's call is not in the chat any more."
 msgstr "Цю зміну не можна підтвердити: виклику асистента більше немає в чаті."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:238
+#: lib/phoenix_kit_agent/web/dock/texts.ex:279
 #, elixir-autogen, elixir-format
 msgid "This change no longer waits for you."
 msgstr "Ця зміна більше не чекає вашого підтвердження."
@@ -1249,7 +1249,7 @@ msgstr "Чекає на вас до %{time}."
 msgid "What the assistant sent"
 msgstr "Що надіслав асистент"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:252
+#: lib/phoenix_kit_agent/web/dock/texts.ex:293
 #, elixir-autogen, elixir-format
 msgid "You may not make this change now."
 msgstr "Зараз вам не можна вносити цю зміну."
@@ -1269,12 +1269,12 @@ msgstr "Скасувати"
 msgid "[confirmation] waiting: %{action}"
 msgstr "[підтвердження] очікує: %{action}"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:230
+#: lib/phoenix_kit_agent/web/dock/texts.ex:271
 #, elixir-autogen, elixir-format
 msgid "A change is being confirmed right now. Try again in a moment."
 msgstr "Зараз підтверджується зміна. Спробуйте ще раз за мить."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:234
+#: lib/phoenix_kit_agent/web/dock/texts.ex:275
 #, elixir-autogen, elixir-format
 msgid "What became of this change could not be saved in the chat. Open the chat again to see it."
 msgstr "Не вдалося зберегти в чаті, чим закінчилася ця зміна. Відкрийте чат знову, щоб побачити це."
@@ -1355,6 +1355,46 @@ msgstr "не можна вибрати: його модель не прийма�
 #, elixir-autogen, elixir-format
 msgid "cannot be used: its model does not take tools, which the assistant needs"
 msgstr "не можна вибрати: його модель не підтримує інструменти, а вони потрібні асистентові"
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:225
+#, elixir-autogen, elixir-format
+msgid "It is not known whether the model chosen for the assistant can do what it needs. An administrator marks what the model can do on its AI endpoint, or chooses another one."
+msgstr "Невідомо, чи вміє модель, вибрана для асистента, те, що йому потрібно. Адміністратор позначить можливості моделі в її кінцевій точці ШІ або вибере іншу."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:231
+#, elixir-autogen, elixir-format
+msgid "No provider of the model takes the request as its AI endpoint is set up. An administrator checks the endpoint's settings."
+msgstr "Жоден провайдер моделі не приймає запит у тому вигляді, як налаштовано її кінцеву точку ШІ. Адміністратор перевірить налаштування кінцевої точки."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:151
+#, elixir-autogen, elixir-format
+msgid "The AI assistant has reached its limit for now, so it was not read."
+msgstr "ШІ-асистент поки вичерпав свій ліміт, тому файл не прочитано."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:215
+#, elixir-autogen, elixir-format
+msgid "The AI assistant has reached its limit for now. Try again later."
+msgstr "ШІ-асистент поки вичерпав свій ліміт. Спробуйте пізніше."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:148
+#, elixir-autogen, elixir-format
+msgid "The AI assistant is blocked for you, so it was not read."
+msgstr "ШІ-асистента для вас заблоковано, тому файл не прочитано."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:212
+#, elixir-autogen, elixir-format
+msgid "The AI assistant is blocked for you. An administrator can lift the block."
+msgstr "ШІ-асистента для вас заблоковано. Зняти блокування може адміністратор."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:219
+#, elixir-autogen, elixir-format
+msgid "The model chosen for the assistant cannot do what it needs. An administrator chooses another one."
+msgstr "Модель, вибрана для асистента, не вміє того, що йому потрібно. Адміністратор вибере іншу."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:155
+#, elixir-autogen, elixir-format
+msgid "The model that reads pictures cannot be used for it now, so it was not read."
+msgstr "Модель, яка читає зображення, зараз не можна для цього використати, тому файл не прочитано."
 
 #: lib/phoenix_kit_agent/web/tool_availability.ex:138
 #, elixir-autogen, elixir-format
