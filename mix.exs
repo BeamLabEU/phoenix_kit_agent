@@ -109,7 +109,7 @@ defmodule PhoenixKitAgent.MixProject do
       # TaskSpec user_limits flag.
       pk_dep(:phoenix_kit_ai,
         git: "https://github.com/timujinne/phoenix_kit_ai.git",
-        ref: "b8431ba7fdb9ead6b133ccffc80c2b7ba92ff833",
+        ref: "0c9d3f89e9017c29808522d285d364570c4c7425",
         override: true
       ),
 
