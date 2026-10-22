@@ -360,6 +360,25 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
       assert %{state: "confirmed", repeatable?: false} = card_state(ctx, card)
     end
 
+    test "core's audit names the assistant as what asked, without the input", ctx do
+      card = card!(ctx, %{"name" => "AUDIT-SECRET"})
+      assert {:ok, :confirmed} = confirm(ctx, card)
+
+      user_uuid = ctx.user.uuid
+
+      entries =
+        Repo.all(
+          from(e in PhoenixKit.Activity.Entry,
+            where: e.action == "api.request" and e.actor_uuid == ^user_uuid
+          )
+        )
+
+      assert [_ | _] = entries
+      assert Enum.all?(entries, &(&1.metadata["via"] == "agent"))
+      assert Enum.any?(entries, &(&1.metadata["confirmation_uuid"] == card.confirmation_uuid))
+      refute Jason.encode!(Enum.map(entries, & &1.metadata)) =~ "AUDIT-SECRET"
+    end
+
     test "the click frees the user's lock it took", ctx do
       card = card!(ctx)
       assert {:ok, :confirmed} = confirm(ctx, card)
