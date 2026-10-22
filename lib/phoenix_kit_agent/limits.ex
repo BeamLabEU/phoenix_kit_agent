@@ -48,8 +48,11 @@ defmodule PhoenixKitAgent.Limits do
       the watchers' period key is `w:<period>`, written only when they are
       told — so `notify_on_limit` switched on later in the period still
       tells the watchers of that period, once.
-    * The `phoenix_kit_ai` budget used up (`ai_budget_reached/2`) — the
-      watchers, at most once a day per user (event kind `ai_budget`).
+
+  A call refused by the `phoenix_kit_ai` budget is signalled by
+  `phoenix_kit_ai` itself (its `limit_reached` event, to its watchers and
+  to those of the task, `guard_watchers/1`); the turn's notice in the chat
+  says the budget is used up.
 
   The watchers are `agent_limit_watchers` (empty: every Owner) and the user's
   own `notify_user_uuids`, without the user, who is told as the user.
@@ -166,19 +169,6 @@ defmodule PhoenixKitAgent.Limits do
   end
 
   @doc """
-  Tells the watchers that the `phoenix_kit_ai` budget refused a call of the
-  user's assistant (`scope` is the budget's), at most once a day per user.
-  """
-  @spec ai_budget_reached(String.t(), term(), DateTime.t()) :: :ok
-  def ai_budget_reached(user_uuid, scope, now \\ DateTime.utc_now()) do
-    safely(fn ->
-      if first?(user_uuid, "ai_budget", Spend.period_keys(now).day, nil, nil) do
-        tell_watchers(user_uuid, &budget_text(&1, scope))
-      end
-    end)
-  end
-
-  @doc """
   Who is told about the user's limits: `agent_limit_watchers` (empty: every
   Owner) and the user's own `notify_user_uuids`, without the user.
   """
@@ -197,6 +187,29 @@ defmodule PhoenixKitAgent.Limits do
 
     (configured ++ own) |> Enum.uniq() |> List.delete(user_uuid)
   end
+
+  @doc """
+  The watchers the module adds to the AI guard's own for its tasks
+  (`watchers` of `PhoenixKitAgent.ai_tasks/0`, called with the user's uuid
+  or nil): `agent_limit_watchers`, plus the user's `notify_user_uuids` when
+  their `notify_on_limit` is on, without the user. An empty
+  `agent_limit_watchers` adds nobody: the guard tells its own watchers
+  (every Owner by default) anyway.
+  """
+  @spec guard_watchers(String.t() | nil) :: [String.t()]
+  def guard_watchers(user_uuid) when is_binary(user_uuid) do
+    own =
+      from(s in UserSettings,
+        where: s.user_uuid == ^user_uuid and s.notify_on_limit == true,
+        select: s.notify_user_uuids
+      )
+      |> repo().one()
+      |> List.wrap()
+
+    (Config.limit_watchers() ++ own) |> Enum.uniq() |> List.delete(user_uuid)
+  end
+
+  def guard_watchers(_no_user), do: Config.limit_watchers()
 
   @doc """
   Whether money counts on `endpoint_uuid` (see the moduledoc): an endpoint
@@ -393,40 +406,6 @@ defmodule PhoenixKitAgent.Limits do
           email: email,
           limit: Spend.format_usd(limit)
         )
-      end)
-
-  defp budget_text(email, :global),
-    do:
-      for_watchers(fn ->
-        gettext("The overall AI budget refused the AI assistant of %{email}.", email: email)
-      end)
-
-  defp budget_text(email, :endpoint),
-    do:
-      for_watchers(fn ->
-        gettext("The AI budget of the endpoint refused the AI assistant of %{email}.",
-          email: email
-        )
-      end)
-
-  defp budget_text(email, :user),
-    do:
-      for_watchers(fn ->
-        gettext("The AI budget of the user refused the AI assistant of %{email}.", email: email)
-      end)
-
-  defp budget_text(email, :user_calls),
-    do:
-      for_watchers(fn ->
-        gettext("The AI call limit of the user refused the AI assistant of %{email}.",
-          email: email
-        )
-      end)
-
-  defp budget_text(email, _other),
-    do:
-      for_watchers(fn ->
-        gettext("The AI budget refused the AI assistant of %{email}.", email: email)
       end)
 
   # A notice is never worth a turn: a failure is logged as its class only.

@@ -35,6 +35,15 @@ defmodule PhoenixKitAgent.Turns do
        — the one refusal that writes — a `notice` goes into the chat (error
        `daily_cost_limit`, `monthly_cost_limit` or `daily_turn_limit`) and the
        limit is announced (`PhoenixKitAgent.Limits.announce_reached/2`);
+    3a. the AI guard admits the turn (`PhoenixKitAI.Guard.admit/4`, task
+       `agent.chat`, for as long as the turn's lock may live): the user's
+       block (`{:error, :task_blocked}`) and the task's own limits
+       (`{:error, :task_limit_exceeded}`) are checked here once, and the
+       rounds pass the admission on (`guard_admission:`), so a turn admitted
+       before a block or a limit runs to its end. A refusal is like a limit
+       reached: nothing runs or is stored but a `notice` (error
+       `task_blocked` or `task_limit_exceeded`), once a day per chat (a
+       monthly limit: once a month);
     4. the task starts (`PhoenixKitAgent.Turns.Monitor`), and `{:ok,
        turn_ref}` is returned; there the user message is stored (and the
        attachments linked to it), then the rounds run
@@ -66,7 +75,7 @@ defmodule PhoenixKitAgent.Turns do
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.{Config, Confirmations, Conversations, Limits, Prompt, Spend, UserConfig}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
-  alias PhoenixKitAgent.Turns.{History, Locks, Monitor}
+  alias PhoenixKitAgent.Turns.{History, Locks, Monitor, Runner}
 
   @registry PhoenixKitAgent.Turns.Registry
 
@@ -87,6 +96,8 @@ defmodule PhoenixKitAgent.Turns do
           | :turn_in_flight
           | :click_in_flight
           | {:limit_reached, Limits.kind()}
+          | :task_blocked
+          | :task_limit_exceeded
           | :not_running
           | {:not_started, Monitor.exit_class()}
           | {:monitor_unavailable, Monitor.exit_class()}
@@ -308,7 +319,10 @@ defmodule PhoenixKitAgent.Turns do
       conversation
       |> locked(turn_ref, fn ->
         with :ok <- Limits.check(user.settings, user.endpoint_uuid),
-             do: begin(session_ref, conversation, text, attachments, user, turn_ref, opts)
+             {:ok, admission} <- admit(conversation.user_uuid, turn_ref) do
+          user = Map.put(user, :guard_admission, admission)
+          begin(session_ref, conversation, text, attachments, user, turn_ref, opts)
+        end
       end)
       |> started(conversation, turn_ref, user)
     end
@@ -326,6 +340,16 @@ defmodule PhoenixKitAgent.Turns do
     end
 
     {:error, {:limit_reached, reached.kind}}
+  end
+
+  defp started({:error, {:guard, reason, period}}, conversation, turn_ref, _user) do
+    try do
+      guard_refused(conversation, turn_ref, reason, period)
+    after
+      Locks.release(conversation.user_uuid, conversation.uuid, turn_ref)
+    end
+
+    {:error, reason}
   end
 
   defp started({:error, _reason} = error, conversation, turn_ref, _user) do
@@ -350,7 +374,7 @@ defmodule PhoenixKitAgent.Turns do
   defp limit_reached(conversation, turn_ref, settings, reached) do
     code = limit_code(reached.kind)
 
-    unless notice_in_period?(conversation, code, reached.kind) do
+    unless notice_in_period?(conversation, code, limit_period(reached.kind)) do
       _ =
         Conversations.add_turn_message(conversation.user_uuid, conversation.uuid, %{
           turn_ref: turn_ref,
@@ -363,9 +387,43 @@ defmodule PhoenixKitAgent.Turns do
     Limits.announce_reached(settings, reached)
   end
 
-  defp notice_in_period?(conversation, code, kind) do
+  # The guard's refusal of the turn (spec §6.2), as `{:guard, reason,
+  # period}` for `started/4`: the refusal of `PhoenixKitAI.Guard.admit/4`
+  # names the block group or the limit, which the chat does not need.
+  defp admit(user_uuid, turn_ref) do
+    case PhoenixKitAI.Guard.admit("agent.chat", user_uuid, turn_ref, lock_ttl_s()) do
+      {:ok, admission} ->
+        {:ok, admission}
+
+      {:error, {:task_blocked, _group}} ->
+        {:error, {:guard, :task_blocked, :day}}
+
+      {:error, {:task_limit_exceeded, _scope, _unit, period}} ->
+        {:error, {:guard, :task_limit_exceeded, period}}
+    end
+  end
+
+  # Once a day per chat (a monthly limit: once a month), like a limit of the
+  # module's own; the guard tells the user and the watchers itself.
+  defp guard_refused(conversation, turn_ref, reason, period) do
+    code = Atom.to_string(reason)
+
+    unless notice_in_period?(conversation, code, period) do
+      _ =
+        Conversations.add_turn_message(conversation.user_uuid, conversation.uuid, %{
+          turn_ref: turn_ref,
+          role: "notice",
+          content: Runner.guard_text(reason),
+          error: code
+        })
+    end
+
+    :ok
+  end
+
+  defp notice_in_period?(conversation, code, period) do
     windows = Spend.windows()
-    {from, _to} = if kind == :monthly_cost, do: windows.month, else: windows.day
+    {from, _to} = if period == :month, do: windows.month, else: windows.day
 
     repo().exists?(
       from(m in Message,
@@ -375,6 +433,9 @@ defmodule PhoenixKitAgent.Turns do
       )
     )
   end
+
+  defp limit_period(:monthly_cost), do: :month
+  defp limit_period(_daily), do: :day
 
   defp limit_code(:daily_cost), do: "daily_cost_limit"
   defp limit_code(:monthly_cost), do: "monthly_cost_limit"
@@ -413,7 +474,8 @@ defmodule PhoenixKitAgent.Turns do
       request_context: request_context,
       max_rounds: Config.max_tool_rounds(),
       result_chars: Config.tool_result_chars(),
-      capture?: Config.capture_ai_content?()
+      capture?: Config.capture_ai_content?(),
+      guard_admission: user.guard_admission
     }
 
     Monitor.start_turn(turn, deadline_ms(opts), [self() | Process.get(:"$callers", [])])

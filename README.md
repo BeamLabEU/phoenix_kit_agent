@@ -172,12 +172,13 @@ so too.
 
 How a picture reaches the model (decided 2026-10-20):
 
-  * A model known to take images (OpenRouter lists what each model takes) is
+  * A model known to take images (`PhoenixKitAI.Capabilities`: the
+    provider's catalogue, or what an admin declared on the endpoint) is
     sent the pixels in the picture's own turn only; later turns carry a line
     that names the file and the assistant's own earlier answer, not a second
     (paid) description.
-  * A model whose abilities are not known (any provider but OpenRouter, or a
-    model that declares nothing) is taken for a blind one: the vision model
+  * A model whose abilities are not known (a provider without a catalogue
+    and nothing declared on the endpoint) is taken for a blind one: the vision model
     describes the picture. With no vision model set, `Attachments.add/4`
     refuses a picture at once (`no_vision_model`), before anything is stored;
     a scan, known to be one only once it is read, fails with the same code.
@@ -244,10 +245,43 @@ journal row with a cost, a failed call's included. The
 user is told in the app at 80 % of a limit and when it is reached; the
 watchers (setting `agent_limit_watchers`, empty meaning every Owner, plus the
 user's own `notify_user_uuids`) get a notification of type `agent_limit` when
-the user's `notify_on_limit` is on, and whenever the `phoenix_kit_ai` budget
-refuses the user's assistant — each at most once per limit and period; with
+the user's `notify_on_limit` is on, at most once per limit and period; with
 `notify_on_limit` switched on later in a period, the watchers still hear of
-that period.
+that period. A refusal of the `phoenix_kit_ai` budget is told by
+`phoenix_kit_ai` itself, to its watchers and to the module's (below); the
+chat says the budget is used up.
+
+## The AI task guard
+
+The module declares two AI tasks of `phoenix_kit_ai` (`ai_tasks/0`):
+`agent.chat` (the calls of a turn; needs tools) and `agent.attachment` (a
+picture described by the vision model; needs images in). Both are private
+(the reasons of their flags and blocks are shown only to holders of
+`ai.manage`), share the block group `free_text` with the AI Playground, and
+have no per-user limits in the guard (`user_limits: false`): the module's
+own limits above stay the per-user ones; the guard adds only limits of the
+task. Its watchers are `agent_limit_watchers` and, with `notify_on_limit`,
+the user's `notify_user_uuids`, never the user.
+
+  * A turn is admitted once, after the module's limits
+    (`PhoenixKitAI.Guard.admit/4`); its calls carry the admission, so a turn
+    that started runs to its end. A blocked user, or a task over its limit,
+    gets a notice in the chat (`task_blocked`, `task_limit_exceeded`) and
+    nothing is sent or stored.
+  * A model the guard refuses is a notice of its own (`model_unfit`,
+    `model_unverified`, `no_provider_for_params`).
+  * When the task flags off-purpose requests (its guard mode), the system
+    prompt carries the guard's instruction and the marker
+    `⟦off_purpose: <reason>⟧`, above the admin's and the user's
+    instructions. The turn cuts the marker off the end of an answer before
+    it is stored and reports it, once per turn; a marker anywhere else, or in
+    a tool's result, flags nothing.
+  * Settings → AI Agent and AI Agent → Users refuse a newly chosen model that
+    does not fit its task (`PhoenixKitAI.Tasks.check_selection/2`), or that
+    nobody knows to fit until an admin marks what it can do on its endpoint.
+  * AI Agent → Users shows who is blocked (the reason only to `ai.manage`)
+    and lets a holder of `agent.manage` lift another person's block (never
+    their own, never an Owner's unless they are an Owner).
 
 "Stop" and the turn deadline ask the turn to stop between its steps, so a model
 call under way finishes and its cost reaches the journal; a turn still running

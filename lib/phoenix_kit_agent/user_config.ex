@@ -94,6 +94,24 @@ defmodule PhoenixKitAgent.UserConfig do
     end)
   end
 
+  @doc """
+  The endpoints the assistant's turns use now: the module default and
+  every user's own model. It backs the `endpoints` of the `agent.chat` AI
+  task (`PhoenixKitAgent.ai_tasks/0`).
+  """
+  @spec endpoint_uuids() :: [String.t()]
+  def endpoint_uuids do
+    own =
+      from(s in UserSettings,
+        where: not is_nil(s.endpoint_uuid),
+        distinct: true,
+        select: s.endpoint_uuid
+      )
+      |> repo().all()
+
+    Enum.uniq(List.wrap(Config.default_endpoint_uuid()) ++ own)
+  end
+
   defp build_effective(user_uuid, row, defaults, default_endpoint) do
     limits =
       Map.new(UserSettings.limit_fields(), fn field ->

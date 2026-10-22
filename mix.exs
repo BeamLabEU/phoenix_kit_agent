@@ -103,11 +103,13 @@ defmodule PhoenixKitAgent.MixProject do
 
       # Model calls, endpoints, credentials, budget and the request journal
       # come from phoenix_kit_ai; this module only adds the chat layer.
-      # Integration pin until release: the fork's integration branch
-      # (upstream + #38, tool calling).
+      # Pin until release: the fork's branch feat/task-user-limits-flag, the
+      # AI task guard (tasks, capabilities, admission, blocks, off-purpose
+      # flags; #48 and the stack under it, with tool calling, #38) plus the
+      # TaskSpec user_limits flag.
       pk_dep(:phoenix_kit_ai,
         git: "https://github.com/timujinne/phoenix_kit_ai.git",
-        ref: "06cc9ff9c8030e73bac47748cb07350617aa14f6",
+        ref: "b8431ba7fdb9ead6b133ccffc80c2b7ba92ff833",
         override: true
       ),
 

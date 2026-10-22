@@ -298,6 +298,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
         prompt: prompt,
         user_uuid: settings.user_uuid,
         source: "agent",
+        task: "agent.attachment",
         capture_request_content: false,
         # Never answered from, nor put into, a cache the other users share.
         cache: false

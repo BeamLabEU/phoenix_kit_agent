@@ -1,9 +1,9 @@
 defmodule PhoenixKitAgent.ModelsTest do
   @moduledoc """
   The choice of a model for a user (spec §7.2): only `phoenix_kit_ai` endpoints
-  that can chat, each with whether its model is known to take tools. OpenRouter
-  publishes that per model; for other providers `phoenix_kit_ai` has no
-  capability listing, so the answer is "unknown".
+  that can chat, each with whether its model is known to take tools or
+  images — what `PhoenixKitAI.Capabilities` knows (a catalogue, or what an
+  admin declared on the endpoint), never asked of the provider here.
   """
 
   use PhoenixKitAgent.DataCase, async: false
@@ -16,40 +16,6 @@ defmodule PhoenixKitAgent.ModelsTest do
     Application.put_env(:phoenix_kit_ai, :req_options, plug: {Req.Test, @stub}, retry: false)
     on_exit(fn -> Application.delete_env(:phoenix_kit_ai, :req_options) end)
     :ok
-  end
-
-  # The OpenRouter `/models` listing.
-  defp listing(models) do
-    %{
-      "data" =>
-        Enum.map(models, fn model ->
-          {id, parameters, architecture} =
-            case model do
-              {id, parameters} -> {id, parameters, %{"modality" => "text->text"}}
-              {id, parameters, architecture} -> {id, parameters, architecture}
-            end
-
-          %{
-            "id" => id,
-            "name" => id,
-            "supported_parameters" => parameters,
-            "architecture" => architecture
-          }
-        end)
-    }
-  end
-
-  defp serve_models(models, calls \\ 1) do
-    test = self()
-
-    Req.Test.expect(
-      @stub,
-      calls,
-      fn conn ->
-        send(test, {:models_requested, conn.request_path})
-        Req.Test.json(conn, listing(models))
-      end
-    )
   end
 
   describe "list_endpoints/1" do
@@ -77,193 +43,88 @@ defmodule PhoenixKitAgent.ModelsTest do
     end
   end
 
+  # An endpoint whose model's abilities an admin declared (the guard's
+  # capabilities, read by `PhoenixKitAI.Capabilities.for_endpoint/1`).
+  defp declared(model, flags) do
+    endpoint_fixture(%{
+      model: model,
+      provider_settings: %{"capabilities" => Map.put(flags, "model", model)}
+    })
+  end
+
+  defp no_network do
+    Req.Test.stub(@stub, fn _conn -> flunk("the provider's model list was asked") end)
+  end
+
   describe "image_input_support/1" do
-    test "OpenRouter says per model whether it takes images" do
-      sees = endpoint_fixture(%{model: "a/sees"})
-      sees_listed = endpoint_fixture(%{model: "a/sees-listed"})
-      blind = endpoint_fixture(%{model: "a/blind"})
-      missing = endpoint_fixture(%{model: "a/not-listed"})
+    test "what the AI module knows of the model's images in, and nothing asked of the provider" do
+      no_network()
+      sees = declared("a/sees", %{"vision" => "yes"})
+      blind = declared("a/blind", %{"vision" => "no"})
+      unknown = endpoint_fixture(%{model: "a/unknown"})
 
-      serve_models([
-        {"a/sees", [], %{"modality" => "text+image->text"}},
-        {"a/sees-listed", [], %{"input_modalities" => ["text", "image"], "modality" => "x"}},
-        {"a/blind", [], %{"modality" => "text->text", "input_modalities" => ["text"]}}
-      ])
-
-      assert Models.image_input_support([sees, sees_listed, blind, missing]) == %{
+      assert Models.image_input_support([sees, blind, unknown]) == %{
                sees.uuid => :supported,
-               sees_listed.uuid => :supported,
                blind.uuid => :unsupported,
-               missing.uuid => :unknown
+               unknown.uuid => :unknown
              }
     end
 
-    test "an image the model can only produce is not an image it takes" do
-      draws = endpoint_fixture(%{model: "a/draws"})
-      serve_models([{"a/draws", [], %{"modality" => "text->text+image"}}])
+    test "a model known for its tools but not for its images is unknown for images, not seeing" do
+      tools_only = declared("a/tools-only", %{"tools" => "yes"})
 
-      assert Models.image_input_support([draws]) == %{draws.uuid => :unsupported}
+      assert Models.image_input_support([tools_only]) == %{tools_only.uuid => :unknown}
+      assert Models.image_input(tools_only.uuid) == :unknown
     end
 
-    test "other providers are unknown, and nothing is asked of them" do
-      deepseek = endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
-      Req.Test.stub(@stub, fn _conn -> flunk("a provider without a listing was asked") end)
-
-      assert Models.image_input_support([deepseek]) == %{deepseek.uuid => :unknown}
-    end
-
-    test "a model that declares neither input modalities nor a modality is unknown, not blind" do
-      bare = endpoint_fixture(%{model: "a/bare"})
-      no_architecture = endpoint_fixture(%{model: "a/no-architecture"})
-
-      Req.Test.expect(@stub, fn conn ->
-        Req.Test.json(conn, %{
-          "data" => [
-            %{"id" => "a/bare", "architecture" => %{}},
-            %{"id" => "a/no-architecture"}
-          ]
+    test "a declaration made for another model counts for nothing" do
+      endpoint =
+        endpoint_fixture(%{
+          model: "a/now",
+          provider_settings: %{"capabilities" => %{"model" => "a/before", "vision" => "yes"}}
         })
-      end)
 
-      assert Models.image_input_support([bare, no_architecture]) == %{
-               bare.uuid => :unknown,
-               no_architecture.uuid => :unknown
-             }
+      assert Models.image_input_support([endpoint]) == %{endpoint.uuid => :unknown}
     end
 
-    test "image_input/1 keeps its answer for a few minutes instead of asking the provider again" do
-      Models.clear_cache()
-      sees = endpoint_fixture(%{model: "a/sees"})
-      serve_models([{"a/sees", [], %{"modality" => "text+image->text"}}], 2)
-
-      assert Models.image_input(sees.uuid) == :supported
-      assert Models.image_input(sees.uuid) == :supported
-      assert_received {:models_requested, "/api/v1/models"}
-      refute_received {:models_requested, _}
-
-      # Forgotten, it is asked again.
-      Models.clear_cache()
-      assert Models.image_input(sees.uuid) == :supported
-      assert_received {:models_requested, "/api/v1/models"}
-    end
-
-    test "image_input/1 does not keep an answer across a change of the endpoint's model" do
-      Models.clear_cache()
-      endpoint = endpoint_fixture(%{model: "a/blind"})
-
-      serve_models(
-        [
-          {"a/blind", [], %{"modality" => "text->text"}},
-          {"a/sees", [], %{"modality" => "text+image->text"}}
-        ],
-        2
-      )
-
+    test "image_input/1 reads the endpoint again: a change is seen at once" do
+      endpoint = declared("a/eyes", %{"vision" => "no"})
       assert Models.image_input(endpoint.uuid) == :unsupported
-      {:ok, _} = PhoenixKitAI.update_endpoint(endpoint, %{model: "a/sees"})
-      assert Models.image_input(endpoint.uuid) == :supported
-    end
-
-    test "image_input/1 does not keep an answer across a change of the endpoint's connection" do
-      Models.clear_cache()
-      endpoint = endpoint_fixture(%{model: "a/sees"})
-      serve_models([{"a/sees", [], %{"modality" => "text+image->text"}}], 2)
-
-      assert Models.image_input(endpoint.uuid) == :supported
 
       {:ok, _} =
-        PhoenixKitAI.update_endpoint(endpoint, %{base_url: "https://proxy.example/api/v1"})
+        PhoenixKitAI.update_endpoint(endpoint, %{
+          provider_settings: %{"capabilities" => %{"model" => "a/eyes", "vision" => "yes"}}
+        })
 
       assert Models.image_input(endpoint.uuid) == :supported
-
-      assert_received {:models_requested, "/api/v1/models"}
-      assert_received {:models_requested, _}
     end
 
-    test "image_input/1 answers for one endpoint by its uuid; no endpoint is unknown" do
-      sees = endpoint_fixture(%{model: "a/sees"})
-      serve_models([{"a/sees", [], %{"modality" => "text+image->text"}}])
-
-      assert Models.image_input(sees.uuid) == :supported
+    test "image_input/1: no endpoint is unknown" do
       assert Models.image_input(nil) == :unknown
       assert Models.image_input(Ecto.UUID.generate()) == :unknown
     end
   end
 
   describe "tools_support/1" do
-    test "OpenRouter says per model whether it takes tools" do
-      with_tools = endpoint_fixture(%{model: "a/with-tools"})
-      without = endpoint_fixture(%{model: "a/without-tools"})
-      missing = endpoint_fixture(%{model: "a/not-listed"})
+    test "what the AI module knows of the model's tools, and nothing asked of the provider" do
+      no_network()
+      with_tools = declared("a/with-tools", %{"tools" => "yes"})
+      without = declared("a/without-tools", %{"tools" => "no"})
+      unknown = endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
 
-      serve_models([
-        {"a/with-tools", ["temperature", "tools"]},
-        {"a/without-tools", ["temperature"]}
-      ])
-
-      assert Models.tools_support([with_tools, without, missing]) == %{
+      assert Models.tools_support([with_tools, without, unknown]) == %{
                with_tools.uuid => :supported,
                without.uuid => :unsupported,
-               missing.uuid => :unknown
+               unknown.uuid => :unknown
+             }
+
+      assert Models.tools_support_of([with_tools.uuid, Ecto.UUID.generate()]) == %{
+               with_tools.uuid => :supported
              }
     end
 
-    test "endpoints that share a connection are answered by one request" do
-      one = endpoint_fixture(%{model: "a/one", api_key: "sk-or-v1-shared"})
-      two = endpoint_fixture(%{model: "a/two", api_key: "sk-or-v1-shared"})
-
-      serve_models([{"a/one", ["tools"]}, {"a/two", []}], 1)
-
-      assert %{} = Models.tools_support([one, two])
-      assert_received {:models_requested, "/api/v1/models"}
-      refute_received {:models_requested, _}
-    end
-
-    test "other providers are unknown, and nothing is asked of them" do
-      deepseek = endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
-
-      Req.Test.stub(@stub, fn _conn -> flunk("a provider without a listing was asked") end)
-
-      assert Models.tools_support([deepseek]) == %{deepseek.uuid => :unknown}
-    end
-
-    test "a listing that cannot be had leaves the answer unknown" do
-      endpoint = endpoint_fixture(%{model: "a/one"})
-
-      Req.Test.expect(@stub, fn conn ->
-        conn
-        |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_resp(500, "{}")
-      end)
-
-      assert Models.tools_support([endpoint]) == %{endpoint.uuid => :unknown}
-    end
-
-    test "a transport failure leaves the answer unknown" do
-      endpoint = endpoint_fixture(%{model: "a/one"})
-      Req.Test.expect(@stub, &Req.Test.transport_error(&1, :econnrefused))
-
-      assert Models.tools_support([endpoint]) == %{endpoint.uuid => :unknown}
-    end
-
-    test "no endpoints, no request" do
-      Req.Test.stub(@stub, fn _conn -> flunk("nothing to ask") end)
+    test "no endpoints, nothing to say" do
       assert Models.tools_support([]) == %{}
-    end
-  end
-
-  describe "the cache" do
-    alias PhoenixKitAgent.Models.Cache
-
-    test "an entry past its time is dropped when another one is kept" do
-      Cache.clear()
-      on_exit(&Cache.clear/0)
-
-      assert Cache.fetch({:old, 1}, fn _ -> 0 end, fn -> :old end) == :old
-      assert Cache.fetch({:new, 1}, fn _ -> 60_000 end, fn -> :new end) == :new
-
-      assert :ets.lookup(Cache, {:old, 1}) == []
-      assert [{{:new, 1}, _expires, :new}] = :ets.lookup(Cache, {:new, 1})
     end
   end
 end

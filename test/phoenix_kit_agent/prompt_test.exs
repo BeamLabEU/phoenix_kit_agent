@@ -194,8 +194,8 @@ defmodule PhoenixKitAgent.PromptTest do
     test "a long page is cut", %{user: user} do
       prompt = build(user, %{page: "/" <> String.duplicate("a", 500)})
 
-      assert prompt =~ "Page: /aaa"
-      assert prompt |> String.split("\n") |> Enum.all?(&(String.length(&1) < 300))
+      assert [page] = prompt |> String.split("\n") |> Enum.filter(&(&1 =~ "Page: /aaa"))
+      assert String.length(page) < 300
     end
   end
 
