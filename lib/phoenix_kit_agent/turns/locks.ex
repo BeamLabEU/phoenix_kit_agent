@@ -20,8 +20,11 @@ defmodule PhoenixKitAgent.Turns.Locks do
   time the settings themselves last changed.
 
   A click on a confirmation card (`PhoenixKitAgent.Confirmations`) takes the
-  user's lock alone (`acquire_user/4`): it is refused while a turn of the user
-  runs, and no turn starts while it runs.
+  user's lock alone (`acquire_user/4`) under a ref of its own (`click_ref/0`):
+  it is refused while a turn of the user runs, and no turn starts while it
+  runs — the click keeps its lock fresh (`keep_user/4`) for as long as it
+  runs. Whoever is refused the user's lock learns what holds it:
+  `:turn_in_flight` (a turn) or `:click_in_flight` (a click).
   """
 
   import Ecto.Query, only: [from: 2]
@@ -29,13 +32,16 @@ defmodule PhoenixKitAgent.Turns.Locks do
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.Schemas.{Conversation, UserSettings}
 
+  # What the ref of a click starts with; a turn's ref is a bare UUIDv7.
+  @click_prefix "confirm-"
+
   @doc """
   Takes both locks for `turn_ref`, or neither. The chat is tried first, so a
   second turn in the same chat is `:conversation_busy`; a turn of the user in
-  another chat is `:turn_in_flight`.
+  another chat is `:turn_in_flight`, a click of the user `:click_in_flight`.
   """
   @spec acquire(String.t(), String.t(), String.t(), pos_integer()) ::
-          :ok | {:error, :conversation_busy | :turn_in_flight}
+          :ok | {:error, :conversation_busy | :turn_in_flight | :click_in_flight}
   def acquire(user_uuid, conversation_uuid, turn_ref, ttl_s) do
     result =
       repo().transaction(fn ->
@@ -56,22 +62,51 @@ defmodule PhoenixKitAgent.Turns.Locks do
     end
   end
 
+  @doc "A new ref for a click on a confirmation card, told apart from a turn's."
+  @spec click_ref() :: String.t()
+  def click_ref, do: @click_prefix <> UUIDv7.generate()
+
   @doc """
   Takes the user's lock alone for `ref` (a click on a confirmation card), or
-  `{:error, :turn_in_flight}`. `ttl_s` is how old another holder's lock must be
-  to be taken over — the TTL of a turn's locks, so a turn still running is
-  never taken over; `hold_s` (at most `ttl_s`) is how long this lock blocks a
-  turn: it is dated back by `ttl_s - hold_s`, so a turn takes it over `hold_s`
-  after it was taken, should it never be released (its node went down).
+  `{:error, :turn_in_flight | :click_in_flight}`. `ttl_s` is how old another
+  holder's lock must be to be taken over — the TTL of a turn's locks, so a
+  turn still running is never taken over; `hold_s` (at most `ttl_s`) is how
+  long this lock blocks a turn: it is dated back by `ttl_s - hold_s`, so a
+  turn takes it over `hold_s` after it was taken (or last kept,
+  `keep_user/4`), should it never be released (its node went down).
   Released with `release_user/2`.
   """
   @spec acquire_user(String.t(), String.t(), pos_integer(), pos_integer()) ::
-          :ok | {:error, :turn_in_flight}
+          :ok | {:error, :turn_in_flight | :click_in_flight}
   def acquire_user(user_uuid, ref, ttl_s, hold_s) when hold_s > 0 and hold_s <= ttl_s do
     now = db_now()
-    since = DateTime.add(now, hold_s - ttl_s, :second)
-    lock_user(user_uuid, ref, since, now, DateTime.add(now, -ttl_s, :second))
+
+    lock_user(
+      user_uuid,
+      ref,
+      held_since(now, ttl_s, hold_s),
+      now,
+      DateTime.add(now, -ttl_s, :second)
+    )
   end
+
+  @doc """
+  Dates the user's lock of `ref` as if taken now (with `acquire_user/4`'s
+  `ttl_s` and `hold_s`), while `ref` still holds it: a click that runs longer
+  than its hold keeps blocking a turn. `true` when `ref` held it.
+  """
+  @spec keep_user(String.t(), String.t(), pos_integer(), pos_integer()) :: boolean()
+  def keep_user(user_uuid, ref, ttl_s, hold_s) when hold_s > 0 and hold_s <= ttl_s do
+    {count, _} =
+      repo().update_all(
+        from(s in UserSettings, where: s.user_uuid == ^user_uuid and s.busy_turn_ref == ^ref),
+        set: [busy_since: held_since(db_now(), ttl_s, hold_s)]
+      )
+
+    count == 1
+  end
+
+  defp held_since(now, ttl_s, hold_s), do: DateTime.add(now, hold_s - ttl_s, :second)
 
   @doc "Releases the user's lock if `ref` still holds it."
   @spec release_user(String.t(), String.t()) :: :ok
@@ -206,7 +241,19 @@ defmodule PhoenixKitAgent.Turns.Locks do
         conflict_target: [:user_uuid]
       )
 
-    if count == 1, do: :ok, else: {:error, :turn_in_flight}
+    if count == 1, do: :ok, else: {:error, holder(user_uuid)}
+  end
+
+  # What holds the user's lock that could not be taken: a click or a turn.
+  defp holder(user_uuid) do
+    ref =
+      repo().one(
+        from(s in UserSettings, where: s.user_uuid == ^user_uuid, select: s.busy_turn_ref)
+      )
+
+    if is_binary(ref) and String.starts_with?(ref, @click_prefix),
+      do: :click_in_flight,
+      else: :turn_in_flight
   end
 
   # A lock taken before this time is older than `ttl_s`.
