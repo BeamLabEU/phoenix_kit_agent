@@ -52,7 +52,7 @@ defmodule PhoenixKitAgent.Web.DockConfirmTest do
     {ref, token} = session_fixture(user)
     chat = conversation_fixture(user, %{title: "Card chat"})
 
-    %{conn: conn, user: user, ref: ref, token: token, chat: chat}
+    %{conn: conn, user: user, role: role, ref: ref, token: token, chat: chat}
   end
 
   # ── helpers ─────────────────────────────────────────────────────────
@@ -175,21 +175,60 @@ defmodule PhoenixKitAgent.Web.DockConfirmTest do
       view = dock(ctx)
       render_hook(view, "restore", %{"open" => true, "conversation_uuid" => ctx.chat.uuid})
 
+      # A copy of its own above the feed: not the id the feed gives it.
+      pinned = "#pk-agent-pinned-#{card.uuid}"
       assert has_element?(view, "#pk-agent-earlier")
-      assert has_element?(view, "#pk-agent-pinned #{card_id(card)}[data-state=waiting]")
-      refute has_element?(view, "#pk-agent-feed #{card_id(card)}")
+      assert has_element?(view, "#pk-agent-pinned #{pinned}[data-state=waiting]")
+      refute has_element?(view, card_id(card))
 
       # It is clicked there like any card.
-      view |> element("#{card_id(card)}-confirm") |> render_click()
+      view |> element("#{pinned}-confirm") |> render_click()
       settle(view)
 
       assert written() == "new"
-      assert has_element?(view, "#pk-agent-pinned #{card_id(card)}[data-state=confirmed]")
+      assert has_element?(view, "#pk-agent-pinned #{pinned}[data-state=confirmed]")
 
       # Once the page it is on is loaded, it is in the feed, and only there.
       view |> element("#pk-agent-earlier") |> render_click()
       refute has_element?(view, "#pk-agent-pinned")
       assert has_element?(view, "#pk-agent-feed #{card_id(card)}[data-state=confirmed]")
+    end
+
+    test "one core spent with no notice (its click was lost) is closed as done on open",
+         ctx do
+      card = card!(ctx)
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      Repo.update_all(from(c in Confirmation, where: c.uuid == ^card.confirmation_uuid),
+        set: [status: "used", used_at: now]
+      )
+
+      view = dock(ctx)
+      render_hook(view, "restore", %{"open" => true, "conversation_uuid" => ctx.chat.uuid})
+      render(view)
+
+      assert has_element?(view, "#{card_id(card)}[data-state=confirmed]")
+      refute has_element?(view, "#{card_id(card)}-confirm")
+      refute has_element?(view, "#pk-agent-pinned")
+      assert has_element?(view, "[data-role=notice][data-outcome=confirmed]")
+    end
+
+    test "one whose tool the user may no longer use keeps Cancel, and Cancel works", ctx do
+      card = card!(ctx)
+      :ok = Permissions.revoke_permission(ctx.role.uuid, "dashboard")
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      assert has_element?(view, "#{card_id(card)}[data-state=unavailable]")
+      refute has_element?(view, "#{card_id(card)}-confirm")
+
+      view |> element("#{card_id(card)}-reject") |> render_click()
+      settle(view)
+
+      assert row(card).status == "rejected"
+      assert has_element?(view, "#{card_id(card)}[data-state=rejected]")
+      refute has_element?(view, "#{card_id(card)}-reject")
     end
 
     test "is found waiting again when the panel mounts again", ctx do
@@ -258,7 +297,7 @@ defmodule PhoenixKitAgent.Web.DockConfirmTest do
       settle(view)
 
       assert written() == nil
-      assert has_element?(view, "#{card_id(card)}-note", "Another change is being confirmed")
+      assert has_element?(view, "#{card_id(card)}-note", "A change is being confirmed right now")
       refute has_element?(view, "#{card_id(card)}-note", "answering")
 
       # A message sent meanwhile is told the same, not "answering in another chat".

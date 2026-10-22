@@ -156,9 +156,9 @@ defmodule PhoenixKitAgent.Web.Dock.Components do
         {@card.note}
       </p>
 
-      <div :if={@card.state == "waiting" or @card.repeatable?} class="flex justify-end gap-2">
+      <div :if={@card.rejectable? or @card.repeatable?} class="flex justify-end gap-2">
         <button
-          :if={@card.state == "waiting"}
+          :if={@card.rejectable?}
           id={@id <> "-reject"}
           type="button"
           phx-click="reject_card"

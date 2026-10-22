@@ -603,7 +603,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
   defp waiting_already?(turn, tool, call) do
     case Tools.arguments(call["arguments"]) do
-      {:ok, input} -> Confirmations.waiting_same?(turn.conversation_uuid, tool.name, input)
+      {:ok, input} -> Confirmations.waiting_same?(turn, tool.name, input)
       :error -> false
     end
   end

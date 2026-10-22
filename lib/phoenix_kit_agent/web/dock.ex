@@ -45,13 +45,17 @@ defmodule PhoenixKitAgent.Web.Dock do
   shown with what `Confirmations.cards/4` says of it — core's preview through
   core's `operation_preview` component, the arguments the model sent as plain
   text (never markdown or a link), and "Run" / "Cancel the change"; "Ask
-  again" once it ran out. Opening the chat, "Earlier messages" and every new
+  again" once it ran out; only "Cancel the change" once the user may no
+  longer use its tool. Opening a chat first gives the cards core no longer
+  holds their notice (`Confirmations.settle_lapsed/3`: a click lost with its
+  node, a row that ran out), so none of them waits on the page or above it.
+  Opening the chat, "Earlier messages" and every new
   message find the cards by their `confirmation_uuid`, so a card still waiting
   is waiting again after a reload; the notice that settles a card renders it
   again. A card that waits (no notice yet) further back than the page of the
   chat the panel loaded is found too (`Confirmations.waiting_cards/3`): it is
-  shown above the feed, until "Earlier messages" reaches it and it takes its
-  place in the feed. A click
+  shown above the feed (under an id of its own), until "Earlier messages"
+  reaches it and it takes its place in the feed. A click
   runs off this process: a task under `PhoenixKitAgent.Confirmations.TaskSupervisor`,
   not linked to the panel, which the panel waits for (`start_async/3`), so a
   closed tab does not stop a write half-way. A click while the card is busy
@@ -541,7 +545,8 @@ defmodule PhoenixKitAgent.Web.Dock do
   defp current_uuid(_socket), do: nil
 
   # Subscribes to the chat (after the ownership check), settles a turn lost
-  # with its node, and reads its messages and its waiting files. The topic of
+  # with its node and the cards core no longer holds, and reads its messages
+  # and its waiting files. The topic of
   # the chat shown before is left only once the new one is read.
   defp open_conversation(socket, uuid, opts \\ []) do
     %{ref: ref, impersonated?: impersonated?} = socket.assigns
@@ -551,6 +556,8 @@ defmodule PhoenixKitAgent.Web.Dock do
          :ok <- openable(conversation, opts),
          :ok <- subscribe(socket, conversation.uuid, previous),
          {:ok, state} <- Turns.settle_interrupted(ref, impersonated?, conversation.uuid),
+         # A turn or a click that holds the user's lock settles them itself.
+         _lapsed = Confirmations.settle_lapsed(ref, impersonated?, conversation.uuid),
          {:ok, messages} <-
            Conversations.list_messages(
              ref,

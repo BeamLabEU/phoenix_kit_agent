@@ -227,7 +227,13 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
     do: gettext("The assistant is answering. Try again when it has finished.")
 
   def card_refusal(:click_running),
-    do: gettext("Another change is being confirmed right now. Try again in a moment.")
+    do: gettext("A change is being confirmed right now. Try again in a moment.")
+
+  def card_refusal(:not_stored),
+    do:
+      gettext(
+        "What became of this change could not be saved in the chat. Open the chat again to see it."
+      )
 
   def card_refusal(:not_waiting), do: gettext("This change no longer waits for you.")
 

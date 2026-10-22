@@ -170,7 +170,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             </button>
           </div>
           <div :if={@pinned != []} id="pk-agent-pinned" class="space-y-3 pb-3">
-            <.feed_message :for={message <- @pinned} id={"pk-agent-msg-" <> message.uuid} message={message} />
+            <.feed_message :for={message <- @pinned} id={"pk-agent-pinned-" <> message.uuid} message={message} />
           </div>
           <div id="pk-agent-feed" phx-update="stream" class="space-y-3">
             <div id="pk-agent-feed-empty" class="hidden only:block py-8 text-center text-xs opacity-60">

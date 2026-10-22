@@ -26,11 +26,14 @@ defmodule PhoenixKitAgent.Confirmations do
   user runs, a click is `{:error, :turn_running}`, while another click runs
   `{:error, :click_running}`, and no turn starts while a click runs (the turn
   is refused `:click_in_flight`). The lock blocks a turn for 30 s from the
-  moment it was last kept: a process next to the click keeps it fresh every
-  10 s for as long as the click runs (`Locks.keep_user/4`;
-  `config :phoenix_kit_agent, click_keep_ms:`), and stops with it, so a lock
-  never released (its node went down) frees the user's turns 30 s after its
-  last keep. A click calls no model and stores no user message, so it spends
+  moment it was last kept: a process next to the click, under
+  `PhoenixKitAgent.Confirmations.TaskSupervisor`, keeps it fresh every 10 s
+  for as long as the click runs (`Locks.keep_user/4`; `config
+  :phoenix_kit_agent, click_keep_ms:`, held between 100 ms and 15 s, half the
+  hold), and stops with it, so a lock never released (its node went down)
+  frees the user's turns 30 s after its last keep. Should the database refuse
+  the keeps for longer than the hold, a turn may start while the click still
+  runs. A click calls no model and stores no user message, so it spends
   neither money nor a turn of the user's limits. The card is read again under
   the lock.
 
@@ -51,10 +54,11 @@ defmodule PhoenixKitAgent.Confirmations do
 
     * `confirmed` — the handler ran; and also for a row core had spent
       already with no notice of it here (core's `used` to `redeem_as/6` or
-      `reject_for_user/2`, read back as `used` with `get_for_user/2`): the
-      click that spent it was lost after core spent it, and core spends the
-      row right before the handler runs. Should the session no longer read
-      the row so, the card keeps waiting with the reason;
+      `reject_for_user/2`, read back as `used` with `get_for_user/2`, or,
+      when that read is withheld because the user may no longer use the
+      tool, with `lookup_for_user/2`): the click that spent it was lost after
+      core spent it, and core spends the row right before the handler runs.
+      Should the row not read so, the card keeps waiting with the reason;
     * `rejected`;
     * `expired` — the row ran out, or is gone: core's `invalid` (it deletes
       its rows) reads as `expired` too;
@@ -65,6 +69,18 @@ defmodule PhoenixKitAgent.Confirmations do
       closed): both are there, or neither;
     * `failed` — only when the handler failed after core spent the row (an
       error of `redeem_as/6` with the row `used`).
+
+  A notice the chat refuses (it was deleted meanwhile) makes the click
+  `{:error, :not_stored}`, whatever core did.
+
+  A card can also stop waiting with no click to say so: its row ran out, core
+  deleted it, or the click that settled it was lost with its node.
+  `settle_lapsed/3` (the chat panel, when it opens a chat) and
+  `settle_lapsed_in_turn/2` (a turn, before it reads the history) give such a
+  card its notice by what core's row says — `used` is `confirmed`, `rejected`
+  is `rejected`, a row that ran out or is gone is `expired` — so neither the
+  panel nor the model takes it for waiting. A card the user may no longer run
+  (the right to its tool is gone) still waits, for "Cancel the change".
 
   A refusal before the row is spent — the session, the rights, the module's
   box, the handler's own dry run, the rate limit — writes nothing: the card
@@ -92,6 +108,7 @@ defmodule PhoenixKitAgent.Confirmations do
   # often it is kept while the click runs.
   @hold_s 30
   @keep_ms 10_000
+  @keep_min_ms 100
 
   # The most of the model's arguments a card shows.
   @arguments_chars 2_000
@@ -105,7 +122,8 @@ defmodule PhoenixKitAgent.Confirmations do
           preview: map() | nil,
           arguments: String.t() | nil,
           expires_at: DateTime.t() | nil,
-          repeatable?: boolean()
+          repeatable?: boolean(),
+          rejectable?: boolean()
         }
 
   @typedoc "Why a click did nothing."
@@ -116,6 +134,7 @@ defmodule PhoenixKitAgent.Confirmations do
           | :turn_running
           | :click_running
           | :no_arguments
+          | :not_stored
           | {:refused, atom()}
 
   @doc "The outcomes a card's notice takes."
@@ -174,7 +193,10 @@ defmodule PhoenixKitAgent.Confirmations do
       session), when it runs out, and the arguments the model sent, as plain
       JSON text (to be shown as text, never as markup), cut to
       #{@arguments_chars} characters;
-    * `repeatable?` — the card ran out and was not asked for again.
+    * `repeatable?` — the card ran out and was not asked for again;
+    * `rejectable?` — it can be turned down: it waits, or it is
+      `"unavailable"` because the user may no longer use its tool (core lets
+      such a row be turned down, not run).
   """
   @spec cards(Conversations.session_ref(), boolean(), term(), [
           %{:uuid => term(), optional(atom()) => term()}
@@ -213,20 +235,69 @@ defmodule PhoenixKitAgent.Confirmations do
     end
   end
 
+  @doc """
+  Gives each card of the user's chat `conversation_uuid` that core no longer
+  holds, though no notice says so, the notice of what became of it (see the
+  moduledoc). Nothing is written, and no lock is asked for, when there is no
+  such card; else under the user's lock, as a click: `{:error,
+  :turn_running}` or `{:error, :click_running}`, with nothing written, while a
+  turn or a click holds it.
+  """
+  @spec settle_lapsed(Conversations.session_ref(), boolean(), term()) ::
+          :ok | {:error, Conversations.refusal() | :turn_running | :click_running}
+  def settle_lapsed(session_ref, impersonated?, conversation_uuid) do
+    with {:ok, conversation} <-
+           Conversations.owned_conversation(session_ref, conversation_uuid,
+             impersonated: impersonated?
+           ) do
+      if lapsed(session_ref, conversation) == [],
+        do: :ok,
+        else:
+          locked(conversation.user_uuid, fn _click_ref ->
+            settle_lapsed_in_turn(session_ref, conversation)
+          end)
+    end
+  end
+
   @doc false
-  # Whether a card of the chat `conversation_uuid` waits for the same write:
-  # the tool `tool_name` with the arguments `input` (`Tools.arguments/1` of
-  # its call). `PhoenixKitAgent.Turns.Runner` denies such a call instead of
-  # holding it a second time.
-  @spec waiting_same?(String.t(), String.t(), map()) :: boolean()
-  def waiting_same?(conversation_uuid, tool_name, input) do
-    conversation = %Conversation{uuid: conversation_uuid}
+  # `settle_lapsed/3` for a turn that holds the user's lock already
+  # (`PhoenixKitAgent.Turns`, before it reads the history), with the chat it
+  # owns. A notice the chat refuses is logged by its codes, as a click's.
+  @spec settle_lapsed_in_turn(Conversations.session_ref(), Conversation.t()) :: :ok
+  def settle_lapsed_in_turn(session_ref, %Conversation{} = conversation) do
+    for {card, outcome} <- lapsed(session_ref, conversation),
+        do: settle(%{conversation: conversation, card: card}, outcome)
+
+    :ok
+  end
+
+  @doc false
+  # Whether a card of the turn's chat waits for the same write: the tool
+  # `tool_name` with the arguments `input` (`Tools.arguments/1` of its call),
+  # and core still holds its row (read with the turn's session).
+  # `PhoenixKitAgent.Turns.Runner` denies such a call instead of holding it a
+  # second time.
+  @spec waiting_same?(
+          %{
+            :session_ref => Conversations.session_ref(),
+            :user_uuid => String.t(),
+            :conversation_uuid => String.t(),
+            optional(atom()) => term()
+          },
+          String.t(),
+          map()
+        ) :: boolean()
+  def waiting_same?(turn, tool_name, input) do
+    conversation = %Conversation{uuid: turn.conversation_uuid, user_uuid: turn.user_uuid}
 
     conversation
     |> waiting_query()
     |> where([m], m.tool_name == ^tool_name)
     |> repo().all()
-    |> Enum.any?(&(call_input(conversation, &1) == {:ok, input}))
+    |> Enum.any?(
+      &(call_input(conversation, &1) == {:ok, input} and
+          lapse(&1, turn.session_ref, conversation) == nil)
+    )
   end
 
   # ── a click ─────────────────────────────────────────────────────
@@ -278,19 +349,25 @@ defmodule PhoenixKitAgent.Confirmations do
     end
   end
 
-  # The process that keeps the click's lock fresh while the click runs; it
-  # ends with the click, however the click ends. It acts for the click's
-  # process (`$callers`), as a task would.
+  # The task that keeps the click's lock fresh while the click runs; it ends
+  # with the click, however the click ends.
   defp keep_locked(user_uuid, click_ref, ttl_s) do
     owner = self()
-    callers = [owner | Process.get(:"$callers", [])]
-    every_ms = Application.get_env(:phoenix_kit_agent, :click_keep_ms, @keep_ms)
+    every_ms = keep_every(Application.get_env(:phoenix_kit_agent, :click_keep_ms, @keep_ms))
 
-    spawn(fn ->
-      Process.put(:"$callers", callers)
-      keep(user_uuid, click_ref, ttl_s, Process.monitor(owner), every_ms)
-    end)
+    {:ok, keeper} =
+      Task.Supervisor.start_child(PhoenixKitAgent.Confirmations.TaskSupervisor, fn ->
+        keep(user_uuid, click_ref, ttl_s, Process.monitor(owner), every_ms)
+      end)
+
+    keeper
   end
+
+  # Often enough to keep the hold, never a busy loop.
+  defp keep_every(ms) when is_integer(ms),
+    do: ms |> max(@keep_min_ms) |> min(div(@hold_s * 1_000, 2))
+
+  defp keep_every(_not_a_number), do: @keep_ms
 
   defp keep(user_uuid, click_ref, ttl_s, owner, every_ms) do
     receive do
@@ -347,12 +424,11 @@ defmodule PhoenixKitAgent.Confirmations do
   defp redeemed({:ok, %{result: result}, _headers}, click) do
     case Tools.held(result) do
       {:ok, new_uuid} ->
-        click |> settle_with_card("changed", new_uuid) |> stored("notice and card")
-        {:ok, :changed}
+        with :ok <- click |> settle_with_card("changed", new_uuid) |> stored("notice and card"),
+             do: {:ok, :changed}
 
       :error ->
-        settle(click, "confirmed")
-        {:ok, :confirmed}
+        settled(click, "confirmed")
     end
   end
 
@@ -373,13 +449,9 @@ defmodule PhoenixKitAgent.Confirmations do
 
   # Spent, then the handler failed: `failed`. Not spent: the card waits.
   defp redeemed({:error, code, _detail, _context, _headers}, click) do
-    case Confirm.get_for_user(click.card.confirmation_uuid, click.session_ref) do
-      {:ok, %{status: "used"}} ->
-        settle(click, "failed")
-        {:ok, :failed}
-
-      _waiting_or_unreadable ->
-        {:error, {:refused, code}}
+    case row_status(click.card, click.session_ref, click.conversation) do
+      {:ok, "used"} -> settled(click, "failed")
+      _waiting_or_unreadable -> {:error, {:refused, code}}
     end
   end
 
@@ -396,17 +468,16 @@ defmodule PhoenixKitAgent.Confirmations do
   defp do_reject(_settled), do: {:error, :not_waiting}
 
   defp settled(click, outcome) do
-    settle(click, outcome)
-    {:ok, String.to_existing_atom(outcome)}
+    with :ok <- settle(click, outcome), do: {:ok, String.to_existing_atom(outcome)}
   end
 
   # Core spent the row, and no notice here says what became of it: the click
   # that spent it was lost after core spent it, right before the handler ran
-  # (see the moduledoc). `confirmed` when the session reads the row as used;
-  # else the card keeps waiting, with the reason.
+  # (see the moduledoc). `confirmed` when core's row reads as used; else the
+  # card keeps waiting, with the reason.
   defp spent(click) do
-    case Confirm.get_for_user(click.card.confirmation_uuid, click.session_ref) do
-      {:ok, %{status: "used"}} -> settled(click, "confirmed")
+    case row_status(click.card, click.session_ref, click.conversation) do
+      {:ok, "used"} -> settled(click, "confirmed")
       {:error, :unauthorized} -> {:error, :session_gone}
       {:error, :forbidden} -> {:error, {:refused, :forbidden}}
       _gone_or_other -> {:error, {:refused, :used}}
@@ -429,11 +500,12 @@ defmodule PhoenixKitAgent.Confirmations do
   defp asked_again({:ok, %{result: result}, _headers}, click) do
     case Tools.held(result) do
       {:ok, new_uuid} ->
-        if click.outcome == nil,
-          do: click |> settle_with_card("expired", new_uuid) |> stored("notice and card"),
-          else: click |> add_card(new_uuid) |> stored("tool")
+        stored =
+          if click.outcome == nil,
+            do: click |> settle_with_card("expired", new_uuid) |> stored("notice and card"),
+            else: click |> add_card(new_uuid) |> stored("tool")
 
-        {:ok, :repeated}
+        with :ok <- stored, do: {:ok, :repeated}
 
       :error ->
         {:error, {:refused, :not_held}}
@@ -449,6 +521,7 @@ defmodule PhoenixKitAgent.Confirmations do
     case Confirm.get_for_user(click.card.confirmation_uuid, click.session_ref) do
       {:ok, %{status: "expired"}} -> not_superseded(click)
       {:error, :unknown} -> not_superseded(click)
+      {:error, :forbidden} -> {:error, {:refused, :forbidden}}
       _waiting_or_settled -> {:error, :not_expired}
     end
   end
@@ -524,12 +597,16 @@ defmodule PhoenixKitAgent.Confirmations do
     Logger.warning(
       "[PhoenixKitAgent] a #{role} message of a confirmation was not stored: #{inspect(codes)}"
     )
+
+    {:error, :not_stored}
   end
 
   defp stored({:error, reason}, role) when is_atom(reason) do
     Logger.warning(
       "[PhoenixKitAgent] a #{role} message of a confirmation was not stored: #{reason}"
     )
+
+    {:error, :not_stored}
   end
 
   defp notice_text("confirmed"), do: "The change was made."
@@ -547,7 +624,8 @@ defmodule PhoenixKitAgent.Confirmations do
       preview: nil,
       arguments: nil,
       expires_at: nil,
-      repeatable?: false
+      repeatable?: false,
+      rejectable?: false
     }
 
     case Confirm.get_for_user(row.confirmation_uuid, session_ref) do
@@ -556,7 +634,8 @@ defmodule PhoenixKitAgent.Confirmations do
           base
           | preview: held.preview,
             expires_at: held.expires_at,
-            arguments: arguments_text(conversation, row)
+            arguments: arguments_text(conversation, row),
+            rejectable?: true
         }
 
       {:ok, %{status: "expired"}} ->
@@ -564,6 +643,11 @@ defmodule PhoenixKitAgent.Confirmations do
 
       {:error, :unknown} ->
         %{base | state: "expired", repeatable?: not superseded?(conversation, row)}
+
+      # The user may no longer use its tool: it cannot run, but core lets it
+      # be turned down.
+      {:error, :forbidden} ->
+        %{base | state: "unavailable", rejectable?: true}
 
       _settled_elsewhere_or_unreadable ->
         %{base | state: "unavailable"}
@@ -577,7 +661,8 @@ defmodule PhoenixKitAgent.Confirmations do
       preview: nil,
       arguments: nil,
       expires_at: nil,
-      repeatable?: outcome == "expired" and not superseded?(conversation, row)
+      repeatable?: outcome == "expired" and not superseded?(conversation, row),
+      rejectable?: false
     }
   end
 
@@ -634,6 +719,52 @@ defmodule PhoenixKitAgent.Confirmations do
         order_by: [asc: m.inserted_at, asc: m.uuid]
       )
     )
+  end
+
+  # The cards of the chat with no notice that core no longer holds, each with
+  # the outcome its notice is to say.
+  defp lapsed(session_ref, conversation) do
+    for card <- conversation |> waiting_query() |> repo().all(),
+        outcome = lapse(card, session_ref, conversation),
+        outcome != nil,
+        do: {card, outcome}
+  end
+
+  defp lapse(card, session_ref, conversation) do
+    case row_status(card, session_ref, conversation) do
+      {:ok, "used"} -> "confirmed"
+      {:ok, "rejected"} -> "rejected"
+      {:ok, "expired"} -> "expired"
+      {:error, :unknown} -> "expired"
+      _waiting_or_unreadable -> nil
+    end
+  end
+
+  # The status of the card's row, read with the session (`get_for_user/2`).
+  # Core withholds that read once the user may no longer use the tool
+  # (`:forbidden`); the user's own row (`lookup_for_user/2`) still says
+  # whether it was spent, turned down or ran out.
+  defp row_status(card, session_ref, conversation) do
+    case Confirm.get_for_user(card.confirmation_uuid, session_ref) do
+      {:ok, %{status: status}} -> {:ok, status}
+      {:error, :forbidden} -> own_row_status(card, conversation)
+      {:error, _unauthorized_or_unknown} = error -> error
+    end
+  end
+
+  defp own_row_status(card, conversation) do
+    case Confirm.lookup_for_user(card.confirmation_uuid, conversation.user_uuid) do
+      {:ok, %{status: "unused", expires_at: expires_at}} ->
+        if DateTime.compare(expires_at, DateTime.utc_now()) == :gt,
+          do: {:error, :forbidden},
+          else: {:ok, "expired"}
+
+      {:ok, %{status: status}} ->
+        {:ok, status}
+
+      {:error, :unknown} ->
+        {:error, :unknown}
+    end
   end
 
   # The cards of the chat with no notice of their confirmation.

@@ -64,7 +64,7 @@ defmodule PhoenixKitAgent.Turns do
 
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Config, Conversations, Limits, Prompt, Spend, UserConfig}
+  alias PhoenixKitAgent.{Config, Confirmations, Conversations, Limits, Prompt, Spend, UserConfig}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
   alias PhoenixKitAgent.Turns.{History, Locks, Monitor}
 
@@ -393,6 +393,9 @@ defmodule PhoenixKitAgent.Turns do
 
   defp begin(session_ref, conversation, text, attachments, user, turn_ref, opts) do
     user_uuid = conversation.user_uuid
+
+    # Under the user's lock: no click settles a card meanwhile.
+    :ok = Confirmations.settle_lapsed_in_turn(session_ref, conversation)
 
     request_context =
       opts |> Keyword.get(:request_context, []) |> Keyword.put_new(:request_id, turn_ref)

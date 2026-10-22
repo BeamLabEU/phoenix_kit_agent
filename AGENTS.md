@@ -190,7 +190,16 @@ and `Web.Markdown`).
   its reason). `failed` only when the handler failed after core spent the row;
   a row core reports `used` with no notice here (its click was lost) is
   `confirmed` once `get_for_user/2` reads it `used`, else the card waits;
-  core's `invalid` (the row is gone) is `expired`. The notice of `changed`, or
+  core's `invalid` (the row is gone) is `expired`. With the right to the tool
+  gone core withholds `get_for_user/2` (`:forbidden`); the status is then read
+  from the user's row (`lookup_for_user/2`), and such a card keeps "Cancel the
+  change" (`rejectable?`). A card with no notice that core no longer holds
+  (`used`, `rejected`, ran out, gone) gets its notice from
+  `Confirmations.settle_lapsed/3` (the panel, on opening a chat, under the
+  user's lock only when there is one) and `settle_lapsed_in_turn/2` (a turn,
+  under its locks, before the history): only a card core still holds reads as
+  waiting to the model, to `waiting_same?/3` and above the feed. A notice the
+  chat refuses makes the click `{:error, :not_stored}`. The notice of `changed`, or
   the `expired` one of "Ask again", and the new card are one transaction
   (`Conversations.add_turn_messages/3`). Only these notices, and each card
   with none yet ("[confirmation] waiting: <tool>"), go into the next turn's

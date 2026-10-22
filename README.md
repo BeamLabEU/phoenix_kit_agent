@@ -122,7 +122,11 @@ of the module — "[confirmation] done: <tool>" in the user's language — never
 the tool's result; a card with no outcome yet reads "[confirmation] waiting:
 <tool>". `failed` means the handler failed after the confirmation was spent; a
 confirmation spent by a click that was lost before it said so is taken as
-done, and one core has deleted as run out. The module's prompt tells the model
+done, and one core has deleted as run out. A card that stopped waiting with no
+click to say so (it ran out, or its click was lost with its node) gets its
+notice when the panel opens the chat and before a turn reads the history, so it
+never reads as waiting; a card the user may no longer run (the right to its
+tool is gone) keeps "Cancel the change". The module's prompt tells the model
 that a write is a proposal that waits, never to be said done before such a
 message, nor asked for again while it waits. A card still waiting is found
 again when the panel is opened again, even one further back than the messages

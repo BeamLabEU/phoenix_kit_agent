@@ -43,7 +43,7 @@ msgstr ""
 msgid "A model could not be saved: it is no longer available. Choose again."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock.ex:385
+#: lib/phoenix_kit_agent/web/dock.ex:389
 #, elixir-autogen, elixir-format
 msgid "A title cannot be empty or longer than 200 characters."
 msgstr ""
@@ -601,7 +601,7 @@ msgstr ""
 msgid "The file could not be read."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:264
+#: lib/phoenix_kit_agent/web/dock/texts.ex:270
 #, elixir-autogen, elixir-format
 msgid "The file could not be uploaded."
 msgstr ""
@@ -612,7 +612,7 @@ msgid "The file is too large to read."
 msgstr ""
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:89
-#: lib/phoenix_kit_agent/web/dock/texts.ex:261
+#: lib/phoenix_kit_agent/web/dock/texts.ex:267
 #, elixir-autogen, elixir-format
 msgid "The file is too large."
 msgstr ""
@@ -744,7 +744,7 @@ msgstr ""
 msgid "Too many files are waiting. Send or remove some of them first."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:262
+#: lib/phoenix_kit_agent/web/dock/texts.ex:268
 #, elixir-autogen, elixir-format
 msgid "Too many files at once."
 msgstr ""
@@ -1134,27 +1134,27 @@ msgstr[1] ""
 msgid "just now"
 msgstr ""
 
-#: lib/phoenix_kit_agent/turns/history.ex:181
+#: lib/phoenix_kit_agent/turns/history.ex:183
 #, elixir-autogen, elixir-format
 msgid "[confirmation] cancelled: %{action}"
 msgstr ""
 
-#: lib/phoenix_kit_agent/turns/history.ex:178
+#: lib/phoenix_kit_agent/turns/history.ex:180
 #, elixir-autogen, elixir-format
 msgid "[confirmation] done: %{action}"
 msgstr ""
 
-#: lib/phoenix_kit_agent/turns/history.ex:184
+#: lib/phoenix_kit_agent/turns/history.ex:186
 #, elixir-autogen, elixir-format
 msgid "[confirmation] expired, nothing was done: %{action}"
 msgstr ""
 
-#: lib/phoenix_kit_agent/turns/history.ex:193
+#: lib/phoenix_kit_agent/turns/history.ex:195
 #, elixir-autogen, elixir-format
 msgid "[confirmation] failed: %{action}"
 msgstr ""
 
-#: lib/phoenix_kit_agent/turns/history.ex:188
+#: lib/phoenix_kit_agent/turns/history.ex:190
 #, elixir-autogen, elixir-format
 msgid "[confirmation] the data changed, a new confirmation waits: %{action}"
 msgstr ""
@@ -1194,7 +1194,7 @@ msgstr ""
 msgid "The assistant is answering. Try again when it has finished."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:244
+#: lib/phoenix_kit_agent/web/dock/texts.ex:250
 #, elixir-autogen, elixir-format
 msgid "The assistant may not make changes in this part of the site now."
 msgstr ""
@@ -1204,12 +1204,12 @@ msgstr ""
 msgid "The assistant proposes a change"
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:255
+#: lib/phoenix_kit_agent/web/dock/texts.ex:261
 #, elixir-autogen, elixir-format
 msgid "The change cannot be made now. Try again later, or cancel it."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:252
+#: lib/phoenix_kit_agent/web/dock/texts.ex:258
 #, elixir-autogen, elixir-format
 msgid "The change does not fit what the tool takes any more."
 msgstr ""
@@ -1244,7 +1244,7 @@ msgstr ""
 msgid "The data changed:"
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:235
+#: lib/phoenix_kit_agent/web/dock/texts.ex:241
 #, elixir-autogen, elixir-format
 msgid "This change can be asked for again only once its confirmation ran out."
 msgstr ""
@@ -1254,12 +1254,12 @@ msgstr ""
 msgid "This change can no longer be confirmed here"
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:239
+#: lib/phoenix_kit_agent/web/dock/texts.ex:245
 #, elixir-autogen, elixir-format
 msgid "This change cannot be confirmed: the assistant's call is not in the chat any more."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:232
+#: lib/phoenix_kit_agent/web/dock/texts.ex:238
 #, elixir-autogen, elixir-format
 msgid "This change no longer waits for you."
 msgstr ""
@@ -1274,7 +1274,7 @@ msgstr ""
 msgid "What the assistant sent"
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:246
+#: lib/phoenix_kit_agent/web/dock/texts.ex:252
 #, elixir-autogen, elixir-format
 msgid "You may not make this change now."
 msgstr ""
@@ -1284,17 +1284,22 @@ msgstr ""
 msgid "A change is being confirmed right now. Send your message again in a moment."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:230
-#, elixir-autogen, elixir-format
-msgid "Another change is being confirmed right now. Try again in a moment."
-msgstr ""
-
 #: lib/phoenix_kit_agent/web/dock/components.ex:169
 #, elixir-autogen, elixir-format
 msgid "Cancel the change"
 msgstr ""
 
-#: lib/phoenix_kit_agent/turns/history.ex:175
+#: lib/phoenix_kit_agent/turns/history.ex:177
 #, elixir-autogen, elixir-format
 msgid "[confirmation] waiting: %{action}"
+msgstr ""
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:230
+#, elixir-autogen, elixir-format
+msgid "A change is being confirmed right now. Try again in a moment."
+msgstr ""
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:234
+#, elixir-autogen, elixir-format
+msgid "What became of this change could not be saved in the chat. Open the chat again to see it."
 msgstr ""
