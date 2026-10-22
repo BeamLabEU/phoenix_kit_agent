@@ -218,7 +218,7 @@ defmodule PhoenixKitAgent.Turns.Locks do
   # One statement: insert the row, or take the lock of the existing one when
   # it is free or stale. A conflict whose `WHERE` fails touches no row. The
   # lock is dated `since` (`now`, or earlier for a short one).
-  defp lock_user(user_uuid, turn_ref, since, now, stale) do
+  defp lock_user(user_uuid, turn_ref, since, now, stale, retry? \\ true) do
     take =
       from(s in UserSettings,
         where: is_nil(s.busy_since) or s.busy_since < ^stale,
@@ -241,19 +241,28 @@ defmodule PhoenixKitAgent.Turns.Locks do
         conflict_target: [:user_uuid]
       )
 
-    if count == 1, do: :ok, else: {:error, holder(user_uuid)}
+    case count == 1 || holder(user_uuid) do
+      true -> :ok
+      nil when retry? -> lock_user(user_uuid, turn_ref, since, now, stale, false)
+      nil -> {:error, :turn_in_flight}
+      holder -> {:error, holder}
+    end
   end
 
-  # What holds the user's lock that could not be taken: a click or a turn.
+  # What holds the user's lock that could not be taken: a click or a turn;
+  # `nil` once it is released (between the take and this read), and then the
+  # take is tried once more.
   defp holder(user_uuid) do
     ref =
       repo().one(
         from(s in UserSettings, where: s.user_uuid == ^user_uuid, select: s.busy_turn_ref)
       )
 
-    if is_binary(ref) and String.starts_with?(ref, @click_prefix),
-      do: :click_in_flight,
-      else: :turn_in_flight
+    cond do
+      not is_binary(ref) -> nil
+      String.starts_with?(ref, @click_prefix) -> :click_in_flight
+      true -> :turn_in_flight
+    end
   end
 
   # A lock taken before this time is older than `ttl_s`.
