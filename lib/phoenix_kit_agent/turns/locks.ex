@@ -18,6 +18,10 @@ defmodule PhoenixKitAgent.Turns.Locks do
   database's (`now()`), so the TTL does not depend on the clocks of the nodes.
   Neither statement touches `updated_at` of a settings row: that stays the
   time the settings themselves last changed.
+
+  A click on a confirmation card (`PhoenixKitAgent.Confirmations`) takes the
+  user's lock alone (`acquire_user/4`): it is refused while a turn of the user
+  runs, and no turn starts while it runs.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -39,7 +43,7 @@ defmodule PhoenixKitAgent.Turns.Locks do
         stale = DateTime.add(now, -ttl_s, :second)
 
         with :ok <- lock_conversation(user_uuid, conversation_uuid, turn_ref, now, stale),
-             :ok <- lock_user(user_uuid, turn_ref, now, stale) do
+             :ok <- lock_user(user_uuid, turn_ref, now, now, stale) do
           :ok
         else
           {:error, reason} -> repo().rollback(reason)
@@ -50,6 +54,34 @@ defmodule PhoenixKitAgent.Turns.Locks do
       {:ok, :ok} -> :ok
       {:error, _reason} = error -> error
     end
+  end
+
+  @doc """
+  Takes the user's lock alone for `ref` (a click on a confirmation card), or
+  `{:error, :turn_in_flight}`. `ttl_s` is how old another holder's lock must be
+  to be taken over — the TTL of a turn's locks, so a turn still running is
+  never taken over; `hold_s` (at most `ttl_s`) is how long this lock blocks a
+  turn: it is dated back by `ttl_s - hold_s`, so a turn takes it over `hold_s`
+  after it was taken, should it never be released (its node went down).
+  Released with `release_user/2`.
+  """
+  @spec acquire_user(String.t(), String.t(), pos_integer(), pos_integer()) ::
+          :ok | {:error, :turn_in_flight}
+  def acquire_user(user_uuid, ref, ttl_s, hold_s) when hold_s > 0 and hold_s <= ttl_s do
+    now = db_now()
+    since = DateTime.add(now, hold_s - ttl_s, :second)
+    lock_user(user_uuid, ref, since, now, DateTime.add(now, -ttl_s, :second))
+  end
+
+  @doc "Releases the user's lock if `ref` still holds it."
+  @spec release_user(String.t(), String.t()) :: :ok
+  def release_user(user_uuid, ref) do
+    repo().update_all(
+      from(s in UserSettings, where: s.user_uuid == ^user_uuid and s.busy_turn_ref == ^ref),
+      set: [busy_since: nil, busy_turn_ref: nil]
+    )
+
+    :ok
   end
 
   @doc "Whether `turn_ref` holds both locks."
@@ -149,12 +181,13 @@ defmodule PhoenixKitAgent.Turns.Locks do
   end
 
   # One statement: insert the row, or take the lock of the existing one when
-  # it is free or stale. A conflict whose `WHERE` fails touches no row.
-  defp lock_user(user_uuid, turn_ref, now, stale) do
+  # it is free or stale. A conflict whose `WHERE` fails touches no row. The
+  # lock is dated `since` (`now`, or earlier for a short one).
+  defp lock_user(user_uuid, turn_ref, since, now, stale) do
     take =
       from(s in UserSettings,
         where: is_nil(s.busy_since) or s.busy_since < ^stale,
-        update: [set: [busy_since: ^now, busy_turn_ref: ^turn_ref]]
+        update: [set: [busy_since: ^since, busy_turn_ref: ^turn_ref]]
       )
 
     {count, _} =
@@ -163,7 +196,7 @@ defmodule PhoenixKitAgent.Turns.Locks do
         [
           %{
             user_uuid: user_uuid,
-            busy_since: now,
+            busy_since: since,
             busy_turn_ref: turn_ref,
             inserted_at: now,
             updated_at: now
