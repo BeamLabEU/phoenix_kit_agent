@@ -151,7 +151,9 @@ defmodule PhoenixKitAgent.Confirmations do
       #{@arguments_chars} characters;
     * `repeatable?` — the card ran out and was not asked for again.
   """
-  @spec cards(Conversations.session_ref(), boolean(), term(), [%{uuid: term()}]) ::
+  @spec cards(Conversations.session_ref(), boolean(), term(), [
+          %{:uuid => term(), optional(atom()) => term()}
+        ]) ::
           {:ok, %{String.t() => card()}} | {:error, Conversations.refusal()}
   def cards(session_ref, impersonated?, conversation_uuid, messages) when is_list(messages) do
     with {:ok, conversation} <-

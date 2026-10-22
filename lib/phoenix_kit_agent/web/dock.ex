@@ -1093,7 +1093,7 @@ defmodule PhoenixKitAgent.Web.Dock do
     case decorate(socket, new ++ settled) do
       {:ok, socket, by_uuid} ->
         shown = Enum.map(messages, &Map.get(by_uuid, &1.uuid, &1))
-        {socket, shown, Enum.map(settled, &Map.fetch!(by_uuid, &1.uuid))}
+        {socket, shown, for(card <- settled, again = by_uuid[card.uuid], do: again)}
 
       :error ->
         {socket, messages, []}
