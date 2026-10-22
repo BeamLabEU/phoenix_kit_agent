@@ -173,25 +173,37 @@ and `Web.Markdown`).
   `assistant_message_uuid` (V2 of the migrations) and only
   `{status, confirmation_id}` as its result — never a code, the preview or
   the arguments — lets one write of a round wait (a second one, or one whose
-  call id another call of the answer shares, is `denied`) and **ends the
-  turn: no model call after a round with a waiting write**. A click
+  call id another call of the answer shares, is `denied`; so is every read
+  after it, "held for confirmation", which the model would never see) and
+  **ends the turn: no model call after a round with a waiting write**. A write
+  of the same tool and arguments as a card of the chat that still waits is
+  `denied` ("already waiting for confirmation"), never a second card. A click
   (`confirm/5`, `reject/5`, `repeat/5`) takes the user's turn lock alone
-  (`Locks.acquire_user/4`, a short hold) and is `:turn_running` while a turn
-  runs; it redeems with the card's registry name and `Tools.arguments/1` of
-  the raw arguments of its assistant message's call (never found by the call
-  id across the chat). The outcome is a `notice` with the same
-  `confirmation_uuid` and `tool_outcome`; a refusal before core spends the
-  row writes nothing (the card waits, with its reason), `failed` only when
-  core's row is `used` after an error. Only these notices go into the next
-  turn's history, as `user` messages with the module's fixed phrase
+  (`Locks.acquire_user/4` with a `Locks.click_ref/0`; a 30 s hold, kept fresh
+  by a process next to the click for as long as it runs, `Locks.keep_user/4`)
+  and is `:turn_running` while a turn runs, `:click_running` while another
+  click does; a turn started meanwhile is `:click_in_flight`. It redeems with
+  the card's registry name and `Tools.arguments/1` of the raw arguments of its
+  assistant message's call (never found by the call id across the chat). The
+  outcome is a `notice` with the same `confirmation_uuid` and `tool_outcome`;
+  a refusal before core spends the row writes nothing (the card waits, with
+  its reason). `failed` only when the handler failed after core spent the row;
+  a row core reports `used` with no notice here (its click was lost) is
+  `confirmed` once `get_for_user/2` reads it `used`, else the card waits;
+  core's `invalid` (the row is gone) is `expired`. The notice of `changed`, or
+  the `expired` one of "Ask again", and the new card are one transaction
+  (`Conversations.add_turn_messages/3`). Only these notices, and each card
+  with none yet ("[confirmation] waiting: <tool>"), go into the next turn's
+  history, as `user` messages with the module's fixed phrase
   (`History.confirmation_phrase/2`); other notices stay out. The panel reads
   the cards with `Confirmations.cards/4` (core's preview via
   `Confirm.get_for_user/2`, rendered with core's `operation_preview`; the
-  arguments as escaped text) and runs a click in a task under
-  `PhoenixKitAgent.Confirmations.TaskSupervisor`. Nothing of the arguments or
-  the preview is logged here (core's debug query log of the confirmation row
-  is core's). The test write tool is `agenttest.write_item` in
-  `test/support/agent_test_tools.ex`.
+  arguments as escaped text), finds a waiting card older than the page it
+  loaded with `Confirmations.waiting_cards/3` (shown above the feed) and runs
+  a click in a task under `PhoenixKitAgent.Confirmations.TaskSupervisor`.
+  Nothing of the arguments or the preview is logged, here or by core (its
+  insert of the row is `log: false`). The test write tool is
+  `agenttest.write_item` in `test/support/agent_test_tools.ex`.
 - **Boundaries:** nothing about orders, customers or other host domain data
   lives here — the module only knows "tools from the registry". Model calls,
   budget and the request journal stay in `phoenix_kit_ai`.

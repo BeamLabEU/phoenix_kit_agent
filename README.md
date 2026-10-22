@@ -100,24 +100,34 @@ change was made — and the chat shows a card:
     arguments the model sent, as plain text;
   * "Run" runs it (`Executor.redeem_as/6`, with the same tool and arguments,
     under the rights of the session that clicks, checked again from the
-    start); "Cancel" turns it down; once its time ran out
+    start); "Cancel the change" turns it down; once its time ran out
     (`api_user_confirm_ttl_seconds` of core), "Ask again" asks for the same
     change again, a new card. When the data changed since the preview, the
     card says so and a new card with the fresh preview follows.
 
 At most one change of a round waits; a second one of the same answer is
-refused to the model. A click is refused while a turn of the user runs, calls
-no model and spends no turn of the limits; it runs in a task of the module's
-own supervisor, not linked to the panel. A refusal before the change is made
+refused to the model, and so is any other call of that answer after it (the
+turn ends there). The same change asked for again while its card waits is
+refused too: one card per change. A click is refused while a turn of the user
+or another click runs, and no message starts a turn while a click runs, however
+long it takes (the click keeps its lock fresh; a lock left by a node that went
+down frees the user 30 s after its last keep). A click calls no model and
+spends no turn of the limits; it runs in a task of the module's own
+supervisor, not linked to the panel. A refusal before the change is made
 (the session, the rights, the module's box, the tool's own check, the rate
 limit) leaves the card waiting with its reason. What became of a card is a
 notice with the same confirmation uuid (`confirmed`, `rejected`, `expired`,
 `changed`, `failed`), and the model reads it in the next turn as a fixed phrase
 of the module — "[confirmation] done: <tool>" in the user's language — never
-the tool's result. The module's prompt tells the model that a write is a
-proposal that waits, never to be said done before such a message. A card still
-waiting is found again when the panel is opened again; a borrowed session gets
-no panel and no click.
+the tool's result; a card with no outcome yet reads "[confirmation] waiting:
+<tool>". `failed` means the handler failed after the confirmation was spent; a
+confirmation spent by a click that was lost before it said so is taken as
+done, and one core has deleted as run out. The module's prompt tells the model
+that a write is a proposal that waits, never to be said done before such a
+message, nor asked for again while it waits. A card still waiting is found
+again when the panel is opened again, even one further back than the messages
+the panel loads (it is shown above them); a borrowed session gets no panel and
+no click.
 
 ## Attachments
 
