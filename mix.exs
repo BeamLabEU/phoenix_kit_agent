@@ -30,7 +30,7 @@ defmodule PhoenixKitAgent.MixProject do
   end
 
   def application do
-    [extra_applications: [:logger, :phoenix_kit, :phoenix_kit_ai]]
+    [extra_applications: [:logger, :gettext, :phoenix_kit, :phoenix_kit_ai]]
   end
 
   def cli do
@@ -49,6 +49,7 @@ defmodule PhoenixKitAgent.MixProject do
       precommit: [
         "format",
         "compile --force --warnings-as-errors",
+        "gettext.extract --check-up-to-date",
         "deps.unlock --check-unused",
         # Scan for retired Hex deps. Run via `cmd` so Hex bootstraps in a fresh
         # process — the hex.* archive tasks aren't resolvable via Mix.Task.run
@@ -66,34 +67,61 @@ defmodule PhoenixKitAgent.MixProject do
     ]
   end
 
-  # phoenix_kit deps resolve from Hex by default. For cross-repo work against a
-  # local checkout, export <APP>_PATH — e.g. PHOENIX_KIT_PATH=../phoenix_kit or
-  # PHOENIX_KIT_AI_PATH=../phoenix_kit_ai. Unset => the published pin, so
-  # mix hex.publish is unaffected.
-  defp pk_dep(app, requirement, opts \\ []) do
+  # phoenix_kit deps resolve from their pin (Hex requirement or git source). For
+  # cross-repo work against a local checkout, export <APP>_PATH — e.g.
+  # PHOENIX_KIT_PATH=../phoenix_kit or PHOENIX_KIT_AI_PATH=../phoenix_kit_ai.
+  # Unset => the pin.
+  defp pk_dep(app, requirement_or_source, opts \\ []) do
     env_var = String.upcase(Atom.to_string(app)) <> "_PATH"
 
     case System.get_env(env_var) do
-      nil when opts == [] -> {app, requirement}
-      nil -> {app, requirement, opts}
+      nil when is_list(requirement_or_source) -> {app, requirement_or_source ++ opts}
+      nil when opts == [] -> {app, requirement_or_source}
+      nil -> {app, requirement_or_source, opts}
       path -> {app, [path: path, override: true] ++ opts}
     end
   end
 
   defp deps do
     [
-      # PhoenixKit provides the Module behaviour and the Settings API.
-      # 2.62.2 is the core this module is specified and verified against.
-      # Bounded as `>= floor and < 3.0.0` (not a three-segment `~>`) so every
-      # later 2.x core minor stays admissible for hosts running this module.
-      pk_dep(:phoenix_kit, ">= 2.62.2 and < 3.0.0"),
+      # PhoenixKit provides the Module behaviour, the Settings API, the API
+      # Executor (execute_as/visible_for), SessionRef and hidden Storage
+      # libraries.
+      # Pinned to upstream main 435d5b3, which carries #948, #949 and #950
+      # (merged). Hex 2.63.0 does not carry these functions; switch back to a
+      # Hex requirement once a release ships them.
+      pk_dep(:phoenix_kit,
+        git: "https://github.com/BeamLabEU/phoenix_kit.git",
+        ref: "435d5b3275fe208e5674f337b91479f603e4f0df",
+        override: true
+      ),
 
       # Model calls, endpoints, credentials, budget and the request journal
       # come from phoenix_kit_ai; this module only adds the chat layer.
-      pk_dep(:phoenix_kit_ai, "~> 0.25"),
+      # Integration pin until release: the fork's integration branch
+      # (upstream + #38, tool calling).
+      pk_dep(:phoenix_kit_ai,
+        git: "https://github.com/timujinne/phoenix_kit_ai.git",
+        ref: "06cc9ff9c8030e73bac47748cb07350617aa14f6",
+        override: true
+      ),
 
       # LiveView is needed for the admin pages (Phase 1).
       {:phoenix_live_view, "~> 1.1"},
+
+      # Attachments: a sheet (xlsx) becomes CSV text for the model. nimble_csv
+      # is already in the tree (phoenix_kit's); it is named here because the
+      # module calls it itself.
+      {:xlsx_reader, "~> 0.8"},
+      {:nimble_csv, "~> 1.2"},
+
+      # The chat panel renders model answers from the markdown tree, so no
+      # picture or raw HTML reaches the page. Already in the tree (phoenix_kit's);
+      # named here because the module calls it itself.
+      {:mdex, "~> 0.13"},
+
+      # The module's own gettext backend for its admin pages.
+      {:gettext, "~> 1.0"},
 
       # Optional rustler pin so the transitive `mdex_native` NIF (via phoenix_kit,
       # a test dependency) can source-build on hosts where its precompiled variant
@@ -102,6 +130,9 @@ defmodule PhoenixKitAgent.MixProject do
 
       # Documentation
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+
+      # LiveView tests (Phoenix.LiveViewTest parses the rendered HTML with it).
+      {:lazy_html, ">= 0.1.0", only: :test},
 
       # Code quality
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
@@ -113,7 +144,7 @@ defmodule PhoenixKitAgent.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib .formatter.exs mix.exs README.md LICENSE)
+      files: ~w(lib priv .formatter.exs mix.exs README.md LICENSE)
     ]
   end
 

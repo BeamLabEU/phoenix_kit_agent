@@ -4,6 +4,10 @@ import Config
 #   createdb phoenix_kit_agent_test
 config :phoenix_kit_agent, ecto_repos: [PhoenixKitAgent.Test.Repo]
 
+# A turn asked to stop that is stuck in a stubbed model call is killed after
+# this; the tests of the grace period itself set a longer one.
+config :phoenix_kit_agent, turn_stop_grace_ms: 200
+
 # `PGDATABASE` lets this suite point at a database the test role isn't
 # allowed to CREATE (e.g. a shared instance) instead of the name Hex CI
 # provisions for itself. Same mechanism as core phoenix_kit's
@@ -43,4 +47,16 @@ config :phoenix_kit, repo: PhoenixKitAgent.Test.Repo
 
 config :phoenix, :json_library, Jason
 
+# Keys the time-window tokens of private (hidden-library) file URLs; without it
+# core mints a token that nothing accepts.
+config :phoenix_kit, secret_key_base: String.duplicate("t", 64)
+
 config :logger, level: :warning
+
+config :phoenix_kit_agent, PhoenixKitAgent.Test.Endpoint,
+  secret_key_base: String.duplicate("t", 64),
+  live_view: [signing_salt: "agent-test-salt"],
+  pubsub_server: PhoenixKitAgent.Test.PubSub,
+  server: false,
+  url: [host: "localhost"],
+  render_errors: [formats: [html: PhoenixKitAgent.Test.Layouts]]
