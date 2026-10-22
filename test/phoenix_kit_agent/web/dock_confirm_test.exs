@@ -161,6 +161,37 @@ defmodule PhoenixKitAgent.Web.DockConfirmTest do
       assert has_element?(view, "#{card_id(card)}-confirm")
     end
 
+    test "one further back than the page loaded is found too, above the feed", ctx do
+      card = card!(ctx)
+
+      for n <- 1..50 do
+        {:ok, _} =
+          Conversations.add_turn_message(ctx.user.uuid, ctx.chat.uuid, %{
+            role: "user",
+            content: "later #{n}"
+          })
+      end
+
+      view = dock(ctx)
+      render_hook(view, "restore", %{"open" => true, "conversation_uuid" => ctx.chat.uuid})
+
+      assert has_element?(view, "#pk-agent-earlier")
+      assert has_element?(view, "#pk-agent-pinned #{card_id(card)}[data-state=waiting]")
+      refute has_element?(view, "#pk-agent-feed #{card_id(card)}")
+
+      # It is clicked there like any card.
+      view |> element("#{card_id(card)}-confirm") |> render_click()
+      settle(view)
+
+      assert written() == "new"
+      assert has_element?(view, "#pk-agent-pinned #{card_id(card)}[data-state=confirmed]")
+
+      # Once the page it is on is loaded, it is in the feed, and only there.
+      view |> element("#pk-agent-earlier") |> render_click()
+      refute has_element?(view, "#pk-agent-pinned")
+      assert has_element?(view, "#pk-agent-feed #{card_id(card)}[data-state=confirmed]")
+    end
+
     test "is found waiting again when the panel mounts again", ctx do
       card = card!(ctx)
 
@@ -215,6 +246,110 @@ defmodule PhoenixKitAgent.Web.DockConfirmTest do
       assert has_element?(view, "#{card_id(card)}[data-state=waiting]")
       assert has_element?(view, "#{card_id(card)}-note", "answering")
       assert has_element?(view, "#{card_id(card)}-confirm")
+    end
+
+    test "while another click runs, Run says so, not that the assistant is answering", ctx do
+      card = card!(ctx)
+      :ok = Locks.acquire_user(ctx.user.uuid, Locks.click_ref(), Turns.lock_ttl_s(), 30)
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      view |> element("#{card_id(card)}-confirm") |> render_click()
+      settle(view)
+
+      assert written() == nil
+      assert has_element?(view, "#{card_id(card)}-note", "Another change is being confirmed")
+      refute has_element?(view, "#{card_id(card)}-note", "answering")
+
+      # A message sent meanwhile is told the same, not "answering in another chat".
+      render_submit(view, "send", %{"message" => %{"text" => "Is it done?"}})
+      assert has_element?(view, "#pk-agent-dock-error", "A change is being confirmed")
+      refute has_element?(view, "#pk-agent-dock-error", "another chat")
+    end
+
+    test "the data changed since the preview: the card says so, a new card waits", ctx do
+      card = card!(ctx)
+      {:ok, _} = Settings.update_setting("agenttest_written", "someone else's")
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      view |> element("#{card_id(card)}-confirm") |> render_click()
+      settle(view)
+
+      assert written() == "someone else's"
+      assert [_old, fresh] = cards(ctx.chat)
+      assert has_element?(view, "#{card_id(card)}[data-state=changed]")
+      refute has_element?(view, "#{card_id(card)}-confirm")
+      assert has_element?(view, "[data-role=notice][data-outcome=changed]")
+      assert has_element?(view, "#{card_id(fresh)}[data-state=waiting]")
+      assert has_element?(view, "#{card_id(fresh)}-preview-rows")
+
+      view |> element("#{card_id(fresh)}-confirm") |> render_click()
+      settle(view)
+
+      assert written() == "new"
+      assert has_element?(view, "#{card_id(fresh)}[data-state=confirmed]")
+    end
+
+    test "a click over the rate limit is refused on the card, which keeps waiting", ctx do
+      card = card!(ctx)
+      # The card's own call used the one unit of the minute.
+      {:ok, _} = Settings.update_setting("api_admin_rate_per_min", "1")
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      view |> element("#{card_id(card)}-confirm") |> render_click()
+      settle(view)
+
+      assert written() == nil
+      assert row(card).status == "unused"
+      assert has_element?(view, "#{card_id(card)}[data-state=waiting]")
+      assert has_element?(view, "#{card_id(card)}-note", "Too many requests")
+      assert has_element?(view, "#{card_id(card)}-confirm")
+    end
+
+    test "a click goes on when the panel is closed half-way: the write and its notice", ctx do
+      card = card!(ctx)
+      test = self()
+
+      Application.put_env(:phoenix_kit_agent, :test_tool_hook, fn "agenttest.write_item",
+                                                                  _input ->
+        send(test, {:writing, self()})
+
+        receive do
+          :go -> :ok
+        after
+          5_000 -> :ok
+        end
+      end)
+
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :test_tool_hook) end)
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      view |> element("#{card_id(card)}-confirm") |> render_click()
+      assert_receive {:writing, writer}, 5_000
+
+      # The tab is closed: the panel's process ends, the click's task does not.
+      Process.flag(:trap_exit, true)
+      panel = view.pid
+      gone = Process.monitor(panel)
+      Process.exit(panel, :kill)
+      assert_receive {:DOWN, ^gone, :process, ^panel, :killed}
+
+      done = Process.monitor(writer)
+      send(writer, :go)
+      assert_receive {:DOWN, ^done, :process, ^writer, _reason}, 5_000
+
+      assert written() == "new"
+      assert row(card).status == "used"
+
+      assert [%Message{tool_outcome: "confirmed"}] =
+               Repo.all(
+                 from(m in Message,
+                   where: m.conversation_uuid == ^ctx.chat.uuid and m.role == "notice"
+                 )
+               )
     end
 
     test "a card past its time offers Ask again, which makes a new card", ctx do

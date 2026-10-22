@@ -44,10 +44,14 @@ defmodule PhoenixKitAgent.Web.Dock do
   (`PhoenixKitAgent.Confirmations`): every `tool` message waiting for one is
   shown with what `Confirmations.cards/4` says of it — core's preview through
   core's `operation_preview` component, the arguments the model sent as plain
-  text (never markdown or a link), and "Run" / "Cancel"; "Ask again" once it
-  ran out. Opening the chat, "Earlier messages" and every new message find the
-  cards by their `confirmation_uuid`, so a card still waiting is waiting again
-  after a reload; the notice that settles a card renders it again. A click
+  text (never markdown or a link), and "Run" / "Cancel the change"; "Ask
+  again" once it ran out. Opening the chat, "Earlier messages" and every new
+  message find the cards by their `confirmation_uuid`, so a card still waiting
+  is waiting again after a reload; the notice that settles a card renders it
+  again. A card that waits (no notice yet) further back than the page of the
+  chat the panel loaded is found too (`Confirmations.waiting_cards/3`): it is
+  shown above the feed, until "Earlier messages" reaches it and it takes its
+  place in the feed. A click
   runs off this process: a task under `PhoenixKitAgent.Confirmations.TaskSupervisor`,
   not linked to the panel, which the panel waits for (`start_async/3`), so a
   closed tab does not stop a write half-way. A click while the card is busy
@@ -205,6 +209,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         fresh_uuid: nil,
         turn_check: nil,
         cards: %{},
+        pinned: [],
         card_busy: MapSet.new(),
         card_notes: %{},
         restored: 0,
@@ -330,15 +335,17 @@ defmodule PhoenixKitAgent.Web.Dock do
       case Conversations.list_messages(socket.assigns.ref, uuid, opts) do
         {:ok, messages} ->
           {socket, shown, again} = with_cards(socket, messages)
+          here = MapSet.new(messages, & &1.uuid)
 
           {:noreply,
            socket
            |> assign(
              first_uuid: first_uuid(messages, first),
-             earlier?: length(messages) == @messages_page
+             earlier?: length(messages) == @messages_page,
+             pinned: Enum.reject(socket.assigns.pinned, &MapSet.member?(here, &1.uuid))
            )
            |> stream(:messages, Enum.reverse(shown), at: 0)
-           |> stream_messages(again)}
+           |> show_again(again)}
 
         {:error, reason} ->
           {:noreply, refused(socket, reason)}
@@ -553,10 +560,14 @@ defmodule PhoenixKitAgent.Web.Dock do
          {:ok, unsent} <- Attachments.list_unsent(ref, conversation.uuid, me(socket)) do
       if previous && previous != conversation.uuid, do: Conversations.unsubscribe(previous)
 
-      {socket, messages, _again} =
+      away = waiting_away(socket, conversation, messages)
+
+      {socket, shown, _again} =
         socket
         |> assign(conversation: conversation, cards: %{}, card_notes: %{})
-        |> with_cards(messages)
+        |> with_cards(away ++ messages)
+
+      {pinned, messages} = Enum.split(shown, length(away))
 
       {turn_ref, activity} =
         case state do
@@ -574,6 +585,7 @@ defmodule PhoenixKitAgent.Web.Dock do
          turn_ref: turn_ref,
          activity: activity,
          unsent: unsent,
+         pinned: pinned,
          error: nil
        )
        |> stream(:messages, messages, reset: true)
@@ -582,6 +594,18 @@ defmodule PhoenixKitAgent.Web.Dock do
       {:error, reason} ->
         if is_binary(uuid) and uuid != previous, do: Conversations.unsubscribe(uuid)
         {:error, reason, socket}
+    end
+  end
+
+  # The cards of the chat that wait, but are not among `messages` (the page
+  # loaded): older than all of it.
+  defp waiting_away(socket, conversation, messages) do
+    %{ref: ref, impersonated?: impersonated?} = socket.assigns
+    here = MapSet.new(messages, & &1.uuid)
+
+    case Confirmations.waiting_cards(ref, impersonated?, conversation.uuid) do
+      {:ok, cards} -> Enum.reject(cards, &MapSet.member?(here, &1.uuid))
+      {:error, _reason} -> []
     end
   end
 
@@ -609,6 +633,7 @@ defmodule PhoenixKitAgent.Web.Dock do
       activity: nil,
       unsent: [],
       cards: %{},
+      pinned: [],
       card_notes: %{}
     )
     |> stream(:messages, [], reset: true)
@@ -1064,12 +1089,25 @@ defmodule PhoenixKitAgent.Web.Dock do
     {socket, shown, again} = with_cards(socket, messages)
 
     socket
-    |> stream_messages(shown ++ again)
+    |> stream_messages(shown)
+    |> show_again(again)
     |> assign(activity: activity)
   end
 
   defp stream_messages(socket, messages),
     do: Enum.reduce(messages, socket, &stream_insert(&2, :messages, &1))
+
+  # Cards rendered again: where they are shown, above the feed or in it.
+  defp show_again(socket, cards) do
+    by_uuid = Map.new(cards, &{&1.uuid, &1})
+    pinned = socket.assigns.pinned
+
+    socket
+    |> assign(pinned: Enum.map(pinned, &Map.get(by_uuid, &1.uuid, &1)))
+    |> stream_messages(
+      Enum.reject(cards, fn card -> Enum.any?(pinned, &(&1.uuid == card.uuid)) end)
+    )
+  end
 
   # ── confirmation cards ──────────────────────────────────────────────
 
@@ -1109,7 +1147,7 @@ defmodule PhoenixKitAgent.Web.Dock do
   defp refresh_cards(socket, cards) do
     case decorate(socket, cards) do
       {:ok, socket, by_uuid} ->
-        stream_messages(socket, for(card <- cards, shown = by_uuid[card.uuid], do: shown))
+        show_again(socket, for(card <- cards, shown = by_uuid[card.uuid], do: shown))
 
       :error ->
         socket
@@ -1278,6 +1316,7 @@ defmodule PhoenixKitAgent.Web.Dock do
       renaming={@renaming}
       conversation={@conversation}
       messages={@streams.messages}
+      pinned={@pinned}
       earlier?={@earlier?}
       activity={@activity}
       timeout_ms={@timeout_ms}
