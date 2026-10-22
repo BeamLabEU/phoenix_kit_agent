@@ -11,15 +11,17 @@ defmodule PhoenixKitAgent.Turns.History do
   never anything the tool returned, and never a text a person wrote. So does a
   card with no such notice yet, where it stands in the chat: "[confirmation]
   waiting: <the tool's name>", so the model knows that its proposal still
-  waits (whether core's row has run out meanwhile is not read here: the card
-  says so, and offers to ask again). The
-  extracted text of a message's attachments
-  (the user's own files) is part of that message; the attachments of one
-  message share `limit` between them, so that five files cannot by themselves
-  outgrow the window and push the earlier conversation out of it. A text that
-  holds less than its file ends with a line that says so
-  (`PhoenixKitAgent.Attachments.Extract`), and so does one cut to its share
-  here: the model is not left to take part of the data for all of it.
+  waits. Before it reads the chat, a turn gives the cards core no longer holds
+  their notice (`Confirmations.settle_lapsed_in_turn/2`), so a card that ran
+  out, or whose click was lost, does not read as waiting.
+
+  The extracted text of a message's attachments (the user's own files) is
+  part of that message; the attachments of one message share `limit` between
+  them, so that five files cannot by themselves outgrow the window and push
+  the earlier conversation out of it. A text that holds less than its file
+  ends with a line that says so (`PhoenixKitAgent.Attachments.Extract`), and
+  so does one cut to its share here: the model is not left to take part of
+  the data for all of it.
   """
 
   use Gettext, backend: PhoenixKitAgent.Gettext
@@ -34,12 +36,12 @@ defmodule PhoenixKitAgent.Turns.History do
 
   @doc """
   The model messages for a turn: the earlier `messages` of the chat (oldest
-  first: `user` and `assistant` messages, the notices of confirmation cards and
-  the cards, `tool` messages `needs_confirmation`) and then `current`, the new
-  user message, which is always kept. The
-  earlier ones are kept from the newest back while the characters of all kept
-  messages stay within `limit`; the first that does not fit ends the window.
-  `attachments` are the chat's ready attachments.
+  first: `user` and `assistant` messages, the notices of confirmation cards
+  and the cards, `tool` messages `needs_confirmation`) and then `current`, the
+  new user message, which is always kept. The earlier ones are kept from the
+  newest back while the characters of all kept messages stay within `limit`;
+  the first that does not fit ends the window. `attachments` are the chat's
+  ready attachments.
   """
   @spec build([Message.t()], [Attachment.t()], entry(), pos_integer()) :: [entry()]
   def build(messages, attachments, current, limit) do

@@ -72,8 +72,9 @@ defmodule PhoenixKitAgent.Prompt do
                   "Say what you propose along with the call; never say that it is done until " <>
                     "the system's confirmation message (\"[confirmation] done: …\", in the " <>
                     "user's language) says so.",
-                  "A change the system says is waiting (\"[confirmation] waiting: …\") is " <>
-                    "still the user's to run or cancel: do not ask for it again."
+                  "A change the system says is waiting (\"[confirmation] waiting: …\", in the " <>
+                    "user's language) is still the user's to run or cancel: do not ask for it " <>
+                    "again."
                 ],
                 "\n"
               )
