@@ -867,6 +867,8 @@ defmodule PhoenixKitAgent.Turns.Runner do
   def guard_text(:task_limit_exceeded),
     do: "The AI assistant has reached its limit for now. Try again later."
 
+  def guard_text(:model_error), do: "The model did not answer. Try again."
+
   # The first model call that carried the message's pictures was refused by
   # the provider as a request it does not take (spec §9: a model that cannot
   # take them, pictures too large or of a type it does not read): the files are

@@ -17,7 +17,8 @@ defmodule PhoenixKitAgent.Turns.GuardTest do
   alias PhoenixKit.Users.{Permissions, Roles}
   alias PhoenixKitAgent.{Conversations, Prompt, Turns, UserConfig}
   alias PhoenixKitAgent.Schemas.{Message, UserSettings}
-  alias PhoenixKitAgent.Test.Tools
+  alias PhoenixKitAgent.Test.{LogProbe, Tools}
+  alias PhoenixKitAgent.Turns.Runner
   alias PhoenixKitAI.{Guard, GuardBlocks, GuardEvent, Request, TaskLimits}
 
   @stub __MODULE__
@@ -315,6 +316,34 @@ defmodule PhoenixKitAgent.Turns.GuardTest do
 
       assert %Message{role: "notice", error: "task_blocked", ai_request_uuid: nil} =
                List.last(messages(ctx.chat))
+    end
+  end
+
+  describe "an answer of the guard's admission this module does not know" do
+    test "starts no turn: a model_error refusal, and one log line without the answer" do
+      {result, logs} =
+        LogProbe.capture(fn ->
+          Turns.admission({:error, {:database_down, "user@example.com secret"}})
+        end)
+
+      assert result == {:error, {:guard, :model_error, :day}}
+      assert [line] = Enum.filter(logs, &(&1 =~ "admission"))
+      refute line =~ "secret"
+      refute line =~ "user@example.com"
+      refute line =~ "database_down"
+
+      assert Turns.admission(:surprise) == {:error, {:guard, :model_error, :day}}
+      assert Runner.guard_text(:model_error) =~ "did not answer"
+    end
+
+    test "the known answers keep their meaning" do
+      assert Turns.admission({:ok, "token"}) == {:ok, "token"}
+
+      assert Turns.admission({:error, {:task_blocked, "free_text"}}) ==
+               {:error, {:guard, :task_blocked, :day}}
+
+      assert Turns.admission({:error, {:task_limit_exceeded, :task, :money, :month}}) ==
+               {:error, {:guard, :task_limit_exceeded, :month}}
     end
   end
 

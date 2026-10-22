@@ -275,7 +275,11 @@ the user's `notify_user_uuids`, never the user.
     `⟦off_purpose: <reason>⟧`, above the admin's and the user's
     instructions. The turn cuts the marker off the end of an answer before
     it is stored and reports it, once per turn; a marker anywhere else, or in
-    a tool's result, flags nothing.
+    a tool's result, flags nothing. With `agent_capture_ai_content` on, the
+    AI journal keeps the model's answer as it came, marker and reason
+    included: the reason is then seen wherever the journal is, by every
+    holder of `ai` (`/admin/ai/usage`), not only by `ai.manage`. The chat
+    message itself never has it.
   * Settings → AI Agent and AI Agent → Users refuse a newly chosen model that
     does not fit its task (`PhoenixKitAI.Tasks.check_selection/2`), or that
     nobody knows to fit until an admin marks what it can do on its endpoint.

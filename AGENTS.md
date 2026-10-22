@@ -226,7 +226,10 @@ and `Web.Markdown`).
   of a refusal of the AI budget: `phoenix_kit_ai` does. Pixels go to a model
   only when `Capabilities` says `:yes` (never on `:unknown`). The
   off-purpose marker is cut in `Runner.store_answer/5`, before anything is
-  stored, only at the very end of the model's own text. A page that saves
+  stored, only at the very end of the model's own text. It is not cut from
+  the AI journal: with `agent_capture_ai_content` on, the captured answer
+  there carries the marker and its reason, which every holder of `ai` reads
+  — the reason is seen wherever the journal is. A page that saves
   an endpoint for a task checks it with `Tasks.check_selection/2` when it is
   a new choice; the lift of a block goes through `Web.Access` and then
   `Guard.unblock/3` with the session's scope (the guard decides own and

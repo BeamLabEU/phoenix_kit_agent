@@ -43,7 +43,9 @@ defmodule PhoenixKitAgent.Turns do
        before a block or a limit runs to its end. A refusal is like a limit
        reached: nothing runs or is stored but a `notice` (error
        `task_blocked` or `task_limit_exceeded`), once a day per chat (a
-       monthly limit: once a month);
+       monthly limit: once a month); an answer of the guard this module does
+       not know starts no turn either (`model_error`, a log line without
+       it);
     4. the task starts (`PhoenixKitAgent.Turns.Monitor`), and `{:ok,
        turn_ref}` is returned; there the user message is stored (and the
        attachments linked to it), then the rounds run
@@ -70,6 +72,8 @@ defmodule PhoenixKitAgent.Turns do
   """
 
   import Ecto.Query, only: [from: 2]
+
+  require Logger
 
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.RepoHelper
@@ -98,6 +102,7 @@ defmodule PhoenixKitAgent.Turns do
           | {:limit_reached, Limits.kind()}
           | :task_blocked
           | :task_limit_exceeded
+          | :model_error
           | :not_running
           | {:not_started, Monitor.exit_class()}
           | {:monitor_unavailable, Monitor.exit_class()}
@@ -391,16 +396,30 @@ defmodule PhoenixKitAgent.Turns do
   # period}` for `started/4`: the refusal of `PhoenixKitAI.Guard.admit/4`
   # names the block group or the limit, which the chat does not need.
   defp admit(user_uuid, turn_ref) do
-    case PhoenixKitAI.Guard.admit("agent.chat", user_uuid, turn_ref, lock_ttl_s()) do
-      {:ok, admission} ->
-        {:ok, admission}
+    "agent.chat"
+    |> PhoenixKitAI.Guard.admit(user_uuid, turn_ref, lock_ttl_s())
+    |> admission()
+  end
 
-      {:error, {:task_blocked, _group}} ->
-        {:error, {:guard, :task_blocked, :day}}
+  @doc false
+  # The answer of `PhoenixKitAI.Guard.admit/4` as `launch/6` takes it. An
+  # answer this module does not know (a later version of the guard) starts
+  # no turn: it is a `model_error` notice, and the log gets one line without
+  # the answer, which may name the user.
+  @spec admission(term()) :: {:ok, String.t()} | {:error, {:guard, atom(), :day | :month}}
+  def admission({:ok, admission}) when is_binary(admission), do: {:ok, admission}
+  def admission({:error, {:task_blocked, _group}}), do: {:error, {:guard, :task_blocked, :day}}
 
-      {:error, {:task_limit_exceeded, _scope, _unit, period}} ->
-        {:error, {:guard, :task_limit_exceeded, period}}
-    end
+  def admission({:error, {:task_limit_exceeded, _scope, _unit, period}})
+      when period in [:day, :month],
+      do: {:error, {:guard, :task_limit_exceeded, period}}
+
+  def admission(_unknown) do
+    Logger.warning(
+      "[PhoenixKitAgent] the AI guard's admission answered in an unknown form; no turn"
+    )
+
+    {:error, {:guard, :model_error, :day}}
   end
 
   # Once a day per chat (a monthly limit: once a month), like a limit of the
