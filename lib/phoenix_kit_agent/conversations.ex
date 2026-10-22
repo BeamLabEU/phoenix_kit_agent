@@ -317,6 +317,33 @@ defmodule PhoenixKitAgent.Conversations do
     store(user_uuid, conversation_uuid, &Message.changeset(&1, attrs), [], attachment_uuids)
   end
 
+  @doc false
+  # `add_turn_message/4` for several messages, each `{attrs, fields}`, in one
+  # transaction and in this order: all of them are stored, or none
+  # (`PhoenixKitAgent.Confirmations`: a card's notice and the new card that
+  # follows it). The events go out once the transaction has committed.
+  @spec add_turn_messages(String.t(), term(), [{map(), keyword()}]) ::
+          {:ok, [Message.t()]} | {:error, :not_found | Ecto.Changeset.t()}
+  def add_turn_messages(user_uuid, conversation_uuid, entries) when is_list(entries) do
+    result =
+      repo().transaction(fn ->
+        case fetch_owned(user_uuid, conversation_uuid, lock: true) do
+          {:ok, conversation} -> Enum.map(entries, &insert_or_roll_back(conversation, &1))
+          {:error, reason} -> repo().rollback(reason)
+        end
+      end)
+
+    with {:ok, messages} <- result, do: Enum.each(messages, &announce/1)
+    result
+  end
+
+  defp insert_or_roll_back(conversation, {attrs, fields}) when is_map(attrs) do
+    case insert_message(conversation, &Message.changeset(&1, attrs), fields) do
+      {:ok, message} -> message
+      {:error, reason} -> repo().rollback(reason)
+    end
+  end
+
   defp store(user_uuid, conversation_uuid, changeset_fun, fields, attachment_uuids) do
     result =
       repo().transaction(fn ->
@@ -329,14 +356,15 @@ defmodule PhoenixKitAgent.Conversations do
         end
       end)
 
-    with {:ok, %Message{} = message} <- result do
-      PubSub.broadcast(
-        topic(message.conversation_uuid),
-        {:agent_message_added, message.conversation_uuid, message.uuid}
-      )
-    end
-
+    with {:ok, %Message{} = message} <- result, do: announce(message)
     result
+  end
+
+  defp announce(%Message{} = message) do
+    PubSub.broadcast(
+      topic(message.conversation_uuid),
+      {:agent_message_added, message.conversation_uuid, message.uuid}
+    )
   end
 
   defp link_attachments([], _conversation, _message), do: :ok
@@ -521,6 +549,13 @@ defmodule PhoenixKitAgent.Conversations do
       {:ok, message}
     end
   end
+
+  @doc false
+  # What a client gets of a message of the chat (see "Reading" in the
+  # moduledoc), for `PhoenixKitAgent.Confirmations`, which reads its cards
+  # itself.
+  @spec client_view(Message.t()) :: Message.t()
+  def client_view(%Message{} = message), do: for_client(message)
 
   # What a client gets of a message (see "Reading" in the moduledoc).
   defp for_client(%Message{role: "tool"} = message) do
