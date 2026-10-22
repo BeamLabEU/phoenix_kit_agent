@@ -53,6 +53,9 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   def refusal(:turn_in_flight),
     do: gettext("The assistant is answering in another chat. Wait for it to finish.")
 
+  def refusal(:click_in_flight),
+    do: gettext("A change is being confirmed right now. Send your message again in a moment.")
+
   def refusal({:limit_reached, :daily_cost}),
     do: gettext("You have reached your daily spending limit for the assistant.")
 
@@ -222,6 +225,9 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   @spec card_refusal(term()) :: String.t()
   def card_refusal(:turn_running),
     do: gettext("The assistant is answering. Try again when it has finished.")
+
+  def card_refusal(:click_running),
+    do: gettext("Another change is being confirmed right now. Try again in a moment.")
 
   def card_refusal(:not_waiting), do: gettext("This change no longer waits for you.")
 

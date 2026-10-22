@@ -111,7 +111,7 @@ defmodule PhoenixKitAgent.Web.Dock.Components do
   @doc """
   A write that waits for the user's confirmation, or what became of it: the
   preview core holds for it and the arguments the model sent while it waits,
-  with "Run" and "Cancel"; "Ask again" once it ran out.
+  with "Run" and "Cancel the change"; "Ask again" once it ran out.
   """
   attr(:id, :string, required: true)
   attr(:message, Message, required: true)
@@ -166,7 +166,7 @@ defmodule PhoenixKitAgent.Web.Dock.Components do
           disabled={@card[:busy?]}
           class="btn btn-ghost btn-sm"
         >
-          {gettext("Cancel")}
+          {gettext("Cancel the change")}
         </button>
         <button
           :if={@card.state == "waiting"}

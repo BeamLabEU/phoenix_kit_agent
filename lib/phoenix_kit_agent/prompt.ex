@@ -7,7 +7,8 @@ defmodule PhoenixKitAgent.Prompt do
        then the module's own rule for writes, always there: a tool that
        changes data only proposes the change, which waits for the user's
        confirmation in the chat, and the model never says it is done before a
-       confirmation message says so (`PhoenixKitAgent.Confirmations`);
+       confirmation message says so, nor asks again for a change still
+       waiting (`PhoenixKitAgent.Confirmations`);
     2. the host's addendum — `config :phoenix_kit_agent, prompt_addendum:
        {Mod, :fun}`: what an order is, the statuses, the language of the
        answer. `Mod.fun(ctx)` is called with `%{user_uuid:, locale:}` when it
@@ -70,7 +71,9 @@ defmodule PhoenixKitAgent.Prompt do
                     "turn ends there.",
                   "Say what you propose along with the call; never say that it is done until " <>
                     "the system's confirmation message (\"[confirmation] done: …\", in the " <>
-                    "user's language) says so."
+                    "user's language) says so.",
+                  "A change the system says is waiting (\"[confirmation] waiting: …\") is " <>
+                    "still the user's to run or cancel: do not ask for it again."
                 ],
                 "\n"
               )

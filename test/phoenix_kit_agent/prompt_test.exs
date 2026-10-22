@@ -97,6 +97,8 @@ defmodule PhoenixKitAgent.PromptTest do
       assert position(prompt, "MODULE-PROMPT") < rule
       assert rule < position(prompt, "HOST-ADDENDUM-PLAIN")
       assert prompt =~ "never say that it is done"
+      assert prompt =~ "[confirmation] waiting: …"
+      assert prompt =~ "do not ask for it again"
 
       # Without a module prompt of the site it is still there.
       {:ok, _} = Config.put_system_prompt(nil, [])

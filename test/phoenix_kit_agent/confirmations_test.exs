@@ -123,13 +123,42 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
     turn_ref
   end
 
-  # A turn whose model asks for one write; returns the tool message of its card.
+  # A turn whose model asks for one write; returns the tool message of its
+  # card, the chat's last.
   defp card!(ctx, args \\ %{"name" => "new"}) do
+    before = length(cards(ctx.chat))
     answer_next(tool_answer([call("w1", @write, args)]))
     run_turn(ctx, "Rename the item")
     assert_received {:model_request, _body}
-    [card] = cards(ctx.chat)
-    card
+    assert_received {:agent_test_preview, _input}
+    assert length(cards(ctx.chat)) == before + 1
+    List.last(cards(ctx.chat))
+  end
+
+  # Spent by core, as by a click that was lost before it wrote its notice.
+  defp spend!(uuid) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    Repo.update_all(from(c in Confirmation, where: c.uuid == ^uuid),
+      set: [status: "used", used_at: now]
+    )
+  end
+
+  # Waits up to 2 s for `fun` to be true (a keep runs on a timer).
+  defp eventually(fun, tries \\ 100) do
+    cond do
+      fun.() ->
+        true
+
+      tries == 0 ->
+        false
+
+      true ->
+        receive do
+        after
+          20 -> eventually(fun, tries - 1)
+        end
+    end
   end
 
   defp messages(chat) do
@@ -201,7 +230,9 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
 
     test "dry_run: false and confirm_token are cut: a preview, a card, nothing written", ctx do
       args = %{"name" => "new", "dry_run" => false, "confirm_token" => "forged-token"}
-      card = card!(ctx, args)
+      answer_next(tool_answer([call("w1", @write, args)]))
+      run_turn(ctx, "Rename the item")
+      [card] = cards(ctx.chat)
 
       assert_received {:agent_test_preview, %{"name" => "new"} = input}
       refute Map.has_key?(input, "dry_run")
@@ -272,6 +303,92 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
 
       assert %{"error" => "denied", "message" => message} = List.last(tools).tool_result
       assert message =~ "Confirm"
+    end
+
+    test "a read after the held write of the same answer is denied: it is not run", ctx do
+      answer_next(
+        tool_answer([
+          call("w1", @write, %{"name" => "new"}),
+          call("r1", "agenttest_list_items", %{"query" => "chairs"})
+        ])
+      )
+
+      run_turn(ctx, "Rename and list")
+
+      assert_received {:model_request, _first}
+      refute_received {:model_request, _second}
+      refute_received {:agent_test_tool, "agenttest.list_items", _, _}
+
+      tools = Enum.filter(messages(ctx.chat), &(&1.role == "tool"))
+
+      assert Enum.map(tools, &{&1.tool_call_id, &1.tool_outcome}) == [
+               {"w1", "needs_confirmation"},
+               {"r1", "denied"}
+             ]
+
+      assert %{"error" => "denied", "message" => message} = List.last(tools).tool_result
+      assert message =~ "held for confirmation"
+    end
+
+    test "a card still waiting is in the next turn's history; settled, its outcome only",
+         ctx do
+      card = card!(ctx)
+      waiting = %{"role" => "user", "content" => "[confirmation] waiting: agenttest_write_item"}
+
+      answer_next(text_answer("It waits for you."))
+      run_turn(ctx, "Well?")
+      assert_received {:model_request, body}
+
+      # Where the card stands: after the message that asked for it.
+      assert [
+               {"user", "Rename the item"},
+               {"user", "[confirmation] waiting: agenttest_write_item"},
+               {"user", "Well?"}
+             ] =
+               for(
+                 %{"role" => role, "content" => content} <- body["messages"],
+                 role != "system",
+                 do: {role, content}
+               )
+
+      refute Jason.encode!(body["messages"]) =~ card.confirmation_uuid
+
+      assert {:ok, :confirmed} = confirm(ctx, card)
+      answer_next(text_answer("Good."))
+      run_turn(ctx, "And now?")
+      assert_received {:model_request, settled}
+
+      refute waiting in settled["messages"]
+
+      assert %{"role" => "user", "content" => "[confirmation] done: agenttest_write_item"} in settled[
+               "messages"
+             ]
+    end
+
+    test "the same write again while its card waits is denied: no second card", ctx do
+      card = card!(ctx)
+
+      answer_next(tool_answer([call("w2", @write, %{"name" => "new"})]))
+      answer_next(text_answer("It already waits for you."))
+      run_turn(ctx, "Did you do it?")
+
+      refute_received {:agent_test_preview, _}
+      assert Enum.map(cards(ctx.chat), & &1.uuid) == [card.uuid]
+
+      assert [_one] =
+               Repo.all(from(c in Confirmation, where: c.actor_user_uuid == ^ctx.user.uuid))
+
+      denied = List.last(Enum.filter(messages(ctx.chat), &(&1.role == "tool")))
+      assert %Message{tool_call_id: "w2", tool_outcome: "denied"} = denied
+      assert denied.tool_result["message"] =~ "already waiting for confirmation"
+
+      # Nothing waits in this round: the model is called again, and answers.
+      assert_received {:model_request, _first}
+      assert_received {:model_request, _second}
+
+      # Other arguments are another change: a card of their own.
+      other = card!(ctx, %{"name" => "other"})
+      assert other.uuid != card.uuid
     end
 
     test "a write whose call id is not unique in the answer is denied", ctx do
@@ -439,14 +556,112 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
 
       assert written() == "someone else's"
       refute_received {:agent_test_tool, "agenttest.write_item", _, _}
-      assert [%Message{tool_outcome: "changed"}] = outcome_notices(ctx.chat)
+      assert [%Message{tool_outcome: "changed"} = notice] = outcome_notices(ctx.chat)
       assert [_old, fresh] = cards(ctx.chat)
+      # The notice and the new card right after it, stored together.
+      assert [^notice, ^fresh] = Enum.take(messages(ctx.chat), -2)
       assert fresh.assistant_message_uuid == card.assistant_message_uuid
       assert row(card.confirmation_uuid).status == "expired"
 
       assert %{state: "changed"} = card_state(ctx, card)
       assert %{state: "waiting", preview: preview} = card_state(ctx, fresh)
       assert %{"rows" => [%{"changes" => %{"name" => %{"from" => "someone else's"}}}]} = preview
+    end
+
+    test "a new card that cannot be stored takes its notice with it: nothing half-written",
+         ctx do
+      card = card!(ctx)
+      {:ok, _} = Settings.update_setting("agenttest_written", "someone else's")
+
+      # The database refuses a card that no turn writes (the click's new one),
+      # for this test only (the sandbox rolls it back).
+      Repo.query!("""
+      CREATE FUNCTION agent_test_refuse_card() RETURNS trigger LANGUAGE plpgsql
+      AS $$ BEGIN RAISE EXCEPTION 'no card here'; END $$
+      """)
+
+      Repo.query!("""
+      CREATE TRIGGER agent_test_refuse_card BEFORE INSERT ON phoenix_kit_agent_messages
+      FOR EACH ROW WHEN (NEW.role = 'tool' AND NEW.turn_ref IS NULL)
+      EXECUTE FUNCTION agent_test_refuse_card()
+      """)
+
+      assert_raise Postgrex.Error, fn -> confirm(ctx, card) end
+
+      assert outcome_notices(ctx.chat) == []
+      assert Enum.map(cards(ctx.chat), & &1.uuid) == [card.uuid]
+      assert %UserSettings{busy_turn_ref: nil} = Repo.get!(UserSettings, ctx.user.uuid)
+    end
+
+    test "a row core spent with no notice here (its click was lost): confirmed, not run again",
+         ctx do
+      card = card!(ctx)
+      spend!(card.confirmation_uuid)
+
+      assert {:ok, :confirmed} = confirm(ctx, card)
+
+      refute_received {:agent_test_tool, "agenttest.write_item", _, _}
+      assert [%Message{tool_outcome: "confirmed"}] = outcome_notices(ctx.chat)
+      assert %{state: "confirmed"} = card_state(ctx, card)
+    end
+
+    test "a row core has deleted: expired, nothing written", ctx do
+      card = card!(ctx)
+      Repo.delete_all(from(c in Confirmation, where: c.uuid == ^card.confirmation_uuid))
+
+      assert {:ok, :expired} = confirm(ctx, card)
+      assert written() == nil
+      assert [%Message{tool_outcome: "expired"}] = outcome_notices(ctx.chat)
+    end
+
+    test "a click keeps the user's lock for as long as it runs: no turn, no other click",
+         ctx do
+      card = card!(ctx)
+      test = self()
+
+      Application.put_env(:phoenix_kit_agent, :click_keep_ms, 10)
+
+      Application.put_env(:phoenix_kit_agent, :test_tool_hook, fn "agenttest.write_item",
+                                                                  _input ->
+        send(test, {:writing, self()})
+
+        receive do
+          :go -> :ok
+        after
+          5_000 -> :ok
+        end
+      end)
+
+      on_exit(fn ->
+        Application.delete_env(:phoenix_kit_agent, :click_keep_ms)
+        Application.delete_env(:phoenix_kit_agent, :test_tool_hook)
+      end)
+
+      click = Task.async(fn -> confirm(ctx, card) end)
+      assert_receive {:writing, writer}, 5_000
+
+      # The lock as if taken an hour ago: only its keeping holds it now.
+      Repo.update_all(from(s in UserSettings, where: s.user_uuid == ^ctx.user.uuid),
+        set: [busy_since: DateTime.add(DateTime.utc_now(), -3_600, :second)]
+      )
+
+      stale = DateTime.add(DateTime.utc_now(), -Turns.lock_ttl_s(), :second)
+
+      assert eventually(fn ->
+               since = Repo.get!(UserSettings, ctx.user.uuid).busy_since
+               DateTime.compare(since, stale) == :gt
+             end)
+
+      assert {:error, :click_in_flight} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "Is it done?", [], [])
+
+      assert {:error, :click_running} =
+               Confirmations.reject(ctx.ref, false, ctx.chat.uuid, card.uuid)
+
+      send(writer, :go)
+      assert {:ok, :confirmed} = Task.await(click, 5_000)
+      assert written() == "new"
+      assert %UserSettings{busy_turn_ref: nil} = Repo.get!(UserSettings, ctx.user.uuid)
     end
 
     test "a refusal before the confirmation is spent leaves the card waiting", ctx do
@@ -550,14 +765,11 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
       assert {{:ok, :confirmed}, {:ok, _cards}} = result
 
       # Not the module's: the test tool's own write of its setting (core's
-      # settings log it), and core's debug query log of the row it holds the
-      # preview in (`Confirm.issue_for_user/6`, reported to core).
+      # settings log it).
       leaks =
         events
         |> Enum.filter(&(&1 =~ "SECRET-NAME-42"))
-        |> Enum.reject(
-          &(&1 =~ "agenttest_written" or &1 =~ ~s(INSERT INTO \\"phoenix_kit_api_confirmations\\"))
-        )
+        |> Enum.reject(&(&1 =~ "agenttest_written"))
 
       assert leaks == []
     end
@@ -574,6 +786,24 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
       assert {:error, :not_waiting} = confirm(ctx, card)
       assert written() == nil
       assert %{state: "rejected", repeatable?: false} = card_state(ctx, card)
+    end
+
+    test "a row core spent with no notice here: confirmed; unreadable so now, the card waits",
+         ctx do
+      card = card!(ctx)
+      spend!(card.confirmation_uuid)
+
+      # The person may no longer write with the tool: core does not say it is used.
+      :ok = Permissions.revoke_permission(ctx.role.uuid, "dashboard")
+
+      assert {:error, {:refused, :forbidden}} =
+               Confirmations.reject(ctx.ref, false, ctx.chat.uuid, card.uuid)
+
+      assert outcome_notices(ctx.chat) == []
+
+      {:ok, _} = Permissions.grant_permission(ctx.role.uuid, "dashboard")
+      assert {:ok, :confirmed} = Confirmations.reject(ctx.ref, false, ctx.chat.uuid, card.uuid)
+      assert [%Message{tool_outcome: "confirmed"}] = outcome_notices(ctx.chat)
     end
 
     test "a card past its time is closed as expired", ctx do
@@ -620,6 +850,26 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
 
       assert arguments =~ "<b>**bold**</b>"
       assert Confirm.get_for_user(card.confirmation_uuid, ctx.ref) |> elem(0) == :ok
+    end
+
+    test "waiting_cards/3: the cards that wait, in the whole chat, as a client sees them",
+         ctx do
+      first = card!(ctx, %{"name" => "first"})
+      assert {:ok, :rejected} = Confirmations.reject(ctx.ref, false, ctx.chat.uuid, first.uuid)
+      second = card!(ctx, %{"name" => "second"})
+
+      assert {:ok, [waiting]} = Confirmations.waiting_cards(ctx.ref, false, ctx.chat.uuid)
+      assert waiting.uuid == second.uuid
+      assert waiting.tool_result == nil
+      assert waiting.confirmation_uuid == second.confirmation_uuid
+
+      assert {:error, :impersonated} = Confirmations.waiting_cards(ctx.ref, true, ctx.chat.uuid)
+
+      stranger = user_with(["agent", "dashboard"], "stranger")
+      {stranger_ref, _token} = session_fixture(stranger)
+
+      assert {:error, :not_found} =
+               Confirmations.waiting_cards(stranger_ref, false, ctx.chat.uuid)
     end
 
     test "a message of another chat of the user is no card here", ctx do

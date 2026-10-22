@@ -8,7 +8,11 @@ defmodule PhoenixKitAgent.Turns.History do
   card (`PhoenixKitAgent.Confirmations`) goes in as a `user` message with the
   module's own fixed phrase in the user's language — "[confirmation] done:
   <the tool's name>", "cancelled", "expired", "the data changed", "failed" —
-  never anything the tool returned, and never a text a person wrote. The
+  never anything the tool returned, and never a text a person wrote. So does a
+  card with no such notice yet, where it stands in the chat: "[confirmation]
+  waiting: <the tool's name>", so the model knows that its proposal still
+  waits (whether core's row has run out meanwhile is not read here: the card
+  says so, and offers to ask again). The
   extracted text of a message's attachments
   (the user's own files) is part of that message; the attachments of one
   message share `limit` between them, so that five files cannot by themselves
@@ -21,7 +25,7 @@ defmodule PhoenixKitAgent.Turns.History do
   use Gettext, backend: PhoenixKitAgent.Gettext
 
   alias PhoenixKit.API.MCP.Names
-  alias PhoenixKitAgent.Attachments
+  alias PhoenixKitAgent.{Attachments, Confirmations}
   alias PhoenixKitAgent.Attachments.{Bounds, Extract}
   alias PhoenixKitAgent.Schemas.{Attachment, Message}
 
@@ -30,7 +34,9 @@ defmodule PhoenixKitAgent.Turns.History do
 
   @doc """
   The model messages for a turn: the earlier `messages` of the chat (oldest
-  first) and then `current`, the new user message, which is always kept. The
+  first: `user` and `assistant` messages, the notices of confirmation cards and
+  the cards, `tool` messages `needs_confirmation`) and then `current`, the new
+  user message, which is always kept. The
   earlier ones are kept from the newest back while the characters of all kept
   messages stay within `limit`; the first that does not fit ends the window.
   `attachments` are the chat's ready attachments.
@@ -38,8 +44,10 @@ defmodule PhoenixKitAgent.Turns.History do
   @spec build([Message.t()], [Attachment.t()], entry(), pos_integer()) :: [entry()]
   def build(messages, attachments, current, limit) do
     texts = Enum.group_by(attachments, & &1.message_uuid)
+    settled = settled(messages)
 
     messages
+    |> Enum.reject(&(card?(&1) and MapSet.member?(settled, &1.confirmation_uuid)))
     |> Enum.flat_map(&entry(&1, Map.get(texts, &1.uuid, []), limit))
     |> Enum.reverse()
     |> Enum.reduce_while({[], String.length(current.content)}, fn entry, {kept, used} ->
@@ -128,14 +136,44 @@ defmodule PhoenixKitAgent.Turns.History do
     end
   end
 
+  # A card no notice settles (`build/4` leaves out the settled ones).
+  defp entry(
+         %Message{
+           role: "tool",
+           tool_outcome: "needs_confirmation",
+           confirmation_uuid: uuid,
+           tool_name: tool
+         },
+         _attachments,
+         _limit
+       )
+       when is_binary(uuid) and is_binary(tool),
+       do: [%{role: "user", content: confirmation_phrase("waiting", Names.to_mcp(tool))}]
+
   defp entry(_tool_call_tool_result_or_notice, _attachments, _limit), do: []
+
+  defp card?(%Message{role: "tool", tool_outcome: "needs_confirmation", confirmation_uuid: uuid}),
+    do: is_binary(uuid)
+
+  defp card?(_message), do: false
+
+  # The confirmations whose outcome a notice of the chat says.
+  defp settled(messages) do
+    for %Message{role: "notice", confirmation_uuid: uuid, tool_outcome: outcome} <- messages,
+        is_binary(uuid) and outcome in Confirmations.outcomes(),
+        into: MapSet.new(),
+        do: uuid
+  end
 
   @doc """
   The phrase the model reads for the outcome of a confirmation card of the
-  tool `action` (the name the model knows it by), in the current Gettext
-  locale; `nil` for anything else.
+  tool `action` (the name the model knows it by), or for a card still
+  `"waiting"`, in the current Gettext locale; `nil` for anything else.
   """
   @spec confirmation_phrase(term(), String.t()) :: String.t() | nil
+  def confirmation_phrase("waiting", action),
+    do: gettext("[confirmation] waiting: %{action}", action: action)
+
   def confirmation_phrase("confirmed", action),
     do: gettext("[confirmation] done: %{action}", action: action)
 

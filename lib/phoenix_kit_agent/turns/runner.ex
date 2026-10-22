@@ -59,7 +59,11 @@ defmodule PhoenixKitAgent.Turns.Runner do
     * At most one write of a round waits: a write after it in the same answer
       is `denied` ("confirm the earlier change first"), and so is a write whose
       call id another call of the answer shares (the click finds its arguments
-      by that id).
+      by that id). A read after it is `denied` too ("held for confirmation"):
+      the turn ends with the round, the model would never read its result.
+    * A write of the same tool with the same arguments as a card of the chat
+      that still waits is `denied` ("already waiting for confirmation"): no
+      second card of one change.
     * A round that left a write waiting ends the turn: the model is not called
       again, so no answer can say that the change was made. The card is the
       end of the turn; what the click did reaches the model as a notice in the
@@ -107,7 +111,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   alias PhoenixKit.API.Executor
   alias PhoenixKit.API.MCP.Names
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Attachments, Conversations, Limits}
+  alias PhoenixKitAgent.{Attachments, Confirmations, Conversations, Limits}
   alias PhoenixKitAgent.Schemas.{Conversation, Message}
   alias PhoenixKitAgent.Turns.{Locks, Monitor, Tools}
 
@@ -579,14 +583,28 @@ defmodule PhoenixKitAgent.Turns.Runner do
      }, outcome}
   end
 
-  # A write gets no executor call once a write of this round waits, nor when
-  # its call id is not its own (the click would not find its arguments).
+  # Once a write of this answer waits, no call of it reaches the executor:
+  # the turn ends with the round, so the model would never read a read's
+  # result, and it would only spend the rate limit. A write gets no executor
+  # call either when its call id is not its own (the click would not find its
+  # arguments), nor when a card of the chat waits for the same write already.
   defp call_tool(turn, tool, call, answer) do
+    write? = ControlFields.write_tool?(tool)
+
     cond do
-      not ControlFields.write_tool?(tool) -> execute(turn, tool, call["arguments"])
+      answer.waiting == :waiting and not write? -> {tool.name, "denied", held_first()}
+      not write? -> execute(turn, tool, call["arguments"])
       answer.waiting == :waiting -> {tool.name, "denied", confirm_first()}
       MapSet.member?(answer.shared_ids, call["id"]) -> {tool.name, "denied", shared_id()}
+      waiting_already?(turn, tool, call) -> {tool.name, "denied", already_waiting()}
       true -> execute(turn, tool, call["arguments"])
+    end
+  end
+
+  defp waiting_already?(turn, tool, call) do
+    case Tools.arguments(call["arguments"]) do
+      {:ok, input} -> Confirmations.waiting_same?(turn.conversation_uuid, tool.name, input)
+      :error -> false
     end
   end
 
@@ -643,6 +661,24 @@ defmodule PhoenixKitAgent.Turns.Runner do
       "error" => "denied",
       "message" =>
         "Confirm the earlier change first: only one change at a time waits for the user."
+    }
+  end
+
+  defp held_first do
+    %{
+      "error" => "denied",
+      "message" =>
+        "Not run: a change of this answer is held for confirmation, and the turn ends with " <>
+          "it. Ask for this again in the next turn."
+    }
+  end
+
+  defp already_waiting do
+    %{
+      "error" => "denied",
+      "message" =>
+        "This change is already waiting for confirmation: the user runs or cancels it on its " <>
+          "card in the chat. Do not ask for it again."
     }
   end
 

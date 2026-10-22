@@ -25,7 +25,8 @@ defmodule PhoenixKitAgent.Turns do
          ready, the user's own, of this chat and not sent yet
          (`PhoenixKitAgent.Attachments`);
     2. the locks (`PhoenixKitAgent.Turns.Locks`): one turn per chat
-       (`:conversation_busy`) and per user (`:turn_in_flight`); the history
+       (`:conversation_busy`) and per user (`:turn_in_flight`, or
+       `:click_in_flight` while a click on a confirmation card runs); the history
        is read only once they are taken, so it holds the previous turn's end;
     3. the limits (`PhoenixKitAgent.Limits.check/3`), under the locks: the
        user's previous turn is over, so all it spent is in the AI journal. A
@@ -84,6 +85,7 @@ defmodule PhoenixKitAgent.Turns do
           | :too_many_attachments
           | :conversation_busy
           | :turn_in_flight
+          | :click_in_flight
           | {:limit_reached, Limits.kind()}
           | :not_running
           | {:not_started, Monitor.exit_class()}
@@ -443,7 +445,7 @@ defmodule PhoenixKitAgent.Turns do
           where:
             m.conversation_uuid == ^conversation.uuid and
               (m.role in ["user", "assistant"] or
-                 (m.role == "notice" and not is_nil(m.confirmation_uuid))),
+                 (m.role in ["notice", "tool"] and not is_nil(m.confirmation_uuid))),
           order_by: [asc: m.inserted_at, asc: m.uuid],
           select:
             struct(m, [
