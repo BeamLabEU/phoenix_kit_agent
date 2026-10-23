@@ -15,12 +15,15 @@ enable/disable switch (`PhoenixKitAgent`), the module-owned migration chain and
 its tables (`PhoenixKitAgent.Migrations`, `PhoenixKitAgent.Schemas.*`), the
 permission keys `agent` / `agent.manage`, the module settings and the
 Settings → AI Agent page (`PhoenixKitAgent.Config`,
-`PhoenixKitAgent.Web.SettingsLive`), the hidden Storage library
+`PhoenixKitAgent.Web.SettingsLive`), the card of what the assistant can use
+now on it and on Users → Configure (`PhoenixKitAgent.Web.ToolAvailability`),
+the hidden Storage library
 (`PhoenixKitAgent.Library`), the user-deletion cleanup
 (`PhoenixKitAgent.UserDeletion`), the chats and messages
 (`PhoenixKitAgent.Conversations`: session-bound, owner-only; a client writes
-only the user's text and never reads raw tool results) and the read-only turn
-loop (`PhoenixKitAgent.Turns` with `Turns.Monitor`, `Runner`, `Locks`, `Tools`),
+only the user's text and never reads raw tool results) and the turn loop
+(`PhoenixKitAgent.Turns` with `Turns.Monitor`, `Runner`, `Locks`, `Tools`), the
+writes the user confirms (`PhoenixKitAgent.Confirmations`),
 the per-user settings (`PhoenixKitAgent.UserConfig`: `effective/1` is the one
 place a turn reads them — user value, else module default; `admin_update/4`
 for an admin with `agent.manage`, which logs field names to Activity;
@@ -41,9 +44,12 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
 and `Web.Markdown`).
 
 - **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins:
-  `phoenix_kit` to upstream main 435d5b3 (the session-actor API and hidden
-  Storage libraries are merged but not on Hex yet), `phoenix_kit_ai` to the
-  fork's integration branch (tool calling, #38),
+  `phoenix_kit` to the fork's branch `feat/session-confirm` until the core PR
+  merges (the writes of a live session: `allow: :all`,
+  `Executor.redeem_as/6`, the session functions of `API.Confirm`, the
+  `OperationPreview` component, `Executor.tool_availability/1`),
+  `phoenix_kit_ai` to the fork's integration
+  branch (tool calling, #38),
   `phoenix_live_view`, and `mdex` (already phoenix_kit's) for the markdown
   of the chat panel.
 - **Module key** `"agent"`; settings prefix `agent_`; tables
@@ -161,6 +167,55 @@ and `Web.Markdown`).
   from `SessionRef.scope_for_session/2`, never `Scope.for_user/1`); its text is
   put on one line and cut to 200 characters; a failure logs the reason only.
   It runs in the panel's process under the turn's locks, with no timeout.
+- **Writes** (`PhoenixKitAgent.Confirmations`, spec §12 Ф2): the module adds
+  no filter of its own and opens nothing beyond core — `visible_for/3` /
+  `execute_as/5` with `allow: :all`, `via: "agent"`; whether a session sees a
+  module's writes is core's `api_session_write_modules` alone. Core holds
+  every write of a session for confirmation; the turn stores it as a `tool`
+  message `needs_confirmation` with `confirmation_uuid` and
+  `assistant_message_uuid` (V2 of the migrations) and only
+  `{status, confirmation_id}` as its result — never a code, the preview or
+  the arguments — lets one write of a round wait (a second one, or one whose
+  call id another call of the answer shares, is `denied`; so is every read
+  after it, "held for confirmation", which the model would never see) and
+  **ends the turn: no model call after a round with a waiting write**. A write
+  of the same tool and arguments as a card of the chat that still waits is
+  `denied` ("already waiting for confirmation"), never a second card. A click
+  (`confirm/5`, `reject/5`, `repeat/5`) takes the user's turn lock alone
+  (`Locks.acquire_user/4` with a `Locks.click_ref/0`; a 30 s hold, kept fresh
+  by a process next to the click for as long as it runs, `Locks.keep_user/4`)
+  and is `:turn_running` while a turn runs, `:click_running` while another
+  click does; a turn started meanwhile is `:click_in_flight`. It redeems with
+  the card's registry name and `Tools.arguments/1` of the raw arguments of its
+  assistant message's call (never found by the call id across the chat). The
+  outcome is a `notice` with the same `confirmation_uuid` and `tool_outcome`;
+  a refusal before core spends the row writes nothing (the card waits, with
+  its reason). `failed` only when the handler failed after core spent the row;
+  a row core reports `used` with no notice here (its click was lost) is
+  `confirmed` once `get_for_user/2` reads it `used`, else the card waits;
+  core's `invalid` (the row is gone) is `expired`. With the right to the tool
+  gone core withholds `get_for_user/2` (`:forbidden`); the status is then read
+  from the user's row (`lookup_for_user/2`), and such a card keeps "Cancel the
+  change" (`rejectable?`). A card with no notice that core no longer holds
+  (`used`, `rejected`, ran out, gone) gets its notice from
+  `Confirmations.settle_lapsed/3` (the panel, on opening a chat, under the
+  user's lock only when there is one) and `settle_lapsed_in_turn/2` (a turn,
+  under its locks, before the history): only a card core still holds reads as
+  waiting to the model, to `waiting_same?/3` and above the feed. A notice the
+  chat refuses makes the click `{:error, :not_stored}`. The notice of `changed`, or
+  the `expired` one of "Ask again", and the new card are one transaction
+  (`Conversations.add_turn_messages/3`). Only these notices, and each card
+  with none yet ("[confirmation] waiting: <tool>"), go into the next turn's
+  history, as `user` messages with the module's fixed phrase
+  (`History.confirmation_phrase/2`); other notices stay out. The panel reads
+  the cards with `Confirmations.cards/4` (core's preview via
+  `Confirm.get_for_user/2`, rendered with core's `operation_preview`; the
+  arguments as escaped text), finds a waiting card older than the page it
+  loaded with `Confirmations.waiting_cards/3` (shown above the feed) and runs
+  a click in a task under `PhoenixKitAgent.Confirmations.TaskSupervisor`.
+  Nothing of the arguments or the preview is logged, here or by core (its
+  insert of the row is `log: false`). The test write tool is
+  `agenttest.write_item` in `test/support/agent_test_tools.ex`.
 - **Boundaries:** nothing about orders, customers or other host domain data
   lives here — the module only knows "tools from the registry". Model calls,
   budget and the request journal stay in `phoenix_kit_ai`.

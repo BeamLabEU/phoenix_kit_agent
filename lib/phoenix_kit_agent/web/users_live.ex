@@ -25,6 +25,11 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   for them and only the turn limit applies — in the list, and in the form for
   the model chosen there.
 
+  Under the open form, what the user's assistant can use now
+  (`PhoenixKitAgent.Web.ToolAvailability`): the modules' read and write tools
+  by every role the user holds, which the role of a session can narrow; read
+  when the form opens.
+
   Who changed what for whom goes to the core Activity log, field names only.
   The model list marks the endpoints whose model is known not to take tools, and
   those where that is unknown (`PhoenixKitAgent.Models`); that listing is
@@ -43,11 +48,13 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   import PhoenixKitWeb.Components.Core.Input, only: [translate_error: 1]
   import PhoenixKitWeb.Components.Core.Select, only: [select: 1]
   import PhoenixKitWeb.Components.Core.Textarea, only: [textarea: 1]
+  import PhoenixKitAgent.Web.ToolAvailability, only: [assistant_tools: 1]
 
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Users.Roles
   alias PhoenixKit.Utils.{Number, Routes}
   alias PhoenixKitAgent.{Config, Models, Spend, UserConfig}
-  alias PhoenixKitAgent.Web.Access
+  alias PhoenixKitAgent.Web.{Access, ToolAvailability}
 
   # The fields of the form, as they are named in its submit, and the fields of
   # `UserSettings.admin_changeset/2` they are for. Money is typed in dollars and
@@ -204,12 +211,18 @@ defmodule PhoenixKitAgent.Web.UsersLive do
             endpoints: endpoints,
             tools: %{},
             tools_loading?: endpoints != [],
-            default_endpoint: default_endpoint()
+            default_endpoint: default_endpoint(),
+            assistant_tools: tools_by_roles(listed.user)
           }
         )
         |> start_tools(listed.user.uuid, Enum.map(endpoints, & &1.uuid))
     end
   end
+
+  # What the user's assistant can use by every role they hold: a session acting
+  # as one of them sees no more than that.
+  defp tools_by_roles(user),
+    do: user |> Scope.for_user(narrow: false) |> ToolAvailability.for_scope()
 
   defp listed(socket, user_uuid), do: Enum.find(socket.assigns.rows, &(&1.user.uuid == user_uuid))
 
@@ -571,6 +584,13 @@ defmodule PhoenixKitAgent.Web.UsersLive do
           </div>
         </.form>
       </section>
+
+      <.assistant_tools
+        :if={@editing}
+        id="agent-user-tools"
+        modules={@editing.assistant_tools}
+        subject={:user}
+      />
 
       <section class="card bg-base-100 shadow-sm">
         <div class="overflow-x-auto">

@@ -216,6 +216,7 @@ defmodule PhoenixKitAgent do
       PhoenixKitAgent.Attachments.Slots,
       {Task.Supervisor, name: PhoenixKitAgent.Attachments.TaskSupervisor},
       {Task.Supervisor, name: PhoenixKitAgent.Attachments.WorkerSupervisor},
+      {Task.Supervisor, name: PhoenixKitAgent.Confirmations.TaskSupervisor},
       Work.sweep_task()
     ]
   end

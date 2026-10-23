@@ -4,9 +4,10 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   code: the refusals of `PhoenixKitAgent.Conversations`,
   `PhoenixKitAgent.Turns` and `PhoenixKitAgent.Attachments`, the codes of a
   failed attachment (`PhoenixKitAgent.Attachments.Processor`), the notices of
-  a turn (stored in English, shown by their code) and the upload errors of
-  LiveView. A code this module does not know gets a general text,
-  never the code itself.
+  a turn (stored in English, shown by their code), the states and refusals of
+  a confirmation card (`PhoenixKitAgent.Confirmations`) and the upload errors
+  of LiveView. A code this module does not know gets a general text, never
+  the code itself.
   """
 
   use Gettext, backend: PhoenixKitAgent.Gettext
@@ -52,6 +53,9 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   def refusal(:turn_in_flight),
     do: gettext("The assistant is answering in another chat. Wait for it to finish.")
 
+  def refusal(:click_in_flight),
+    do: gettext("A change is being confirmed right now. Send your message again in a moment.")
+
   def refusal({:limit_reached, :daily_cost}),
     do: gettext("You have reached your daily spending limit for the assistant.")
 
@@ -76,6 +80,8 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
       )
 
   def refusal(:files_pending), do: gettext("Wait until the files are read.")
+
+  def refusal(:rate_limited), do: gettext("Too many requests at once; try again in a minute.")
 
   def refusal(reason) when reason in [:file_unreadable, :empty_file],
     do: gettext("The file could not be read, or it is empty.")
@@ -192,6 +198,69 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
       )
 
   def notice(_code_with_its_own_text), do: nil
+
+  @doc "The heading of a confirmation card in its state."
+  @spec card_title(String.t()) :: String.t()
+  def card_title("waiting"), do: gettext("The assistant proposes a change")
+  def card_title("confirmed"), do: gettext("The change was made")
+  def card_title("rejected"), do: gettext("The change was cancelled")
+  def card_title("expired"), do: gettext("The confirmation ran out; nothing was changed")
+  def card_title("changed"), do: gettext("The data changed — check it again below")
+  def card_title("failed"), do: gettext("The change failed")
+  def card_title(_unavailable), do: gettext("This change can no longer be confirmed here")
+
+  @doc "The line of the notice that settles a confirmation card, by its outcome."
+  @spec card_outcome(String.t()) :: String.t()
+  def card_outcome("confirmed"), do: gettext("Done:")
+  def card_outcome("rejected"), do: gettext("Cancelled:")
+  def card_outcome("expired"), do: gettext("Ran out:")
+  def card_outcome("changed"), do: gettext("The data changed:")
+  def card_outcome(_failed), do: gettext("Failed:")
+
+  @doc """
+  The text for a click on a confirmation card that did nothing (the card keeps
+  waiting): the refusals of `PhoenixKitAgent.Confirmations`, `{:refused,
+  code}` with the executor's code among them.
+  """
+  @spec card_refusal(term()) :: String.t()
+  def card_refusal(:turn_running),
+    do: gettext("The assistant is answering. Try again when it has finished.")
+
+  def card_refusal(:click_running),
+    do: gettext("A change is being confirmed right now. Try again in a moment.")
+
+  def card_refusal(:not_stored),
+    do:
+      gettext(
+        "What became of this change could not be saved in the chat. Open the chat again to see it."
+      )
+
+  def card_refusal(:not_waiting), do: gettext("This change no longer waits for you.")
+
+  def card_refusal(:not_expired),
+    do: gettext("This change can be asked for again only once its confirmation ran out.")
+
+  def card_refusal(:no_arguments),
+    do:
+      gettext(
+        "This change cannot be confirmed: the assistant's call is not in the chat any more."
+      )
+
+  def card_refusal({:refused, :module_write_disabled}),
+    do: gettext("The assistant may not make changes in this part of the site now.")
+
+  def card_refusal({:refused, :forbidden}), do: gettext("You may not make this change now.")
+
+  def card_refusal({:refused, :unauthorized}), do: refusal(:session_gone)
+  def card_refusal({:refused, :rate_limited}), do: refusal(:rate_limited)
+
+  def card_refusal({:refused, :validation_failed}),
+    do: gettext("The change does not fit what the tool takes any more.")
+
+  def card_refusal({:refused, _code}),
+    do: gettext("The change cannot be made now. Try again later, or cancel it.")
+
+  def card_refusal(reason), do: refusal(reason)
 
   @doc "The text for an error of a LiveView upload entry."
   @spec upload_error(atom()) :: String.t()

@@ -26,6 +26,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
   Each form is saved on its own; every save checks the permission again.
 
+  The last card shows what the assistant can use now, for the role the
+  viewer's session acts as (`PhoenixKitAgent.Web.ToolAvailability`): the
+  modules' read and write tools, available or closed and why. It is read when
+  the page opens.
+
   When the default model does not report what a call costs
   (`PhoenixKitAgent.Models.reports_cost?/1`), the limits say that money is not
   counted for it and only the turn limit applies.
@@ -49,10 +54,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   import PhoenixKitWeb.Components.Core.Input, only: [translate_error: 1]
   import PhoenixKitWeb.Components.Core.Select, only: [select: 1]
   import PhoenixKitWeb.Components.Core.Textarea, only: [textarea: 1]
+  import PhoenixKitAgent.Web.ToolAvailability, only: [assistant_tools: 1]
 
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitAgent.{Config, Models, UserConfig}
-  alias PhoenixKitAgent.Web.Access
+  alias PhoenixKitAgent.Web.{Access, ToolAvailability}
 
   # The fields of the models form.
   @model_fields ~w(default_endpoint_uuid vision_endpoint_uuid)
@@ -75,7 +81,8 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
        |> assign_form(Config.defaults_changeset(%{}) |> Map.put(:action, nil))
        |> assign_models()
        |> assign_prompt(Config.system_prompt() || "", [])
-       |> assign_watchers()}
+       |> assign_watchers()
+       |> assign(:assistant_tools, ToolAvailability.for_scope(Access.session_scope(socket)))}
     else
       {:ok,
        socket
@@ -620,6 +627,8 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
           </p>
         </div>
       </section>
+
+      <.assistant_tools id="agent-tools" modules={@assistant_tools} subject={:session} />
     </div>
     """
   end

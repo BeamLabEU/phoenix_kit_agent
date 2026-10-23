@@ -1,7 +1,8 @@
 defmodule PhoenixKitAgent.Turns do
   @moduledoc """
   A turn of the assistant (spec §6.1): the user's message, then rounds of
-  model calls and read-only tool calls until the model answers.
+  model calls and tool calls until the model answers, or until a write waits
+  for the user's confirmation (`PhoenixKitAgent.Confirmations`).
 
   Like `PhoenixKitAgent.Conversations`, every function acts for a **live
   browser session** — the `{session_token_uuid, user_uuid}` reference of
@@ -24,7 +25,8 @@ defmodule PhoenixKitAgent.Turns do
          ready, the user's own, of this chat and not sent yet
          (`PhoenixKitAgent.Attachments`);
     2. the locks (`PhoenixKitAgent.Turns.Locks`): one turn per chat
-       (`:conversation_busy`) and per user (`:turn_in_flight`); the history
+       (`:conversation_busy`) and per user (`:turn_in_flight`, or
+       `:click_in_flight` while a click on a confirmation card runs); the history
        is read only once they are taken, so it holds the previous turn's end;
     3. the limits (`PhoenixKitAgent.Limits.check/3`), under the locks: the
        user's previous turn is over, so all it spent is in the AI journal. A
@@ -52,14 +54,17 @@ defmodule PhoenixKitAgent.Turns do
 
   The assistant acts with the session's rights only: tools are listed and run
   by `PhoenixKit.API.Executor.visible_for/3` / `execute_as/5` with `allow:
-  :read`, for this session; there is no service user and no API key.
+  :all`, for this session; there is no service user and no API key. A write
+  is never run by the turn: core holds it for the user's click
+  (`PhoenixKitAgent.Turns.Runner`, "A write"), and only modules that let a
+  session write (core's `api_session_write_modules`) show any.
   """
 
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Config, Conversations, Limits, Prompt, Spend, UserConfig}
+  alias PhoenixKitAgent.{Config, Confirmations, Conversations, Limits, Prompt, Spend, UserConfig}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
   alias PhoenixKitAgent.Turns.{History, Locks, Monitor}
 
@@ -80,6 +85,7 @@ defmodule PhoenixKitAgent.Turns do
           | :too_many_attachments
           | :conversation_busy
           | :turn_in_flight
+          | :click_in_flight
           | {:limit_reached, Limits.kind()}
           | :not_running
           | {:not_started, Monitor.exit_class()}
@@ -388,6 +394,9 @@ defmodule PhoenixKitAgent.Turns do
   defp begin(session_ref, conversation, text, attachments, user, turn_ref, opts) do
     user_uuid = conversation.user_uuid
 
+    # Under the user's lock: no click settles a card meanwhile.
+    :ok = Confirmations.settle_lapsed_in_turn(session_ref, conversation)
+
     request_context =
       opts |> Keyword.get(:request_context, []) |> Keyword.put_new(:request_id, turn_ref)
 
@@ -436,9 +445,21 @@ defmodule PhoenixKitAgent.Turns do
     messages =
       repo().all(
         from(m in Message,
-          where: m.conversation_uuid == ^conversation.uuid and m.role in ["user", "assistant"],
+          where:
+            m.conversation_uuid == ^conversation.uuid and
+              (m.role in ["user", "assistant"] or
+                 (m.role in ["notice", "tool"] and not is_nil(m.confirmation_uuid))),
           order_by: [asc: m.inserted_at, asc: m.uuid],
-          select: struct(m, [:uuid, :role, :content, :tool_calls])
+          select:
+            struct(m, [
+              :uuid,
+              :role,
+              :content,
+              :tool_calls,
+              :tool_name,
+              :tool_outcome,
+              :confirmation_uuid
+            ])
         )
       )
 
@@ -466,7 +487,11 @@ defmodule PhoenixKitAgent.Turns do
     end
   end
 
-  defp lock_ttl_s, do: Config.turn_deadline_s() + @lock_grace_s
+  @doc false
+  # How old a turn's lock must be before another may take it over (spec §6.1
+  # step 3); `PhoenixKitAgent.Confirmations` takes the user's lock with it.
+  @spec lock_ttl_s() :: pos_integer()
+  def lock_ttl_s, do: Config.turn_deadline_s() + @lock_grace_s
 
   # ── stop ────────────────────────────────────────────────────────
 

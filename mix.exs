@@ -90,12 +90,14 @@ defmodule PhoenixKitAgent.MixProject do
       # PhoenixKit provides the Module behaviour, the Settings API, the API
       # Executor (execute_as/visible_for), SessionRef and hidden Storage
       # libraries.
-      # Pinned to upstream main 435d5b3, which carries #948, #949 and #950
-      # (merged). Hex 2.63.0 does not carry these functions; switch back to a
-      # Hex requirement once a release ships them.
+      # A fork branch until the core PR merges: feat/session-confirm, upstream
+      # main plus the writes of a live session (allow: :all, Executor.redeem_as/6,
+      # the session functions of API.Confirm, the OperationPreview component,
+      # Executor.tool_availability/1).
+      # Switch back to upstream, then to a Hex requirement, once they ship.
       pk_dep(:phoenix_kit,
-        git: "https://github.com/BeamLabEU/phoenix_kit.git",
-        ref: "435d5b3275fe208e5674f337b91479f603e4f0df",
+        git: "https://github.com/timujinne/phoenix_kit.git",
+        ref: "ddaba6bf531abeaf4ffd89bcad8073e0c1389aa3",
         override: true
       ),
 

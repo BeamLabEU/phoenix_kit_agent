@@ -14,14 +14,17 @@ migration chain, run by `mix phoenix_kit.update`), the permissions `agent` and
 `agent.manage`, the module defaults under Settings → AI Agent, a hidden Storage
 library for attachments and the cleanup when a user is deleted; the chats and
 their messages (`PhoenixKitAgent.Conversations` — session-bound, owner-only,
-with a PubSub topic per chat) and the read-only turn loop
-(`PhoenixKitAgent.Turns` — locks, rounds of model and tool calls over the
-session's own read tools, stop and deadline), the per-user settings
+with a PubSub topic per chat) and the turn loop (`PhoenixKitAgent.Turns` —
+locks, rounds of model and tool calls over the session's own tools, stop and
+deadline), the writes the user confirms in the chat
+(`PhoenixKitAgent.Confirmations`, below), the per-user settings
 (`PhoenixKitAgent.UserConfig` — the user's own value, else the module default:
 the model, the admin's prompt, the limits, the on/off switch and the personal
 instructions), the system prompt put together in the order of priority
 (`PhoenixKitAgent.Prompt`), Admin → AI Agent → Users, where an admin with
-`agent.manage` sees every user's model, limits and spending and sets them, the
+`agent.manage` sees every user's model, limits and spending and sets them
+(with what the assistant can use now — on Settings → AI Agent for the
+viewer's session, in the user's form by the user's roles), the
 spending and turn limits (`PhoenixKitAgent.Limits` — checked before each turn,
 with a notice in the chat and notifications to the user and the watchers) and
 Admin → AI Agent → Spending, what everyone spent today and this month, and the
@@ -82,6 +85,55 @@ or send on Enter.
 The tools called from the panel get the user's locale and the endpoint's URL as
 their request context, and the client address only when the host's LiveView
 socket passes `:peer_data` and `:x_headers` in its `connect_info`.
+
+## Changes the user confirms
+
+The assistant never writes on its own. It sees the write tools of a module only
+when the module's box "Agent may act" is ticked in Settings → API (core's
+setting `api_session_write_modules`, none by default; API keys do not read it),
+and it opens nothing beyond what core lists for the session
+(`Executor.visible_for/3` and `execute_as/5` with `allow: :all`). Core answers
+such a call with a preview and holds it in a confirmation bound to the user;
+the turn ends there — the model is not called again, so no answer can say the
+change was made — and the chat shows a card:
+
+  * core's preview of the change (its `operation_preview` component, read with
+    the session through `PhoenixKit.API.Confirm.get_for_user/2`) and the
+    arguments the model sent, as plain text;
+  * "Run" runs it (`Executor.redeem_as/6`, with the same tool and arguments,
+    under the rights of the session that clicks, checked again from the
+    start); "Cancel the change" turns it down; once its time ran out
+    (`api_user_confirm_ttl_seconds` of core), "Ask again" asks for the same
+    change again, a new card. When the data changed since the preview, the
+    card says so and a new card with the fresh preview follows.
+
+At most one change of a round waits; a second one of the same answer is
+refused to the model, and so is any other call of that answer after it (the
+turn ends there). The same change asked for again while its card waits is
+refused too: one card per change. A click is refused while a turn of the user
+or another click runs, and no message starts a turn while a click runs, however
+long it takes (the click keeps its lock fresh; a lock left by a node that went
+down frees the user 30 s after its last keep). A click calls no model and
+spends no turn of the limits; it runs in a task of the module's own
+supervisor, not linked to the panel. A refusal before the change is made
+(the session, the rights, the module's box, the tool's own check, the rate
+limit) leaves the card waiting with its reason. What became of a card is a
+notice with the same confirmation uuid (`confirmed`, `rejected`, `expired`,
+`changed`, `failed`), and the model reads it in the next turn as a fixed phrase
+of the module — "[confirmation] done: <tool>" in the user's language — never
+the tool's result; a card with no outcome yet reads "[confirmation] waiting:
+<tool>". `failed` means the handler failed after the confirmation was spent; a
+confirmation spent by a click that was lost before it said so is taken as
+done, and one core has deleted as run out. A card that stopped waiting with no
+click to say so (it ran out, or its click was lost with its node) gets its
+notice when the panel opens the chat and before a turn reads the history, so it
+never reads as waiting; a card the user may no longer run (the right to its
+tool is gone) keeps "Cancel the change". The module's prompt tells the model
+that a write is a proposal that waits, never to be said done before such a
+message, nor asked for again while it waits. A card still waiting is found
+again when the panel is opened again, even one further back than the messages
+the panel loads (it is shown above them); a borrowed session gets no panel and
+no click.
 
 ## Attachments
 
@@ -230,7 +282,7 @@ config :phoenix_kit_agent, page_context: {MyApp.Agent, :page_context}
 ```
 
 The system prompt of a turn is, in this order: the module's prompt (Settings →
-AI Agent), the host's addendum, the admin's prompt for the user, the user's
+AI Agent) and the module's fixed rule for writes, the host's addendum, the admin's prompt for the user, the user's
 personal instructions (marked as ranking below the rest), and the context of the
 session — the user's name, the role the session acts as, the locale, the date
 (not the time, so the prompt stays cacheable) in the site time zone, the path of

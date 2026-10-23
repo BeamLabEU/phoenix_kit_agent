@@ -10,8 +10,10 @@ defmodule PhoenixKitAgent.Turns.Runner do
        still holds its locks (`Locks.held?/3`) — a revoked session, a blocked
        user, a lost `agent` permission, a switched-off assistant or a lock
        taken over end the turn with a notice; a deleted chat ends it quietly;
-    b. lists the session's tools (`Executor.visible_for/3`, `allow: :read`) and
-       shows them to the model (`PhoenixKitAgent.Turns.Tools`);
+    b. lists the session's tools (`Executor.visible_for/3`, `allow: :all`: the
+       read tools, and the write tools of the modules that let a session
+       write, `api_session_write_modules` in core) and shows them to the model
+       (`PhoenixKitAgent.Turns.Tools`);
     c. sends the system prompt, the history and this turn's messages — of the
        results of earlier rounds of this turn only as many as fit, together
        with the newest round's, in `10 × agent_tool_result_chars` characters
@@ -29,18 +31,43 @@ defmodule PhoenixKitAgent.Turns.Runner do
        notice;
     d. calls the model (`PhoenixKitAI.complete/3`, `source: "agent"`, the user,
        no cache, the module's content capture, and the uuid the answer will be
-       stored under as `attribution`); a refusal of the `phoenix_kit_ai`
-       budget is a notice, and the watchers hear of it once a day
+       stored under as `attribution`); a failed call is a notice under its
+       code, all in one place (`model_failed/4`), and a refusal of the
+       `phoenix_kit_ai` budget is also told to the watchers once a day
        (`PhoenixKitAgent.Limits.ai_budget_reached/3`);
     e. stores the answer; without tool calls the turn is over. A tool call
        without a name is dropped (not run, stored or sent back); an answer
        with neither text nor a named tool call is stored as an
        `empty_answer` notice, not as an empty answer;
     f. runs each tool call — only a name shown in **this** round reaches the
-       executor (`execute_as/5`, `allow: :read`), any other is `denied`, and so
-       is every call past the 10th of the round — and stores each result,
-       truncated. Before each call the turn checks that it still holds its
-       locks: a lock taken over ends the turn there, with a notice.
+       executor (`execute_as/5`, `allow: :all`, `via: "agent"`), any other is
+       `denied`, and so is every call past the 10th of the round — and stores
+       each result, truncated. Before each call the turn checks that it still
+       holds its locks: a lock taken over ends the turn there, with a notice.
+
+  ## A write
+
+  Core never runs a write of a live session on its call: it answers the
+  preview and holds the call in a confirmation row bound to the user
+  (`"status": "confirmation_required"`, `"confirmation_id"`). The call is
+  stored as a `tool` message `needs_confirmation` with that uuid in
+  `confirmation_uuid` and the answer that asked for it in
+  `assistant_message_uuid`; its `tool_result` keeps the status and the uuid
+  only — never a code, the preview or the arguments. The card in the chat
+  shows it (`PhoenixKitAgent.Confirmations`).
+
+    * At most one write of a round waits: a write after it in the same answer
+      is `denied` ("confirm the earlier change first"), and so is a write whose
+      call id another call of the answer shares (the click finds its arguments
+      by that id). A read after it is `denied` too ("held for confirmation"):
+      the turn ends with the round, the model would never read its result.
+    * A write of the same tool with the same arguments as a card of the chat
+      that still waits is `denied` ("already waiting for confirmation"): no
+      second card of one change.
+    * A round that left a write waiting ends the turn: the model is not called
+      again, so no answer can say that the change was made. The card is the
+      end of the turn; what the click did reaches the model as a notice in the
+      history of the next turn (`PhoenixKitAgent.Turns.History`).
 
   ## Stopping between steps
 
@@ -80,10 +107,11 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
   require Logger
 
+  alias PhoenixKit.API.ControlFields
   alias PhoenixKit.API.Executor
   alias PhoenixKit.API.MCP.Names
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Attachments, Conversations, Limits}
+  alias PhoenixKitAgent.{Attachments, Confirmations, Conversations, Limits}
   alias PhoenixKitAgent.Schemas.{Conversation, Message}
   alias PhoenixKitAgent.Turns.{Locks, Monitor, Tools}
 
@@ -241,8 +269,11 @@ defmodule PhoenixKitAgent.Turns.Runner do
       case ask_model(turn, transcript, definitions) do
         {:ok, %Message{role: "assistant", tool_calls: calls} = message}
         when is_list(calls) and calls != [] ->
-          case run_calls(turn, calls, allowed) do
-            {:ok, results} ->
+          case run_calls(turn, message, calls, allowed) do
+            {:ok, _results, :waiting} ->
+              :ok
+
+            {:ok, results, :none} ->
               latest = [assistant_entry(message) | results]
               turn = %{turn | pictures?: false}
               round(turn, r + 1, fit_turn(transcript, latest, turn.result_chars) ++ latest)
@@ -320,7 +351,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   end
 
   defp visible_tools(turn) do
-    case Executor.visible_for(turn.session_ref, :admin, allow: :read) do
+    case Executor.visible_for(turn.session_ref, :admin, allow: :all) do
       {:ok, tools, _headers} -> {:ok, tools}
       {:error, :unauthorized, _detail, %{reason: reason}, _headers} -> {:error, reason}
       {:error, code, _detail, _context, _headers} -> {:error, code}
@@ -363,18 +394,25 @@ defmodule PhoenixKitAgent.Turns.Runner do
         store_answer(turn, message_uuid, response, request, latency_ms)
 
       {:error, reason} ->
-        unsent? = unsend(turn, reason)
-
-        notice(turn, error_code(reason), model_error_text(reason, unsent?),
-          uuid: message_uuid,
-          ai_request_uuid: request && request.uuid
-        )
-
-        with {:budget_exceeded, scope} <- reason,
-             do: Limits.ai_budget_reached(turn.user_uuid, scope)
-
-        {:error, reason}
+        model_failed(turn, reason, message_uuid, request)
     end
+  end
+
+  # The one place a failed model call is handled: its notice under a fixed
+  # code (`error_code/1`), the pictures taken off the message when the
+  # provider refused them, the watchers told of a used-up AI budget.
+  defp model_failed(turn, reason, message_uuid, request) do
+    unsent? = unsend(turn, reason)
+
+    notice(turn, error_code(reason), model_error_text(reason, unsent?),
+      uuid: message_uuid,
+      ai_request_uuid: request && request.uuid
+    )
+
+    with {:budget_exceeded, scope} <- reason,
+         do: Limits.ai_budget_reached(turn.user_uuid, scope)
+
+    {:error, reason}
   end
 
   defp system(%{system_prompt: nil}), do: []
@@ -474,65 +512,115 @@ defmodule PhoenixKitAgent.Turns.Runner do
   # ── a tool call ─────────────────────────────────────────────────
 
   # The calls of one answer, in order; before each, a stop asked for ends the
-  # turn and a lock taken over ends it with a notice.
-  defp run_calls(turn, calls, allowed) do
+  # turn and a lock taken over ends it with a notice. `:waiting` when one of
+  # them is a write that waits for the user's confirmation.
+  defp run_calls(turn, message, calls, allowed) do
+    answer = %{message: message, shared_ids: shared_ids(calls)}
+
     calls
     |> Enum.with_index(1)
-    |> Enum.reduce_while({:ok, []}, fn {call, n}, {:ok, results} ->
+    |> Enum.reduce_while({:ok, [], :none}, fn {call, n}, {:ok, results, waiting} ->
       :ok = Monitor.check_stop()
 
       if Locks.held?(turn.user_uuid, turn.conversation_uuid, turn.turn_ref) do
-        result =
-          if n <= @max_calls_per_round,
-            do: run_call(turn, call, allowed),
-            else: run_call(turn, call, %{}, too_many_calls())
+        answer = Map.put(answer, :waiting, waiting)
 
-        {:cont, {:ok, [result | results]}}
+        {result, outcome} =
+          if n <= @max_calls_per_round,
+            do: run_call(turn, answer, call, allowed),
+            else: run_call(turn, answer, call, %{}, too_many_calls())
+
+        waiting = if outcome == "needs_confirmation", do: :waiting, else: waiting
+        {:cont, {:ok, [result | results], waiting}}
       else
         {:halt, {:error, :lock_lost}}
       end
     end)
     |> case do
-      {:ok, results} -> {:ok, Enum.reverse(results)}
+      {:ok, results, waiting} -> {:ok, Enum.reverse(results), waiting}
       {:error, _reason} = error -> error
     end
   end
 
-  defp run_call(turn, call, allowed, denial \\ denied()) do
+  # The call ids that more than one call of the answer carries.
+  defp shared_ids(calls) do
+    calls
+    |> Enum.frequencies_by(& &1["id"])
+    |> Enum.filter(fn {_id, count} -> count > 1 end)
+    |> MapSet.new(fn {id, _count} -> id end)
+  end
+
+  # `answer`: the assistant message the call is part of, the call ids it
+  # shares, and whether a write of it waits already.
+  defp run_call(turn, answer, call, allowed, denial \\ denied()) do
     {registry_name, outcome, result} =
       case Map.fetch(allowed, call["name"]) do
-        {:ok, tool} -> execute(turn, tool, call["arguments"])
+        {:ok, tool} -> call_tool(turn, tool, call, answer)
         :error -> {denied_name(call["name"]), "denied", denial}
       end
 
     tool_result = Tools.fit(result, turn.result_chars)
 
-    store!(turn, %{
-      turn_ref: turn.turn_ref,
-      role: "tool",
-      tool_call_id: call["id"],
-      tool_name: registry_name,
-      tool_outcome: outcome,
-      tool_result: tool_result
-    })
+    store!(
+      turn,
+      %{
+        turn_ref: turn.turn_ref,
+        role: "tool",
+        tool_call_id: call["id"],
+        tool_name: registry_name,
+        tool_outcome: outcome,
+        tool_result: tool_result
+      },
+      assistant_message_uuid: answer.message.uuid,
+      confirmation_uuid: waiting_uuid(outcome, tool_result)
+    )
 
-    %{
-      role: "tool",
-      tool_call_id: call["id"],
-      name: call["name"],
-      content: Jason.encode!(tool_result)
-    }
+    {%{
+       role: "tool",
+       tool_call_id: call["id"],
+       name: call["name"],
+       content: Jason.encode!(tool_result)
+     }, outcome}
   end
+
+  # Once a write of this answer waits, no call of it reaches the executor:
+  # the turn ends with the round, so the model would never read a read's
+  # result, and it would only spend the rate limit. A write gets no executor
+  # call either when its call id is not its own (the click would not find its
+  # arguments), nor when a card of the chat waits for the same write already.
+  defp call_tool(turn, tool, call, answer) do
+    write? = ControlFields.write_tool?(tool)
+
+    cond do
+      answer.waiting == :waiting and not write? -> {tool.name, "denied", held_first()}
+      not write? -> execute(turn, tool, call["arguments"])
+      answer.waiting == :waiting -> {tool.name, "denied", confirm_first()}
+      MapSet.member?(answer.shared_ids, call["id"]) -> {tool.name, "denied", shared_id()}
+      waiting_already?(turn, tool, call) -> {tool.name, "denied", already_waiting()}
+      true -> execute(turn, tool, call["arguments"])
+    end
+  end
+
+  defp waiting_already?(turn, tool, call) do
+    case Tools.arguments(call["arguments"]) do
+      {:ok, input} -> Confirmations.waiting_same?(turn, tool.name, input)
+      :error -> false
+    end
+  end
+
+  defp waiting_uuid("needs_confirmation", %{"confirmation_id" => uuid}), do: uuid
+  defp waiting_uuid(_outcome, _result), do: nil
 
   defp execute(turn, tool, arguments) do
     case Tools.arguments(arguments) do
       {:ok, input} ->
         case Executor.execute_as(turn.session_ref, :admin, tool.name, input,
-               allow: :read,
+               allow: :all,
+               via: "agent",
                request_context: turn.request_context
              ) do
           {:ok, %{result: result}, _headers} ->
-            {tool.name, "ok", result}
+            executed(tool, result)
 
           {:error, code, detail, context, _headers} ->
             {tool.name, "error", refusal(code, detail, context)}
@@ -541,6 +629,16 @@ defmodule PhoenixKitAgent.Turns.Runner do
       :error ->
         {tool.name, "error",
          %{"error" => "invalid_arguments", "message" => "The arguments must be a JSON object."}}
+    end
+  end
+
+  # The prompt of a confirmation is kept as its status and uuid only.
+  defp executed(tool, result) do
+    with true <- ControlFields.write_tool?(tool),
+         {:ok, uuid} <- Tools.held(result) do
+      {tool.name, "needs_confirmation", Tools.held_result(uuid)}
+    else
+      _read_or_ran -> {tool.name, "ok", result}
     end
   end
 
@@ -557,6 +655,39 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
   defp denied,
     do: %{"error" => "denied", "message" => "This tool is not available to you here."}
+
+  defp confirm_first do
+    %{
+      "error" => "denied",
+      "message" =>
+        "Confirm the earlier change first: only one change at a time waits for the user."
+    }
+  end
+
+  defp held_first do
+    %{
+      "error" => "denied",
+      "message" =>
+        "Not run: a change of this answer is held for confirmation, and the turn ends with " <>
+          "it. Ask for this again in the next turn."
+    }
+  end
+
+  defp already_waiting do
+    %{
+      "error" => "denied",
+      "message" =>
+        "This change is already waiting for confirmation: the user runs or cancels it on its " <>
+          "card in the chat. Do not ask for it again."
+    }
+  end
+
+  defp shared_id do
+    %{
+      "error" => "denied",
+      "message" => "A change needs a tool call id of its own; this one is used twice."
+    }
+  end
 
   defp too_many_calls do
     %{
@@ -581,7 +712,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
     |> stored!(attrs)
   end
 
-  defp store!(turn, attrs, fields \\ []) do
+  defp store!(turn, attrs, fields) do
     turn.user_uuid
     |> Conversations.add_turn_message(turn.conversation_uuid, attrs, fields)
     |> stored!(attrs)

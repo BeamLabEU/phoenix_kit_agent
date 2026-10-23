@@ -9,10 +9,10 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
 
   import Ecto.Query, only: [from: 2]
 
-  alias PhoenixKit.Settings
+  alias PhoenixKit.{ModuleRegistry, Settings}
   alias PhoenixKit.Users.{Auth, Permissions, Roles}
   alias PhoenixKitAgent.Schemas.UserSettings
-  alias PhoenixKitAgent.Test.LogProbe
+  alias PhoenixKitAgent.Test.{LogProbe, Tools}
   alias PhoenixKitAgent.UserConfig
 
   @path "/en/admin/agent/users"
@@ -539,6 +539,78 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
       render_hook(view, "configure", %{"user" => late.uuid})
 
       assert has_element?(view, "#agent-user-form")
+    end
+  end
+
+  describe "with agent.manage: what the user's assistant can use" do
+    setup %{conn: conn} do
+      :ok = ModuleRegistry.register(Tools)
+      on_exit(fn -> ModuleRegistry.unregister(Tools) end)
+
+      # The manager does not hold `dashboard`: the card is the user's, not theirs.
+      %{conn: log_in(conn, manager())}
+    end
+
+    defp user_tool(name), do: "#agent-user-tools [data-tool='#{name}']"
+
+    defp user_tool_status(view, name, status),
+      do: has_element?(view, user_tool(name) <> "[data-status='#{status}']")
+
+    defp user_tool_reason(view, name, reason),
+      do: has_element?(view, user_tool(name) <> " [data-reason='#{reason}']")
+
+    test "the form shows the tools by the user's roles, available or closed and why", %{
+      conn: conn
+    } do
+      member = user_with(["agent", "dashboard"], "member")
+      view = open(conn, member)
+
+      assert has_element?(view, "#agent-user-tools-note", "by the user's roles")
+      assert has_element?(view, "#agent-user-tools-module-agent_test_tools", "Agent test tools")
+
+      assert user_tool_status(view, "agenttest.list_items", "available")
+
+      assert user_tool_status(view, "agenttest.write_item", "closed")
+      assert user_tool_reason(view, "agenttest.write_item", "agent_writes_off")
+      refute user_tool_reason(view, "agenttest.write_item", "no_permission")
+
+      assert user_tool_status(view, "agenttest.secret_items", "closed")
+      assert user_tool_reason(view, "agenttest.secret_items", "no_permission")
+    end
+
+    test "a user without the tool's permission: closed to their assistant", %{conn: conn} do
+      {:ok, _} = Settings.update_setting("api_session_write_modules", "agent_test_tools")
+      member = user_with(["agent"], "member")
+      view = open(conn, member)
+
+      assert user_tool_status(view, "agenttest.list_items", "closed")
+      assert user_tool_reason(view, "agenttest.list_items", "no_permission")
+      assert user_tool_status(view, "agenttest.write_item", "closed")
+      assert user_tool_reason(view, "agenttest.write_item", "no_permission")
+      refute user_tool_reason(view, "agenttest.write_item", "agent_writes_off")
+    end
+
+    test "every role of the user counts, whatever role a session would act as", %{conn: conn} do
+      {:ok, _} = Settings.update_setting("role_switcher_enabled", "true")
+      member = user_with(["agent"], "member")
+
+      {:ok, second} =
+        Roles.create_role(%{name: "AgentTools#{System.unique_integer([:positive])}"})
+
+      {:ok, _} = Permissions.grant_permission(second.uuid, "dashboard")
+      {:ok, _} = Roles.assign_role(member, second.name)
+
+      view = open(conn, member)
+
+      assert user_tool_status(view, "agenttest.list_items", "available")
+    end
+
+    test "the card closes with the form", %{conn: conn} do
+      member = user_with(["agent", "dashboard"], "member")
+      view = open(conn, member)
+
+      view |> element("#agent-user-cancel") |> render_click()
+      refute has_element?(view, "#agent-user-tools")
     end
   end
 
