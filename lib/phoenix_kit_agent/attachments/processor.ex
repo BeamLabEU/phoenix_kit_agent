@@ -32,13 +32,14 @@ defmodule PhoenixKitAgent.Attachments.Processor do
       be one that may use the assistant (`session_gone` or `forbidden`), and
       the user must be within their limits (`limit_reached`) — the money
       limits as they apply to a description on the **vision** endpoint
-      (`PhoenixKitAgent.Limits.money_counted?/2` with `:vision`: only a cost
-      the provider reports prices it): one that reports no cost is held by
-      the turn limit only. One user's descriptions are made one at a
-      time (a `:global` lock per user, on every connected node), so each is
-      checked against a journal that holds what the one before cost. The call
-      carries the user and `source: "agent"` — the spending limits count it
-      — and its content is never written to the AI journal.
+      (`PhoenixKitAgent.Limits.money_counted?/2` with `:vision`: priced like
+      a chat call — the provider's cost, a catalogue, a manual or a list
+      price): one that nothing prices is held by the turn limit only. One
+      user's descriptions are made one at a time (a `:global` lock per user,
+      on every connected node), so each is checked against a journal that
+      holds what the one before cost. The call carries the user and
+      `source: "agent"` — the spending limits count it — and its content is
+      never written to the AI journal.
 
   ## Failing safely
 

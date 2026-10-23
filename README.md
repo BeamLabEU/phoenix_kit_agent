@@ -237,10 +237,10 @@ from the operator's catalogue, a manual price on the endpoint or Anthropic's
 list price); on another only the turn limit applies, and the admin pages say
 so. A picture's description is held to the money limits of the **vision**
 endpoint it is paid on, not of the chat endpoint, and `phoenix_kit_ai` prices a
-description only by the cost the provider reports: when the vision endpoint
-reports none, the money limits do not cover descriptions at all (only the turn
-limit and the `phoenix_kit_ai` budget stop them): such an endpoint reports no
-cost to count.
+description like a chat call, from the same sources: when nothing prices the
+vision endpoint's model, the money limits do not cover descriptions at all
+(only the turn limit and the `phoenix_kit_ai` budget stop them): such an
+endpoint has no cost to count.
 
 The limits are checked when a turn starts; a turn that started under them runs
 to its end. A limit used up refuses the turn with a notice in the chat (one per

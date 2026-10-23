@@ -311,22 +311,26 @@ defmodule PhoenixKitAgent.LimitsTest do
       refute Limits.money_counted?(unpriced.uuid)
     end
 
-    test "a picture's description: the money limits apply only where the provider reports its cost",
+    test "a picture's description: the money limits apply where phoenix_kit_ai prices it",
          ctx do
       claude = endpoint_fixture(%{provider: "anthropic", model: "claude-sonnet-5-5"})
+      unpriced = endpoint_fixture(%{provider: "anthropic", model: "claude-unknown-9"})
       settings = limits!(ctx.user, daily_cost_limit_micro_usd: 10)
       spend!(ctx.user, ctx.endpoint, 10)
 
-      # phoenix_kit_ai prices a description by the provider's own cost only,
-      # so on Anthropic it is not counted and the money limits do not hold it.
-      assert :ok = Limits.check(settings, claude.uuid, use: :vision)
-      refute Limits.money_counted?(claude.uuid, :vision)
+      # phoenix_kit_ai prices a description like a chat call: on Anthropic by
+      # the list price, so the money limits hold it there too.
+      assert {:error, {:limit_reached, %{kind: :daily_cost}}} =
+               Limits.check(settings, claude.uuid, use: :vision)
+
+      assert Limits.money_counted?(claude.uuid, :vision)
 
       assert {:error, {:limit_reached, %{kind: :daily_cost}}} =
                Limits.check(settings, ctx.endpoint.uuid, use: :vision)
 
-      assert {:error, {:limit_reached, %{kind: :daily_cost}}} =
-               Limits.check(settings, claude.uuid)
+      # A model nothing prices counts no money: only the turn limit holds it.
+      assert :ok = Limits.check(settings, unpriced.uuid, use: :vision)
+      refute Limits.money_counted?(unpriced.uuid, :vision)
     end
 
     test "80 % of a limit: one in-app notice to the user, once per period", ctx do

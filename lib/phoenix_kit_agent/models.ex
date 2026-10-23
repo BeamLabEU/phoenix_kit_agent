@@ -162,9 +162,10 @@ defmodule PhoenixKitAgent.Models do
     * `:chat` (a model call of a turn) — `PhoenixKitAI.reports_cost?/1`: the
       provider reports the cost (OpenRouter), or the operator's catalogue, a
       manual price on the endpoint or Anthropic's list price prices its model.
-    * `:vision` (a picture described, `PhoenixKitAI.describe_image/3`) — only
-      a cost the provider reports (`PhoenixKitAI.TaskLimits.money_counted?/2`
-      with `:vision`): `phoenix_kit_ai` uses no manual or list price there.
+    * `:vision` (a picture described, `PhoenixKitAI.describe_image/3`) —
+      `PhoenixKitAI.TaskLimits.money_counted?/2` with `:vision`, which is the
+      chat rule: `phoenix_kit_ai` prices a description like a chat call (the
+      provider's cost, a catalogue, a manual or a list price).
 
   A `t:summary/0` carries the answer for `:chat`.
   """

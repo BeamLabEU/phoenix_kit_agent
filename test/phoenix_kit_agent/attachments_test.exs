@@ -628,11 +628,8 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       refute_received {:model_request, _}
     end
 
-    test "a vision model with only a list price: the money limits do not hold a description",
-         ctx do
-      # phoenix_kit_ai prices a description by the provider's own cost only;
-      # Anthropic reports none, so the description is not counted and only
-      # the turn limit holds it — though a chat call on the model would be.
+    # An Anthropic vision model, answering like Anthropic: tokens, no cost.
+    defp claude_vision!(model) do
       serve_ai(main_sees: false)
       test = self()
 
@@ -641,17 +638,34 @@ defmodule PhoenixKitAgent.AttachmentsTest do
         send(test, {:model_request, Jason.decode!(raw)})
 
         Req.Test.json(conn, %{
-          "model" => "claude-sonnet-5-5",
+          "model" => model,
           "choices" => [%{"message" => %{"role" => "assistant", "content" => "Described."}}],
           "usage" => %{"prompt_tokens" => 30, "completion_tokens" => 8, "total_tokens" => 38}
         })
       end)
 
-      claude =
-        endpoint_fixture(%{name: "Claude", provider: "anthropic", model: "claude-sonnet-5-5"})
-
-      declare_vision!("claude-sonnet-5-5", "yes")
+      claude = endpoint_fixture(%{name: "Claude", provider: "anthropic", model: model})
+      declare_vision!(model, "yes")
       {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", claude.uuid)
+      claude
+    end
+
+    test "a vision model with a list price: the money limits hold a description", ctx do
+      # phoenix_kit_ai prices a description like a chat call, so Anthropic's
+      # list price counts it and a money limit of 0 allows nothing.
+      claude_vision!("claude-sonnet-5-5")
+      limits!(ctx.user, %{daily_cost_limit_micro_usd: 0})
+
+      attachment = add_done!(ctx, Files.png(40, 30), "a.png")
+
+      assert attachment.status == "failed"
+      assert attachment.error == "limit_reached"
+      refute_received {:model_request, _}
+    end
+
+    test "a vision model nothing prices: a money limit of 0 still lets it describe", ctx do
+      # No cost would be counted there, so only the turn limit holds it.
+      claude_vision!("claude-unknown-9")
       limits!(ctx.user, %{daily_cost_limit_micro_usd: 0})
 
       attachment = add_done!(ctx, Files.png(40, 30), "a.png")

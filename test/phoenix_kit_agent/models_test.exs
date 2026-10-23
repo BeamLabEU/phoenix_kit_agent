@@ -181,12 +181,22 @@ defmodule PhoenixKitAgent.ModelsTest do
       refute Models.summary(bare).reports_cost?
     end
 
-    test "a picture's description is counted only where the provider reports its cost" do
+    test "a picture's description is counted where a chat call on the model would be" do
       claude = endpoint_fixture(%{provider: "anthropic", model: "claude-sonnet-5-5"})
 
       assert Models.reports_cost?(endpoint_fixture(), :vision)
-      refute Models.reports_cost?(claude, :vision)
-      refute Models.reports_cost?(manual_priced("deepseek-chat"), :vision)
+      assert Models.reports_cost?(claude, :vision)
+      assert Models.reports_cost?(manual_priced("deepseek-chat"), :vision)
+
+      refute Models.reports_cost?(
+               endpoint_fixture(%{provider: "anthropic", model: "claude-unknown-9"}),
+               :vision
+             )
+
+      refute Models.reports_cost?(
+               endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"}),
+               :vision
+             )
     end
 
     test "no endpoint is not counted" do

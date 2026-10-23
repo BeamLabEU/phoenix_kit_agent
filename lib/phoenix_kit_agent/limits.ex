@@ -18,11 +18,11 @@ defmodule PhoenixKitAgent.Limits do
 
   The money limits apply only on an endpoint whose calls get what they cost
   in the journal (`PhoenixKitAgent.Models.reports_cost?/2`: a model call of a
-  turn where the provider reports a cost or `phoenix_kit_ai` has a price for
-  the model, a picture's description only where the provider reports one): on
-  another, nothing would be counted, so only the turn limit applies there —
-  the admin pages say so. An endpoint that cannot be found keeps the money
-  limits.
+  turn, or a picture's description on the vision endpoint, where the provider
+  reports a cost or `phoenix_kit_ai` has a price for the model): on another,
+  nothing would be counted, so only the turn limit applies there — the admin
+  pages say so for the default model. An endpoint that cannot be found keeps
+  the money limits.
 
   ## When
 
