@@ -369,6 +369,10 @@ defmodule PhoenixKitAgent.Web.UsersLive do
       {:error, %Ecto.Changeset{} = changeset} ->
         show_errors(socket, editing, submitted, changeset_errors(changeset))
 
+      # The model stopped fitting between the form's check and the save.
+      {:error, {reason, _needs} = refusal} when reason in [:model_unfit, :model_unverified] ->
+        show_errors(socket, editing, submitted, %{endpoint_uuid: [unfit_text(refusal)]})
+
       {:error, :forbidden} ->
         if Access.may_manage?(socket), do: owner_only(socket), else: denied(socket)
 
@@ -484,24 +488,22 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
       true ->
         case PhoenixKitAI.Tasks.check_selection("agent.chat", uuid) do
-          :ok ->
-            :ok
-
-          {:error, {:model_unfit, _missing}} ->
-            {:error,
-             gettext("cannot be used: its model does not take tools, which the assistant needs")}
-
-          {:error, {:model_unverified, _unclear}} ->
-            {:error,
-             gettext(
-               "cannot be used yet: nobody knows whether its model takes tools. Mark what it can do on its AI endpoint first"
-             )}
-
-          {:error, _gone} ->
-            {:error, gettext("is not available")}
+          :ok -> :ok
+          {:error, refusal} -> {:error, unfit_text(refusal)}
         end
     end
   end
+
+  defp unfit_text({:model_unfit, _missing}),
+    do: gettext("cannot be used: its model does not take tools, which the assistant needs")
+
+  defp unfit_text({:model_unverified, _unclear}),
+    do:
+      gettext(
+        "cannot be used yet: nobody knows whether its model takes tools. Mark what it can do on its AI endpoint first"
+      )
+
+  defp unfit_text(_gone), do: gettext("is not available")
 
   defp blank_to_nil(value) do
     if String.trim(value) == "", do: nil, else: value

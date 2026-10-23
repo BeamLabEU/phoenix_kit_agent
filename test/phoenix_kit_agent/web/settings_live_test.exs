@@ -290,7 +290,8 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
     end
 
     test "a model kept as it is is not checked again", ctx do
-      {:ok, _} = Config.put_default_endpoint(ctx.direct.uuid, [])
+      # Saved before anyone knew what its model can do: the writer would refuse it now.
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", ctx.direct.uuid)
       {:ok, view, _html} = live(ctx.conn, @path)
 
       view
