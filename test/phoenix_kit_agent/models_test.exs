@@ -131,9 +131,14 @@ defmodule PhoenixKitAgent.ModelsTest do
   # An Anthropic endpoint with no base URL of its own: a row saved before the
   # registry knew the provider, say. The key it carries is Anthropic's and must
   # reach no other host: the model list was once asked of OpenRouter whenever
-  # the URL was blank. Nothing is asked of any provider here, so the stub
-  # flunks on a request to openrouter.ai as on one to anywhere else.
+  # the URL was blank. Nothing is asked of any provider here: the stub records
+  # a request to any host, openrouter.ai or another, and the tests refute it.
+  # The blank is `nil` or `""`, both of which a stored row can hold.
   describe "an Anthropic endpoint with a blank base URL" do
+    # Shared, so that a request made outside the test process's callers and
+    # ancestors (a task started elsewhere) reaches the stub and is recorded.
+    setup {Req.Test, :set_req_test_to_shared}
+
     # Records what is asked of any host and answers an empty list. A flunk
     # would do, but an error in a task that asks is swallowed into "unknown";
     # a message in the mailbox is not.
@@ -146,7 +151,7 @@ defmodule PhoenixKitAgent.ModelsTest do
       end)
     end
 
-    defp anthropic_without_base_url(model, flags \\ nil) do
+    defp anthropic_without_base_url(model, blank, flags \\ nil) do
       attrs = %{provider: "anthropic", model: model, api_key: "sk-ant-key-that-stays-home"}
 
       attrs =
@@ -157,16 +162,20 @@ defmodule PhoenixKitAgent.ModelsTest do
 
       attrs
       |> endpoint_fixture()
-      |> Ecto.Changeset.change(base_url: nil)
+      |> Ecto.Changeset.change(base_url: blank)
       |> Repo.update!()
     end
 
     test "tools and images are what the AI module knows, and no host is asked" do
       record_requests()
-      sees = anthropic_without_base_url("claude-sees", %{"tools" => "yes", "vision" => "yes"})
-      blind = anthropic_without_base_url("claude-blind", %{"tools" => "no", "vision" => "no"})
+
+      sees =
+        anthropic_without_base_url("claude-sees", nil, %{"tools" => "yes", "vision" => "yes"})
+
+      blind = anthropic_without_base_url("claude-blind", "", %{"tools" => "no", "vision" => "no"})
 
       assert sees.base_url == nil
+      assert blind.base_url == ""
 
       assert Models.tools_support([sees, blind]) == %{
                sees.uuid => :supported,
@@ -181,17 +190,21 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert Models.tools_support_of([sees.uuid]) == %{sees.uuid => :supported}
       assert Models.image_input(sees.uuid) == :supported
       assert Models.image_input(blind.uuid) == :unsupported
-      refute_received {:requested, _host, _authorization}
+      refute_receive {:requested, _host, _authorization}
     end
 
     test "a model nobody has declared or listed is unknown, and no host is asked" do
       record_requests()
-      claude = anthropic_without_base_url("claude-listed-nowhere")
 
-      assert Models.tools_support([claude]) == %{claude.uuid => :unknown}
-      assert Models.image_input_support([claude]) == %{claude.uuid => :unknown}
-      assert Models.image_input(claude.uuid) == :unknown
-      refute_received {:requested, _host, _authorization}
+      for blank <- [nil, ""] do
+        claude = anthropic_without_base_url("claude-listed-nowhere", blank)
+
+        assert Models.tools_support([claude]) == %{claude.uuid => :unknown}
+        assert Models.image_input_support([claude]) == %{claude.uuid => :unknown}
+        assert Models.image_input(claude.uuid) == :unknown
+      end
+
+      refute_receive {:requested, _host, _authorization}
     end
   end
 
