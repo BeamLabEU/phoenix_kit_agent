@@ -324,7 +324,13 @@ defmodule PhoenixKitAgent.TurnsTest do
         assert request.metadata["source"] == "agent"
         # agent_capture_ai_content is off: the call keeps the bodies out.
         assert request.metadata["content_redacted"] == true
-        assert request.metadata["attribution"] == %{"agent_message_uuid" => message.uuid}
+
+        assert request.metadata["attribution"] == %{
+                 "agent_message_uuid" => message.uuid,
+                 "turn_ref" => turn_ref
+               }
+
+        assert request.metadata["task"] == "agent.chat"
       end
     end
 
@@ -2090,7 +2096,8 @@ defmodule PhoenixKitAgent.TurnsTest do
                Turns.start(ctx.ref, false, ctx.chat.uuid, "Again")
     end
 
-    test "the AI budget used up: a notice, and the watchers once a day", ctx do
+    test "the AI budget used up: a notice, and one signal to the watchers, from the AI module",
+         ctx do
       owner = owner_fixture()
       {:ok, _} = PhoenixKitAI.Budget.set_limit(:user_calls, 1)
       ai_request_fixture(ctx.user, ctx.endpoint)
@@ -2104,9 +2111,17 @@ defmodule PhoenixKitAgent.TurnsTest do
       end
 
       refute_received {:model_request, _}
-      assert [%{metadata: %{"notification_text" => text}}] = notifications_of(owner)
-      assert text =~ ctx.user.email
+
+      # Told once, by phoenix_kit_ai (a link to its pages), not by the module
+      # (whose limit notices link to the assistant's spending).
+      assert [%{metadata: %{"notification_link" => link}}] = notifications_of(owner)
+      assert link =~ "/admin/ai/"
+      refute link =~ "/admin/agent/"
       assert notifications_of(ctx.user) == []
+
+      assert Repo.all(
+               from(e in PhoenixKitAgent.Schemas.LimitEvent, where: e.limit_kind == "ai_budget")
+             ) == []
     end
   end
 

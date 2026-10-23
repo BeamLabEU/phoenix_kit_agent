@@ -75,7 +75,7 @@ defmodule PhoenixKitAgent.Fixtures do
     {ref, token}
   end
 
-  def endpoint_fixture(attrs \\ %{}) do
+  def endpoint_fixture(attrs \\ %{}, opts \\ []) do
     {:ok, endpoint} =
       PhoenixKitAI.create_endpoint(
         Map.merge(
@@ -86,7 +86,8 @@ defmodule PhoenixKitAgent.Fixtures do
             api_key: "sk-or-v1-test-key"
           },
           Map.new(attrs)
-        )
+        ),
+        opts
       )
 
     endpoint

@@ -30,7 +30,9 @@ for an admin with `agent.manage`, which logs field names to Activity;
 `put_personal_instructions/3` for the user's own text), the system prompt
 (`PhoenixKitAgent.Prompt`, spec §7.1, with the host's `prompt_addendum` and
 `page_context`), the endpoint choice (`PhoenixKitAgent.Models`: only
-`phoenix_kit_ai` endpoints that chat, marked for tool support), the spending
+`phoenix_kit_ai` endpoints that chat, marked for tool support from
+`PhoenixKitAI.Capabilities`), the AI tasks of the guard (`ai_tasks/0`:
+`agent.chat`, `agent.attachment`), the spending
 read from the AI journal (`PhoenixKitAgent.Spend`), Admin → AI Agent → Users
 (`PhoenixKitAgent.Web.UsersLive`), the limits and their notices
 (`PhoenixKitAgent.Limits`: checked by `Turns.start/6` under the turn's locks;
@@ -48,8 +50,8 @@ and `Web.Markdown`).
   merges (the writes of a live session: `allow: :all`,
   `Executor.redeem_as/6`, the session functions of `API.Confirm`, the
   `OperationPreview` component, `Executor.tool_availability/1`),
-  `phoenix_kit_ai` to the fork's integration
-  branch (tool calling, #38),
+  `phoenix_kit_ai` to the fork's integration branch (the AI task guard,
+  with tool calling, #38, and a call's cost from one place, #50),
   `phoenix_live_view`, and `mdex` (already phoenix_kit's) for the markdown
   of the chat panel.
 - **Module key** `"agent"`; settings prefix `agent_`; tables
@@ -216,6 +218,22 @@ and `Web.Markdown`).
   Nothing of the arguments or the preview is logged, here or by core (its
   insert of the row is `log: false`). The test write tool is
   `agenttest.write_item` in `test/support/agent_test_tools.ex`.
+- **The AI task guard** (`phoenix_kit_ai`): every model call names its task
+  (`task: "agent.chat"` / `"agent.attachment"`); a turn is admitted once in
+  `Turns` (`Guard.admit/4`, after `Limits.check/3`, under the locks) and its
+  rounds pass `guard_admission:`; the guard's refusals are notices with their
+  own codes, all in `Runner.model_failed/4`. The module does not tell anyone
+  of a refusal of the AI budget: `phoenix_kit_ai` does. Pixels go to a model
+  only when `Capabilities` says `:yes` (never on `:unknown`). The
+  off-purpose marker is cut in `Runner.store_answer/5`, before anything is
+  stored, only at the very end of the model's own text. It is not cut from
+  the AI journal: with `agent_capture_ai_content` on, the captured answer
+  there carries the marker and its reason, which every holder of `ai` reads
+  — the reason is seen wherever the journal is. A page that saves
+  an endpoint for a task checks it with `Tasks.check_selection/2` when it is
+  a new choice; the lift of a block goes through `Web.Access` and then
+  `Guard.unblock/3` with the session's scope (the guard decides own and
+  Owner blocks).
 - **Boundaries:** nothing about orders, customers or other host domain data
   lives here — the module only knows "tools from the registry". Model calls,
   budget and the request journal stay in `phoenix_kit_ai`.

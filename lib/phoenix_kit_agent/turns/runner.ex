@@ -30,12 +30,19 @@ defmodule PhoenixKitAgent.Turns.Runner do
        starts is not called: the files go back, with a `pictures_not_seen`
        notice;
     d. calls the model (`PhoenixKitAI.complete/3`, `source: "agent"`, the user,
-       no cache, the module's content capture, and the uuid the answer will be
-       stored under as `attribution`); a failed call is a notice under its
-       code, all in one place (`model_failed/4`), and a refusal of the
-       `phoenix_kit_ai` budget is also told to the watchers once a day
-       (`PhoenixKitAgent.Limits.ai_budget_reached/3`);
-    e. stores the answer; without tool calls the turn is over. A tool call
+       the AI task `agent.chat` with the turn's admission
+       (`guard_admission:`, from `PhoenixKitAI.Guard.admit/4` in
+       `PhoenixKitAgent.Turns`), no cache, the module's content capture, and
+       the uuid the answer will be stored under and the turn's ref as
+       `attribution`); a failed call is a notice under its code, all in one
+       place (`model_failed/4`) — `phoenix_kit_ai` itself tells its watchers
+       of a refusal of its budget;
+    e. stores the answer; a marker `⟦off_purpose: <reason>⟧` at its very end
+       (the model flagging the request, `PhoenixKitAgent.Prompt`) is cut off
+       before it is stored and reported to the guard
+       (`PhoenixKitAI.Guard.report_off_purpose/4`, keyed by the turn's ref,
+       so one flag per turn); a marker anywhere else is left as it is and
+       flags nothing. Without tool calls the turn is over. A tool call
        without a name is dropped (not run, stored or sent back); an answer
        with neither text nor a named tool call is stored as an
        `empty_answer` notice, not as an empty answer;
@@ -92,13 +99,16 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
   ## The AI request of a message
 
-  `complete/3` does not return the uuid of its journal row; the row reaches
-  `record_usage/1` (`PhoenixKitAgent.handle_ai_usage/1`, a `phoenix_kit_ai`
-  usage sink) with the `attribution` the call carried, synchronously, in the
-  calling process and before `complete/3` returns. So the turn says which
-  message uuid it waits for, `record_usage/1` keeps the row for it in the
-  process, and the message is stored with `ai_request_uuid` (and the row's
-  model, tokens, cost and latency). A row for an already stored message —
+  An answer of `complete/3` names its journal row (`"request_uuid"`), and
+  the message is stored with it as `ai_request_uuid`. The row itself
+  reaches `record_usage/1` (`PhoenixKitAgent.handle_ai_usage/1`, a
+  `phoenix_kit_ai` usage sink) with the `attribution` the call carried,
+  synchronously, in the calling process and before `complete/3` returns. So
+  the turn says which message uuid it waits for, and `record_usage/1` keeps
+  the row for it in the process: the message gets the row's model, tokens,
+  cost and latency, and a failed call's notice its row (an error answer
+  names none). A row the guard refused never reaches a sink: its notice
+  has no `ai_request_uuid`. A row for an already stored message —
   from any other process — sets its `ai_request_uuid` in the database, only
   for a message of the row's own user that has none yet.
   """
@@ -111,7 +121,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   alias PhoenixKit.API.Executor
   alias PhoenixKit.API.MCP.Names
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Attachments, Confirmations, Conversations, Limits}
+  alias PhoenixKitAgent.{Attachments, Confirmations, Conversations}
   alias PhoenixKitAgent.Schemas.{Conversation, Message}
   alias PhoenixKitAgent.Turns.{Locks, Monitor, Tools}
 
@@ -142,6 +152,15 @@ defmodule PhoenixKitAgent.Turns.Runner do
                    endpoint_no_model integration_not_configured integration_deleted
                    not_configured)a
 
+  # The refusals of the AI guard (`PhoenixKitAI.Guard`), each a code of its
+  # own in `messages.error`: `{reason, …}` is stored as `reason`.
+  @guard_errors ~w(model_unfit model_unverified no_provider_for_params task_blocked
+                   task_limit_exceeded)a
+
+  # The model's flag of an off-purpose request: the last thing in its
+  # answer (spec §8.2 B, `PhoenixKitAgent.Prompt`).
+  @off_purpose ~r/\s*⟦off_purpose:\s*([^⟧]*)⟧\s*\z/u
+
   @typedoc "Everything a turn needs; built by `PhoenixKitAgent.Turns.start/6`."
   @type turn :: %{
           turn_ref: String.t(),
@@ -156,7 +175,8 @@ defmodule PhoenixKitAgent.Turns.Runner do
           request_context: keyword(),
           max_rounds: pos_integer(),
           result_chars: pos_integer(),
-          capture?: boolean()
+          capture?: boolean(),
+          guard_admission: String.t() | nil
         }
 
   @doc """
@@ -368,9 +388,11 @@ defmodule PhoenixKitAgent.Turns.Runner do
       [
         user_uuid: turn.user_uuid,
         source: "agent",
+        task: "agent.chat",
+        guard_admission: turn[:guard_admission],
         cache: false,
         capture_request_content: turn.capture?,
-        attribution: %{"agent_message_uuid" => message_uuid}
+        attribution: %{"agent_message_uuid" => message_uuid, "turn_ref" => turn.turn_ref}
       ] ++ if(definitions == [], do: [], else: [tools: definitions])
 
     Process.put(@awaiting, message_uuid)
@@ -399,8 +421,9 @@ defmodule PhoenixKitAgent.Turns.Runner do
   end
 
   # The one place a failed model call is handled: its notice under a fixed
-  # code (`error_code/1`), the pictures taken off the message when the
-  # provider refused them, the watchers told of a used-up AI budget.
+  # code (`error_code/1`), and the pictures taken off the message when the
+  # provider refused them. A refusal of the AI budget is told to the
+  # watchers by `phoenix_kit_ai`.
   defp model_failed(turn, reason, message_uuid, request) do
     unsent? = unsend(turn, reason)
 
@@ -408,9 +431,6 @@ defmodule PhoenixKitAgent.Turns.Runner do
       uuid: message_uuid,
       ai_request_uuid: request && request.uuid
     )
-
-    with {:budget_exceeded, scope} <- reason,
-         do: Limits.ai_budget_reached(turn.user_uuid, scope)
 
     {:error, reason}
   end
@@ -421,7 +441,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   defp store_answer(turn, message_uuid, response, request, latency_ms) do
     content =
       case PhoenixKitAI.extract_content(response) do
-        {:ok, text} when is_binary(text) -> Message.strip_nul(text)
+        {:ok, text} when is_binary(text) -> text |> Message.strip_nul() |> off_purpose(turn)
         _no_text -> nil
       end
 
@@ -434,7 +454,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
       |> Enum.map(&stored_call/1)
       |> Enum.reject(&is_nil(&1["name"]))
 
-    fields = [uuid: message_uuid, ai_request_uuid: request && request.uuid]
+    fields = [uuid: message_uuid, ai_request_uuid: request_uuid(response, request)]
     usage = usage(request, response, latency_ms)
 
     attrs =
@@ -449,6 +469,31 @@ defmodule PhoenixKitAgent.Turns.Runner do
       end
 
     {:ok, store!(turn, attrs |> Map.put(:turn_ref, turn.turn_ref) |> Map.merge(usage), fields)}
+  end
+
+  # The answer's own journal row, else the one the usage sink caught.
+  defp request_uuid(%{"request_uuid" => uuid}, _request) when is_binary(uuid), do: uuid
+  defp request_uuid(_response, request), do: request && request.uuid
+
+  # The model's off-purpose marker, cut off the end of the answer and
+  # reported, once per turn (the guard keys the flag by the turn's ref). The
+  # guard's answer is not the turn's business: whatever it says (the task
+  # does not flag now, the database failed), the answer is stored.
+  defp off_purpose(text, turn) do
+    case Regex.run(@off_purpose, text, return: :index) do
+      [{start, _length}, {reason_start, reason_length}] ->
+        reason = text |> binary_part(reason_start, reason_length) |> String.trim()
+
+        _ =
+          PhoenixKitAI.Guard.report_off_purpose("agent.chat", turn.user_uuid, reason, %{
+            "turn_ref" => turn.turn_ref
+          })
+
+        binary_part(text, 0, start)
+
+      nil ->
+        text
+    end
   end
 
   # Model, tokens, cost and latency: from the journal row when the usage sink
@@ -768,12 +813,28 @@ defmodule PhoenixKitAgent.Turns.Runner do
   end
 
   defp error_code({:budget_exceeded, _scope}), do: "budget_exceeded"
+
+  defp error_code(reason) when is_tuple(reason) and elem(reason, 0) in @guard_errors,
+    do: reason |> elem(0) |> Atom.to_string()
+
   defp error_code({:api_error, _status}), do: "api_error"
   defp error_code({:connection_error, _reason}), do: "connection_error"
   defp error_code(reason) when reason in @model_errors, do: Atom.to_string(reason)
   defp error_code(_reason), do: "model_error"
 
   defp model_error_text({:budget_exceeded, _scope}, _unsent?), do: "The AI budget is used up."
+  defp model_error_text({:model_unfit, _missing}, _unsent?), do: guard_text(:model_unfit)
+
+  defp model_error_text({:model_unverified, _unclear}, _unsent?),
+    do: guard_text(:model_unverified)
+
+  defp model_error_text({:no_provider_for_params, _params}, _unsent?),
+    do: guard_text(:no_provider_for_params)
+
+  defp model_error_text({:task_blocked, _group}, _unsent?), do: guard_text(:task_blocked)
+
+  defp model_error_text({:task_limit_exceeded, _scope, _unit, _period}, _unsent?),
+    do: guard_text(:task_limit_exceeded)
 
   defp model_error_text(_reason, true),
     do:
@@ -781,6 +842,32 @@ defmodule PhoenixKitAgent.Turns.Runner do
         "The files were not sent with the message: you can send them again."
 
   defp model_error_text(_reason, false), do: "The model did not answer. Try again."
+
+  @doc false
+  # The stored (English) text of a notice of the AI guard; the panel shows
+  # it in the user's language by its code (`PhoenixKitAgent.Web.Dock.Texts`).
+  @spec guard_text(atom()) :: String.t()
+  def guard_text(:model_unfit),
+    do:
+      "The model chosen for the assistant cannot do what it needs. An administrator chooses another one."
+
+  def guard_text(:model_unverified),
+    do:
+      "It is not known whether the model chosen for the assistant can do what it needs. " <>
+        "An administrator marks what the model can do on its AI endpoint, or chooses another one."
+
+  def guard_text(:no_provider_for_params),
+    do:
+      "No provider of the model takes the request as its AI endpoint is set up. " <>
+        "An administrator checks the endpoint's settings."
+
+  def guard_text(:task_blocked),
+    do: "The AI assistant is blocked for you. An administrator can lift the block."
+
+  def guard_text(:task_limit_exceeded),
+    do: "The AI assistant has reached its limit for now. Try again later."
+
+  def guard_text(:model_error), do: "The model did not answer. Try again."
 
   # The first model call that carried the message's pictures was refused by
   # the provider as a request it does not take (spec §9: a model that cannot

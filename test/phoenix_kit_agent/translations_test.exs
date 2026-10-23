@@ -112,6 +112,40 @@ defmodule PhoenixKitAgent.TranslationsTest do
     assert {"Schreiben Sie zuerst eine Nachricht.", _} = texts.("de")
   end
 
+  test "the AI guard's notices, refusals and attachment codes have their own texts, in every language" do
+    codes =
+      ~w(task_blocked task_limit_exceeded model_unfit model_unverified no_provider_for_params)
+
+    general = Texts.refusal(:something_unknown)
+    unread = Texts.attachment_error("something_unknown")
+
+    texts = fn locale ->
+      Gettext.with_locale(PhoenixKitAgent.Gettext, locale, fn ->
+        Enum.map(codes, &Texts.notice/1) ++
+          Enum.map(codes, &Texts.attachment_error/1) ++
+          [
+            Texts.refusal(:task_blocked),
+            Texts.refusal(:task_limit_exceeded),
+            Texts.refusal({:task_blocked, "free_text"}),
+            Texts.refusal({:task_limit_exceeded, :task, :requests, :day})
+          ]
+      end)
+    end
+
+    english = texts.("en")
+    assert Enum.all?(english, &is_binary/1)
+    refute general in english
+    refute unread in english
+
+    for locale <- @languages -- ["en"] do
+      translated = texts.(locale)
+      assert Enum.all?(translated, &is_binary/1), locale
+
+      for {mine, en} <- Enum.zip(translated, english),
+          do: assert(mine != en, "#{locale}: #{inspect(en)} is in English")
+    end
+  end
+
   test "the labels of the permission and of the tabs are in the catalogues" do
     meta = PhoenixKitAgent.permission_metadata()
 
