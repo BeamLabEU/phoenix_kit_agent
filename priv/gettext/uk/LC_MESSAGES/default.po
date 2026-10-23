@@ -11,17 +11,17 @@ msgstr ""
 "Language: uk\n"
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100 != 11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10||n%100>=20) ? 1 : 2);\n"
 
-#: lib/phoenix_kit_agent/limits.ex:396
+#: lib/phoenix_kit_agent/limits.ex:408
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the daily AI assistant spending limit ($%{limit})."
 msgstr "У %{email} досягнуто денного ліміту витрат на ШІ-асистента ($%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:405
+#: lib/phoenix_kit_agent/limits.ex:417
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the monthly AI assistant spending limit ($%{limit})."
 msgstr "У %{email} досягнуто місячного ліміту витрат на ШІ-асистента ($%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:387
+#: lib/phoenix_kit_agent/limits.ex:399
 #, elixir-autogen, elixir-format
 msgid "%{email} has used all %{limit} AI assistant turns for today."
 msgstr "У %{email} на сьогодні вичерпано всі %{limit} звернень до ШІ-асистента."
@@ -49,7 +49,7 @@ msgstr "Модель не вдалося зберегти: вона більше
 msgid "A title cannot be empty or longer than 200 characters."
 msgstr "Назва не може бути порожньою або довшою за 200 символів."
 
-#: lib/phoenix_kit_agent/limits.ex:325
+#: lib/phoenix_kit_agent/limits.ex:337
 #, elixir-autogen, elixir-format
 msgid "A user"
 msgstr "Користувач"
@@ -876,7 +876,7 @@ msgstr "У вас немає доступу до витрат ШІ-асисте�
 msgid "You do not have access to the AI assistant users."
 msgstr "У вас немає доступу до користувачів ШІ-асистента."
 
-#: lib/phoenix_kit_agent/limits.ex:359
+#: lib/phoenix_kit_agent/limits.ex:371
 #, elixir-autogen, elixir-format
 msgid "You have reached your daily spending limit for the AI assistant ($%{limit})."
 msgstr "Ви досягли денного ліміту витрат на ШІ-асистента ($%{limit})."
@@ -891,7 +891,7 @@ msgstr "Ви досягли денного ліміту витрат на аси
 msgid "You have reached your daily spending limit for the assistant. It resets at midnight."
 msgstr "Ви досягли денного ліміту витрат на асистента. Він обнулиться опівночі."
 
-#: lib/phoenix_kit_agent/limits.ex:365
+#: lib/phoenix_kit_agent/limits.ex:377
 #, elixir-autogen, elixir-format
 msgid "You have reached your monthly spending limit for the AI assistant ($%{limit})."
 msgstr "Ви досягли місячного ліміту витрат на ШІ-асистента ($%{limit})."
@@ -906,22 +906,22 @@ msgstr "Ви досягли місячного ліміту витрат на а
 msgid "You have reached your monthly spending limit for the assistant. It resets on the first day of next month."
 msgstr "Ви досягли місячного ліміту витрат на асистента. Він обнулиться першого дня наступного місяця."
 
-#: lib/phoenix_kit_agent/limits.ex:333
+#: lib/phoenix_kit_agent/limits.ex:345
 #, elixir-autogen, elixir-format
 msgid "You have used %{used} of your %{limit} AI assistant turns for today."
 msgstr "Ви використали %{used} з %{limit} звернень до ШІ-асистента на сьогодні."
 
-#: lib/phoenix_kit_agent/limits.ex:340
+#: lib/phoenix_kit_agent/limits.ex:352
 #, elixir-autogen, elixir-format
 msgid "You have used 80% of your daily spending limit for the AI assistant ($%{used} of $%{limit})."
 msgstr "Ви використали 80% денного ліміту витрат на ШІ-асистента ($%{used} з $%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:348
+#: lib/phoenix_kit_agent/limits.ex:360
 #, elixir-autogen, elixir-format
 msgid "You have used 80% of your monthly spending limit for the AI assistant ($%{used} of $%{limit})."
 msgstr "Ви використали 80% місячного ліміту витрат на ШІ-асистента ($%{used} з $%{limit})."
 
-#: lib/phoenix_kit_agent/limits.ex:355
+#: lib/phoenix_kit_agent/limits.ex:367
 #, elixir-autogen, elixir-format
 msgid "You have used all your %{limit} AI assistant turns for today."
 msgstr "Ви використали на сьогодні всі %{limit} звернень до ШІ-асистента."

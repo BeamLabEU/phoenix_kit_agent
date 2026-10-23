@@ -11,17 +11,17 @@
 msgid ""
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:396
+#: lib/phoenix_kit_agent/limits.ex:408
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the daily AI assistant spending limit ($%{limit})."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:405
+#: lib/phoenix_kit_agent/limits.ex:417
 #, elixir-autogen, elixir-format
 msgid "%{email} has reached the monthly AI assistant spending limit ($%{limit})."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:387
+#: lib/phoenix_kit_agent/limits.ex:399
 #, elixir-autogen, elixir-format
 msgid "%{email} has used all %{limit} AI assistant turns for today."
 msgstr ""
@@ -48,7 +48,7 @@ msgstr ""
 msgid "A title cannot be empty or longer than 200 characters."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:325
+#: lib/phoenix_kit_agent/limits.ex:337
 #, elixir-autogen, elixir-format
 msgid "A user"
 msgstr ""
@@ -875,7 +875,7 @@ msgstr ""
 msgid "You do not have access to the AI assistant users."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:359
+#: lib/phoenix_kit_agent/limits.ex:371
 #, elixir-autogen, elixir-format
 msgid "You have reached your daily spending limit for the AI assistant ($%{limit})."
 msgstr ""
@@ -890,7 +890,7 @@ msgstr ""
 msgid "You have reached your daily spending limit for the assistant. It resets at midnight."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:365
+#: lib/phoenix_kit_agent/limits.ex:377
 #, elixir-autogen, elixir-format
 msgid "You have reached your monthly spending limit for the AI assistant ($%{limit})."
 msgstr ""
@@ -905,22 +905,22 @@ msgstr ""
 msgid "You have reached your monthly spending limit for the assistant. It resets on the first day of next month."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:333
+#: lib/phoenix_kit_agent/limits.ex:345
 #, elixir-autogen, elixir-format
 msgid "You have used %{used} of your %{limit} AI assistant turns for today."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:340
+#: lib/phoenix_kit_agent/limits.ex:352
 #, elixir-autogen, elixir-format
 msgid "You have used 80% of your daily spending limit for the AI assistant ($%{used} of $%{limit})."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:348
+#: lib/phoenix_kit_agent/limits.ex:360
 #, elixir-autogen, elixir-format
 msgid "You have used 80% of your monthly spending limit for the AI assistant ($%{used} of $%{limit})."
 msgstr ""
 
-#: lib/phoenix_kit_agent/limits.ex:355
+#: lib/phoenix_kit_agent/limits.ex:367
 #, elixir-autogen, elixir-format
 msgid "You have used all your %{limit} AI assistant turns for today."
 msgstr ""
