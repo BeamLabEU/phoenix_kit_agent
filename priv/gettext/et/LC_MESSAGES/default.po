@@ -505,7 +505,7 @@ msgstr "Teavita jälgijaid, kui see kasutaja jõuab limiidini"
 msgid "The AI budget is used up, so it was not read."
 msgstr "AI eelarve on otsas, seega seda ei loetud."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:186
+#: lib/phoenix_kit_agent/web/dock/texts.ex:193
 #, elixir-autogen, elixir-format
 msgid "The AI budget is used up."
 msgstr "AI eelarve on otsas."
@@ -601,7 +601,7 @@ msgstr "Faili ei saanud lugeda või see on tühi."
 msgid "The file could not be read."
 msgstr "Faili ei saanud lugeda."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:201
+#: lib/phoenix_kit_agent/web/dock/texts.ex:208
 #, elixir-autogen, elixir-format
 msgid "The file could not be uploaded."
 msgstr "Faili ei saanud üles laadida."
@@ -612,7 +612,7 @@ msgid "The file is too large to read."
 msgstr "Fail on lugemiseks liiga suur."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:83
-#: lib/phoenix_kit_agent/web/dock/texts.ex:198
+#: lib/phoenix_kit_agent/web/dock/texts.ex:205
 #, elixir-autogen, elixir-format
 msgid "The file is too large."
 msgstr "Fail on liiga suur."
@@ -637,7 +637,7 @@ msgstr "Sõnum on liiga pikk. Lühenda seda või saada failina."
 msgid "The model could not read it."
 msgstr "Mudel ei suutnud seda lugeda."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:190
+#: lib/phoenix_kit_agent/web/dock/texts.ex:197
 #, elixir-autogen, elixir-format
 msgid "The model does not take pictures now, so they were not sent. Remove them and attach them again to have them described, or choose a model that sees."
 msgstr "Mudel ei toeta praegu pilte, seega neid ei saadetud. Eemalda need ja lisa uuesti, et need kirjeldataks, või vali mudel, mis pilte näeb."
@@ -687,7 +687,7 @@ msgstr "Mõtlen…"
 msgid "This answer is no longer running here. The chat will be free again in a few minutes."
 msgstr "See vastus ei tööta siin enam. Vestlus vabaneb mõne minuti pärast."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:185
+#: lib/phoenix_kit_agent/web/dock/texts.ex:192
 #, elixir-autogen, elixir-format
 msgid "This chat is gone."
 msgstr "See vestlus on kadunud."
@@ -744,7 +744,7 @@ msgstr "Täna"
 msgid "Too many files are waiting. Send or remove some of them first."
 msgstr "Liiga palju faile ootab. Saada või eemalda neist esmalt mõned."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:199
+#: lib/phoenix_kit_agent/web/dock/texts.ex:206
 #, elixir-autogen, elixir-format
 msgid "Too many files at once."
 msgstr "Liiga palju faile korraga."
@@ -1106,3 +1106,8 @@ msgstr "MB"
 msgctxt "unit"
 msgid "s"
 msgstr "s"
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:188
+#, elixir-autogen, elixir-format
+msgid "The AI account behind the assistant has run out of credit. An administrator has to top it up or choose another model."
+msgstr "Assistendi taga oleva AI-konto krediit on otsas. Administraator peab seda täiendama või valima teise mudeli."

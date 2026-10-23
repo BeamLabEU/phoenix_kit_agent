@@ -505,7 +505,7 @@ msgstr ""
 msgid "The AI budget is used up, so it was not read."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:186
+#: lib/phoenix_kit_agent/web/dock/texts.ex:193
 #, elixir-autogen, elixir-format
 msgid "The AI budget is used up."
 msgstr ""
@@ -601,7 +601,7 @@ msgstr ""
 msgid "The file could not be read."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:201
+#: lib/phoenix_kit_agent/web/dock/texts.ex:208
 #, elixir-autogen, elixir-format
 msgid "The file could not be uploaded."
 msgstr ""
@@ -612,7 +612,7 @@ msgid "The file is too large to read."
 msgstr ""
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:83
-#: lib/phoenix_kit_agent/web/dock/texts.ex:198
+#: lib/phoenix_kit_agent/web/dock/texts.ex:205
 #, elixir-autogen, elixir-format
 msgid "The file is too large."
 msgstr ""
@@ -637,7 +637,7 @@ msgstr ""
 msgid "The model could not read it."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:190
+#: lib/phoenix_kit_agent/web/dock/texts.ex:197
 #, elixir-autogen, elixir-format
 msgid "The model does not take pictures now, so they were not sent. Remove them and attach them again to have them described, or choose a model that sees."
 msgstr ""
@@ -687,7 +687,7 @@ msgstr ""
 msgid "This answer is no longer running here. The chat will be free again in a few minutes."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:185
+#: lib/phoenix_kit_agent/web/dock/texts.ex:192
 #, elixir-autogen, elixir-format
 msgid "This chat is gone."
 msgstr ""
@@ -744,7 +744,7 @@ msgstr ""
 msgid "Too many files are waiting. Send or remove some of them first."
 msgstr ""
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:199
+#: lib/phoenix_kit_agent/web/dock/texts.ex:206
 #, elixir-autogen, elixir-format
 msgid "Too many files at once."
 msgstr ""
@@ -1105,4 +1105,9 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgctxt "unit"
 msgid "s"
+msgstr ""
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:188
+#, elixir-autogen, elixir-format
+msgid "The AI account behind the assistant has run out of credit. An administrator has to top it up or choose another model."
 msgstr ""

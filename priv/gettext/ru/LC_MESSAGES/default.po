@@ -506,7 +506,7 @@ msgstr "Уведомлять наблюдателей, когда этот по�
 msgid "The AI budget is used up, so it was not read."
 msgstr "Бюджет AI исчерпан, поэтому файл не прочитан."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:186
+#: lib/phoenix_kit_agent/web/dock/texts.ex:193
 #, elixir-autogen, elixir-format
 msgid "The AI budget is used up."
 msgstr "Бюджет AI исчерпан."
@@ -602,7 +602,7 @@ msgstr "Файл не удалось прочитать, либо он пуст.
 msgid "The file could not be read."
 msgstr "Файл не удалось прочитать."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:201
+#: lib/phoenix_kit_agent/web/dock/texts.ex:208
 #, elixir-autogen, elixir-format
 msgid "The file could not be uploaded."
 msgstr "Файл не удалось загрузить."
@@ -613,7 +613,7 @@ msgid "The file is too large to read."
 msgstr "Файл слишком большой для чтения."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:83
-#: lib/phoenix_kit_agent/web/dock/texts.ex:198
+#: lib/phoenix_kit_agent/web/dock/texts.ex:205
 #, elixir-autogen, elixir-format
 msgid "The file is too large."
 msgstr "Файл слишком большой."
@@ -638,7 +638,7 @@ msgstr "Сообщение слишком длинное. Сократите е�
 msgid "The model could not read it."
 msgstr "Модель не смогла это прочитать."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:190
+#: lib/phoenix_kit_agent/web/dock/texts.ex:197
 #, elixir-autogen, elixir-format
 msgid "The model does not take pictures now, so they were not sent. Remove them and attach them again to have them described, or choose a model that sees."
 msgstr "Модель сейчас не принимает изображения, поэтому они не были отправлены. Уберите их и прикрепите снова, чтобы их описали, или выберите модель, которая видит изображения."
@@ -688,7 +688,7 @@ msgstr "Думаю…"
 msgid "This answer is no longer running here. The chat will be free again in a few minutes."
 msgstr "Этот ответ здесь больше не выполняется. Чат освободится через несколько минут."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:185
+#: lib/phoenix_kit_agent/web/dock/texts.ex:192
 #, elixir-autogen, elixir-format
 msgid "This chat is gone."
 msgstr "Этот чат исчез."
@@ -745,7 +745,7 @@ msgstr "Сегодня"
 msgid "Too many files are waiting. Send or remove some of them first."
 msgstr "Слишком много файлов ожидает. Сначала отправьте или уберите часть из них."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:199
+#: lib/phoenix_kit_agent/web/dock/texts.ex:206
 #, elixir-autogen, elixir-format
 msgid "Too many files at once."
 msgstr "Слишком много файлов сразу."
@@ -1107,3 +1107,8 @@ msgstr "МБ"
 msgctxt "unit"
 msgid "s"
 msgstr "с"
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:188
+#, elixir-autogen, elixir-format
+msgid "The AI account behind the assistant has run out of credit. An administrator has to top it up or choose another model."
+msgstr "На AI-аккаунте, через который работает ассистент, закончились средства. Администратору нужно пополнить его или выбрать другую модель."

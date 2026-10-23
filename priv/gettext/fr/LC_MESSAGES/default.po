@@ -505,7 +505,7 @@ msgstr "Prévenir les observateurs quand cet utilisateur atteint une limite"
 msgid "The AI budget is used up, so it was not read."
 msgstr "Le budget IA est épuisé, il n'a donc pas été lu."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:186
+#: lib/phoenix_kit_agent/web/dock/texts.ex:193
 #, elixir-autogen, elixir-format
 msgid "The AI budget is used up."
 msgstr "Le budget IA est épuisé."
@@ -601,7 +601,7 @@ msgstr "Le fichier n'a pas pu être lu, ou il est vide."
 msgid "The file could not be read."
 msgstr "Le fichier n'a pas pu être lu."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:201
+#: lib/phoenix_kit_agent/web/dock/texts.ex:208
 #, elixir-autogen, elixir-format
 msgid "The file could not be uploaded."
 msgstr "Le fichier n'a pas pu être téléversé."
@@ -612,7 +612,7 @@ msgid "The file is too large to read."
 msgstr "Le fichier est trop volumineux pour être lu."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:83
-#: lib/phoenix_kit_agent/web/dock/texts.ex:198
+#: lib/phoenix_kit_agent/web/dock/texts.ex:205
 #, elixir-autogen, elixir-format
 msgid "The file is too large."
 msgstr "Le fichier est trop volumineux."
@@ -637,7 +637,7 @@ msgstr "Le message est trop long. Raccourcissez-le ou envoyez-le sous forme de f
 msgid "The model could not read it."
 msgstr "Le modèle n'a pas pu le lire."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:190
+#: lib/phoenix_kit_agent/web/dock/texts.ex:197
 #, elixir-autogen, elixir-format
 msgid "The model does not take pictures now, so they were not sent. Remove them and attach them again to have them described, or choose a model that sees."
 msgstr "Le modèle n'accepte pas les images pour le moment, elles n'ont donc pas été envoyées. Retirez-les et joignez-les à nouveau pour qu'elles soient décrites, ou choisissez un modèle capable de voir."
@@ -687,7 +687,7 @@ msgstr "Réflexion…"
 msgid "This answer is no longer running here. The chat will be free again in a few minutes."
 msgstr "Cette réponse ne s'exécute plus ici. La conversation sera de nouveau libre dans quelques minutes."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:185
+#: lib/phoenix_kit_agent/web/dock/texts.ex:192
 #, elixir-autogen, elixir-format
 msgid "This chat is gone."
 msgstr "Cette conversation a disparu."
@@ -744,7 +744,7 @@ msgstr "Aujourd'hui"
 msgid "Too many files are waiting. Send or remove some of them first."
 msgstr "Trop de fichiers sont en attente. Envoyez-en ou retirez-en d'abord quelques-uns."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:199
+#: lib/phoenix_kit_agent/web/dock/texts.ex:206
 #, elixir-autogen, elixir-format
 msgid "Too many files at once."
 msgstr "Trop de fichiers à la fois."
@@ -1106,3 +1106,8 @@ msgstr "Mo"
 msgctxt "unit"
 msgid "s"
 msgstr "s"
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:188
+#, elixir-autogen, elixir-format
+msgid "The AI account behind the assistant has run out of credit. An administrator has to top it up or choose another model."
+msgstr "Le compte IA utilisé par l'assistant n'a plus de crédit. Un administrateur doit le recharger ou choisir un autre modèle."

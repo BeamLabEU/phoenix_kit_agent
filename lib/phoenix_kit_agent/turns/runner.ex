@@ -644,6 +644,11 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
   defp model_error_text({:budget_exceeded, _scope}, _unsent?), do: "The AI budget is used up."
 
+  defp model_error_text(:insufficient_credits, _unsent?),
+    do:
+      "The AI account behind the assistant has run out of credit. " <>
+        "An administrator has to top it up or choose another model."
+
   defp model_error_text(_reason, true),
     do:
       "The model did not answer; it may not take the pictures. " <>
