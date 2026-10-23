@@ -101,6 +101,22 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       refute has_element?(view, "#agent-settings-money-off")
     end
 
+    test "a default Anthropic model: counted with a list price, marked without one", %{
+      conn: conn
+    } do
+      claude = endpoint_fixture(%{provider: "anthropic", model: "claude-sonnet-5-5"})
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", claude.uuid)
+
+      {:ok, view, _html} = live(conn, @path)
+      refute has_element?(view, "#agent-settings-money-off")
+
+      unpriced = endpoint_fixture(%{provider: "anthropic", model: "claude-unknown-9"})
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", unpriced.uuid)
+
+      {:ok, view, _html} = live(conn, @path)
+      assert has_element?(view, "#agent-settings-money-off", "only the turn limit")
+    end
+
     test "saves the defaults, with who saved them in the settings history", %{
       conn: conn,
       manager: manager

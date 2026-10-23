@@ -20,23 +20,38 @@ defmodule PhoenixKitAgent.Models do
 
   Only `:supported` lets pixels go to a model (`image_input/1`).
 
-  `reports_cost?/1` says whether an endpoint's answers carry what the call
-  cost — the money limits count only such calls (spec §7.3).
+  `reports_cost?/2` says whether a call on an endpoint gets what it cost in
+  the AI journal — the money limits count only such calls (spec §7.3).
   """
 
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAI.{Capabilities, Endpoint}
+  alias PhoenixKitAI.{Capabilities, Endpoint, TaskLimits}
 
   @typedoc "Whether a model takes tools."
   @type support :: :supported | :unsupported | :unknown
 
   @typedoc """
   What a page shows of an endpoint: never the endpoint itself, which carries
-  its API key.
+  its API key. `reports_cost?` is `reports_cost?/2` of a chat call on it.
   """
-  @type summary :: %{uuid: String.t(), name: String.t(), model: String.t(), provider: String.t()}
+  @type summary :: %{
+          uuid: String.t(),
+          name: String.t(),
+          model: String.t(),
+          provider: String.t(),
+          reports_cost?: boolean()
+        }
+
+  @typedoc """
+  What a call on an endpoint is: a model call of a turn, or a picture
+  described by the vision model.
+  """
+  @type call_kind :: :chat | :vision
+
+  # What `reports_cost?/2` reads of an endpoint, its key left out.
+  @cost_fields [:uuid, :name, :model, :provider, :base_url, :provider_settings]
 
   @page_size 500
 
@@ -63,18 +78,16 @@ defmodule PhoenixKitAgent.Models do
       uuid: endpoint.uuid,
       name: endpoint.name,
       model: endpoint.model,
-      provider: endpoint.provider
+      provider: endpoint.provider,
+      reports_cost?: reports_cost?(endpoint)
     }
 
   @doc "The endpoints with these uuids as `t:summary/0`: `%{uuid => summary}`."
   @spec summaries([String.t()]) :: %{String.t() => summary()}
   def summaries(uuids) when is_list(uuids) do
-    from(e in Endpoint,
-      where: e.uuid in ^Enum.uniq(uuids),
-      select: {e.uuid, %{uuid: e.uuid, name: e.name, model: e.model, provider: e.provider}}
-    )
+    from(e in Endpoint, where: e.uuid in ^Enum.uniq(uuids), select: struct(e, ^@cost_fields))
     |> RepoHelper.repo().all()
-    |> Map.new()
+    |> Map.new(&{&1.uuid, summary(&1)})
   end
 
   @doc """
@@ -142,16 +155,30 @@ defmodule PhoenixKitAgent.Models do
   defp support(:unknown, _flag), do: :unknown
 
   @doc """
-  Whether calls on the endpoint report their cost to the AI journal: today
-  only OpenRouter answers with one (`usage.cost`); `phoenix_kit_ai` has no
-  price table for the other providers. On an endpoint that does not, money is
-  not counted and only the turn limit applies.
-  """
-  @spec reports_cost?(Endpoint.t() | %{provider: term()} | nil) :: boolean()
-  def reports_cost?(%{provider: provider}) when is_binary(provider),
-    do: Endpoint.base_provider(provider) == "openrouter"
+  Whether a call on the endpoint gets what it cost in the AI journal, as
+  `phoenix_kit_ai` prices it. On an endpoint where it does not, money is not
+  counted and only the turn limit applies.
 
-  def reports_cost?(_endpoint), do: false
+    * `:chat` (a model call of a turn) — `PhoenixKitAI.reports_cost?/1`: the
+      provider reports the cost (OpenRouter), or the operator's catalogue, a
+      manual price on the endpoint or Anthropic's list price prices its model.
+    * `:vision` (a picture described, `PhoenixKitAI.describe_image/3`) — only
+      a cost the provider reports (`PhoenixKitAI.TaskLimits.money_counted?/2`
+      with `:vision`): `phoenix_kit_ai` uses no manual or list price there.
+
+  A `t:summary/0` carries the answer for `:chat`.
+  """
+  @spec reports_cost?(Endpoint.t() | summary() | nil, call_kind()) :: boolean()
+  def reports_cost?(endpoint, call \\ :chat)
+
+  def reports_cost?(%Endpoint{} = endpoint, :chat), do: PhoenixKitAI.reports_cost?(endpoint)
+
+  def reports_cost?(%Endpoint{} = endpoint, :vision),
+    do: TaskLimits.money_counted?(endpoint, [:vision])
+
+  def reports_cost?(%{reports_cost?: reports?}, :chat) when is_boolean(reports?), do: reports?
+
+  def reports_cost?(_endpoint, _call), do: false
 
   # ── internals ─────────────────────────────────────────────────────────
 

@@ -36,7 +36,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   the page opens.
 
   When the default model does not report what a call costs
-  (`PhoenixKitAgent.Models.reports_cost?/1`), the limits say that money is not
+  (`PhoenixKitAgent.Models.reports_cost?/2`), the limits say that money is not
   counted for it and only the turn limit applies.
 
   One setting is not for every manager: `agent_capture_ai_content` (whether the

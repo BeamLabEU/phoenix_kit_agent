@@ -23,7 +23,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   `UserConfig.admin_update/4`), not written over their change.
 
   A user whose model does not report what a call costs
-  (`PhoenixKitAgent.Models.reports_cost?/1`) is marked: money is not counted
+  (`PhoenixKitAgent.Models.reports_cost?/2`) is marked: money is not counted
   for them and only the turn limit applies — in the list, and in the form for
   the model chosen there.
 

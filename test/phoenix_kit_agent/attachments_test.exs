@@ -628,6 +628,39 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       refute_received {:model_request, _}
     end
 
+    test "a vision model with only a list price: the money limits do not hold a description",
+         ctx do
+      # phoenix_kit_ai prices a description by the provider's own cost only;
+      # Anthropic reports none, so the description is not counted and only
+      # the turn limit holds it — though a chat call on the model would be.
+      serve_ai(main_sees: false)
+      test = self()
+
+      Req.Test.stub(@stub, fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        send(test, {:model_request, Jason.decode!(raw)})
+
+        Req.Test.json(conn, %{
+          "model" => "claude-sonnet-5-5",
+          "choices" => [%{"message" => %{"role" => "assistant", "content" => "Described."}}],
+          "usage" => %{"prompt_tokens" => 30, "completion_tokens" => 8, "total_tokens" => 38}
+        })
+      end)
+
+      claude =
+        endpoint_fixture(%{name: "Claude", provider: "anthropic", model: "claude-sonnet-5-5"})
+
+      declare_vision!("claude-sonnet-5-5", "yes")
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", claude.uuid)
+      limits!(ctx.user, %{daily_cost_limit_micro_usd: 0})
+
+      attachment = add_done!(ctx, Files.png(40, 30), "a.png")
+
+      assert attachment.status == "ready"
+      assert attachment.extracted_text == "Described."
+      assert_received {:model_request, _}
+    end
+
     test "with the AI module switched off a picture is not described, and nothing is paid",
          ctx do
       serve_ai(main_sees: false)

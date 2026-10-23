@@ -31,9 +31,10 @@ defmodule PhoenixKitAgent.Attachments.Processor do
       (`ai_disabled` otherwise), the session that added the file must still
       be one that may use the assistant (`session_gone` or `forbidden`), and
       the user must be within their limits (`limit_reached`) — the money
-      limits as they apply to the **vision** endpoint
-      (`PhoenixKitAgent.Limits.money_counted?/1`): one that reports no cost is
-      held by the turn limit only. One user's descriptions are made one at a
+      limits as they apply to a description on the **vision** endpoint
+      (`PhoenixKitAgent.Limits.money_counted?/2` with `:vision`: only a cost
+      the provider reports prices it): one that reports no cost is held by
+      the turn limit only. One user's descriptions are made one at a
       time (a `:global` lock per user, on every connected node), so each is
       checked against a journal that holds what the one before cost. The call
       carries the user and `source: "agent"` — the spending limits count it
@@ -293,7 +294,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
   # The money limits as they apply to the endpoint the call is paid on.
   defp within_limits(settings, vision) do
-    case SpendLimits.check(settings, vision) do
+    case SpendLimits.check(settings, vision, use: :vision) do
       :ok -> :ok
       {:error, {:limit_reached, _status}} -> {:error, :limit_reached}
     end

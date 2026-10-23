@@ -127,4 +127,71 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert Models.tools_support([]) == %{}
     end
   end
+
+  describe "reports_cost?/2" do
+    # A manual price on the endpoint: whole micro-dollars per 1M tokens. Setting
+    # one needs ai.manage (an Owner).
+    defp manual_priced(model) do
+      endpoint_fixture(
+        %{
+          provider: "deepseek",
+          model: model,
+          provider_settings: %{"pricing" => %{"input" => 270_000, "output" => 1_100_000}}
+        },
+        scope: scope_of(owner_fixture())
+      )
+    end
+
+    test "OpenRouter reports what a call cost" do
+      assert Models.reports_cost?(endpoint_fixture())
+    end
+
+    test "an Anthropic model with a list price is counted; one without is not" do
+      assert Models.reports_cost?(
+               endpoint_fixture(%{provider: "anthropic", model: "claude-sonnet-5-5"})
+             )
+
+      refute Models.reports_cost?(
+               endpoint_fixture(%{provider: "anthropic", model: "claude-unknown-9"})
+             )
+    end
+
+    test "a manual price on the endpoint is counted; no price is not" do
+      assert Models.reports_cost?(manual_priced("deepseek-chat"))
+
+      refute Models.reports_cost?(
+               endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
+             )
+    end
+
+    test "a summary carries the answer, never the endpoint's key" do
+      priced = manual_priced("deepseek-chat")
+      claude = endpoint_fixture(%{provider: "anthropic", model: "claude-sonnet-5-5"})
+      bare = endpoint_fixture(%{provider: "deepseek", model: "deepseek-reasoner"})
+
+      for endpoint <- [priced, claude, bare] do
+        summary = Models.summary(endpoint)
+        assert Models.summaries([endpoint.uuid]) == %{endpoint.uuid => summary}
+        refute Map.has_key?(summary, :api_key)
+        assert Models.reports_cost?(summary) == Models.reports_cost?(endpoint)
+      end
+
+      assert Models.summary(priced).reports_cost?
+      assert Models.summary(claude).reports_cost?
+      refute Models.summary(bare).reports_cost?
+    end
+
+    test "a picture's description is counted only where the provider reports its cost" do
+      claude = endpoint_fixture(%{provider: "anthropic", model: "claude-sonnet-5-5"})
+
+      assert Models.reports_cost?(endpoint_fixture(), :vision)
+      refute Models.reports_cost?(claude, :vision)
+      refute Models.reports_cost?(manual_priced("deepseek-chat"), :vision)
+    end
+
+    test "no endpoint is not counted" do
+      refute Models.reports_cost?(nil)
+      refute Models.reports_cost?(nil, :vision)
+    end
+  end
 end

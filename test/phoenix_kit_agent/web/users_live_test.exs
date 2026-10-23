@@ -138,6 +138,39 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
       refute has_element?(view, "#agent-user-#{counted.uuid}-money-off")
     end
 
+    test "an Anthropic list price or a manual price counts money; no price is marked", %{
+      conn: conn
+    } do
+      claude =
+        endpoint_fixture(%{name: "Claude", provider: "anthropic", model: "claude-sonnet-5-5"})
+
+      manual =
+        endpoint_fixture(
+          %{
+            name: "Priced",
+            provider: "deepseek",
+            model: "deepseek-chat",
+            provider_settings: %{"pricing" => %{"input" => 270_000, "output" => 1_100_000}}
+          },
+          scope: scope_of(owner_fixture())
+        )
+
+      unpriced = endpoint_fixture(%{name: "Unpriced", provider: "anthropic", model: "claude-x-1"})
+
+      users =
+        for {tag, endpoint} <- [claude: claude, manual: manual, unpriced: unpriced] do
+          user = user_with(["agent"], Atom.to_string(tag))
+          Repo.insert!(%UserSettings{user_uuid: user.uuid, endpoint_uuid: endpoint.uuid})
+          {tag, user}
+        end
+
+      {:ok, view, _html} = live(conn, @path)
+
+      refute has_element?(view, "#agent-user-#{users[:claude].uuid}-money-off")
+      refute has_element?(view, "#agent-user-#{users[:manual].uuid}-money-off")
+      assert has_element?(view, "#agent-user-#{users[:unpriced].uuid}-money-off")
+    end
+
     test "a user the assistant is switched off for is marked", %{conn: conn} do
       member = user_with(["agent"], "member")
       Repo.insert!(%UserSettings{user_uuid: member.uuid, enabled: false})
@@ -217,6 +250,25 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
 
       view
       |> form("#agent-user-form", user_settings: %{endpoint_uuid: ctx.with_tools.uuid})
+      |> render_change()
+
+      refute has_element?(view, "#agent-user-money-off")
+    end
+
+    test "the form counts money on an Anthropic model with a list price", ctx do
+      claude =
+        endpoint_fixture(%{name: "Claude", provider: "anthropic", model: "claude-sonnet-5-5"})
+
+      view = open(ctx.conn, ctx.member)
+
+      view
+      |> form("#agent-user-form", user_settings: %{endpoint_uuid: ctx.other.uuid})
+      |> render_change()
+
+      assert has_element?(view, "#agent-user-money-off")
+
+      view
+      |> form("#agent-user-form", user_settings: %{endpoint_uuid: claude.uuid})
       |> render_change()
 
       refute has_element?(view, "#agent-user-money-off")

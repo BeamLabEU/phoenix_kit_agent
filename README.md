@@ -231,12 +231,16 @@ journal of `phoenix_kit_ai` recorded for the user's assistant calls
 (`metadata.source = "agent"`, attachment descriptions included), in
 micro-dollars (`$1 = 1_000_000`); a turn is one message the user sent. The day
 and the month are those of the site time zone. Money counts only on an endpoint
-that reports what a call cost (today OpenRouter); on another only the turn
-limit applies, and the admin pages say so. A picture's description is held to
-the money limits of the **vision** endpoint it is paid on, not of the chat
-endpoint: when the vision endpoint reports no cost, the money limits do not
-cover descriptions at all (only the turn limit and the `phoenix_kit_ai` budget
-stop them): such an endpoint reports no cost to count.
+whose calls get a cost in the journal (`PhoenixKitAI.reports_cost?/1`: the
+provider reports it, as OpenRouter does, or `phoenix_kit_ai` prices the model
+from the operator's catalogue, a manual price on the endpoint or Anthropic's
+list price); on another only the turn limit applies, and the admin pages say
+so. A picture's description is held to the money limits of the **vision**
+endpoint it is paid on, not of the chat endpoint, and `phoenix_kit_ai` prices a
+description only by the cost the provider reports: when the vision endpoint
+reports none, the money limits do not cover descriptions at all (only the turn
+limit and the `phoenix_kit_ai` budget stop them): such an endpoint reports no
+cost to count.
 
 The limits are checked when a turn starts; a turn that started under them runs
 to its end. A limit used up refuses the turn with a notice in the chat (one per

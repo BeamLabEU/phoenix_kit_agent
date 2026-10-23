@@ -16,10 +16,13 @@ defmodule PhoenixKitAgent.Limits do
   limits in force are `PhoenixKitAgent.UserConfig.effective/1`'s: the
   user's own, else the module's. A limit of `0` allows nothing.
 
-  The money limits apply only on an endpoint that reports what a call cost
-  (`PhoenixKitAgent.Models.reports_cost?/1`, today OpenRouter): on another,
-  nothing would be counted, so only the turn limit applies there — the admin
-  pages say so. An endpoint that cannot be found keeps the money limits.
+  The money limits apply only on an endpoint whose calls get what they cost
+  in the journal (`PhoenixKitAgent.Models.reports_cost?/2`: a model call of a
+  turn where the provider reports a cost or `phoenix_kit_ai` has a price for
+  the model, a picture's description only where the provider reports one): on
+  another, nothing would be counted, so only the turn limit applies there —
+  the admin pages say so. An endpoint that cannot be found keeps the money
+  limits.
 
   ## When
 
@@ -121,11 +124,16 @@ defmodule PhoenixKitAgent.Limits do
   turns. On `:ok`, a limit at 80 % or more is announced to the user (once per
   period). Sends nothing about a limit reached: that is
   `announce_reached/2`.
+
+  Options: `:use` — what the call on the endpoint is (`:chat`, the default,
+  or `:vision`, see `money_counted?/2`); `:now`.
   """
-  @spec check(UserConfig.effective(), String.t() | nil, DateTime.t()) ::
+  @spec check(UserConfig.effective(), String.t() | nil, keyword()) ::
           :ok | {:error, {:limit_reached, status()}}
-  def check(settings, endpoint_uuid, now \\ DateTime.utc_now()) do
-    statuses = statuses(settings, usage(settings.user_uuid, now), money_counted?(endpoint_uuid))
+  def check(settings, endpoint_uuid, opts \\ []) do
+    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+    money? = money_counted?(endpoint_uuid, Keyword.get(opts, :use, :chat))
+    statuses = statuses(settings, usage(settings.user_uuid, now), money?)
 
     case Enum.find(statuses, &(&1.used >= &1.limit)) do
       nil ->
@@ -212,18 +220,22 @@ defmodule PhoenixKitAgent.Limits do
   def guard_watchers(_no_user), do: Config.limit_watchers()
 
   @doc """
-  Whether money counts on `endpoint_uuid` (see the moduledoc): an endpoint
-  that reports a cost, or one that cannot be found.
+  Whether money counts for a `call` (`:chat` or `:vision`) on
+  `endpoint_uuid` (see the moduledoc): an endpoint whose such calls get a
+  cost (`PhoenixKitAgent.Models.reports_cost?/2`), or one that cannot be
+  found.
   """
-  @spec money_counted?(String.t() | nil) :: boolean()
-  def money_counted?(endpoint_uuid) when is_binary(endpoint_uuid) do
+  @spec money_counted?(String.t() | nil, Models.call_kind()) :: boolean()
+  def money_counted?(endpoint_uuid, call \\ :chat)
+
+  def money_counted?(endpoint_uuid, call) when is_binary(endpoint_uuid) do
     case PhoenixKitAI.get_endpoint(endpoint_uuid) do
       nil -> true
-      endpoint -> Models.reports_cost?(endpoint)
+      endpoint -> Models.reports_cost?(endpoint, call)
     end
   end
 
-  def money_counted?(_none), do: true
+  def money_counted?(_none, _call), do: true
 
   # ── internals ─────────────────────────────────────────────────────────
 
