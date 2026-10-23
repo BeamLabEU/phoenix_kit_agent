@@ -92,11 +92,12 @@ defmodule PhoenixKitAgent.MixProject do
       # libraries.
       # A fork branch until the core PR merges: feat/session-confirm, upstream
       # main plus the writes of a live session (allow: :all, Executor.redeem_as/6,
-      # the session functions of API.Confirm, the OperationPreview component).
+      # the session functions of API.Confirm, the OperationPreview component,
+      # Executor.tool_availability/1).
       # Switch back to upstream, then to a Hex requirement, once they ship.
       pk_dep(:phoenix_kit,
         git: "https://github.com/timujinne/phoenix_kit.git",
-        ref: "cbc2cb46f5574ac42d9b78e0a60dd59e47abfe75",
+        ref: "5f9a2945152060fdd6f179337a77d2cb07cf5c81",
         override: true
       ),
 
