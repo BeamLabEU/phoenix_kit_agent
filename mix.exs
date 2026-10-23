@@ -108,10 +108,11 @@ defmodule PhoenixKitAgent.MixProject do
       # off-purpose flags, the TaskSpec user_limits flag; #49 and the stack
       # under it, with tool calling, #38) plus a call's cost from one place
       # (PhoenixKitAI.CallCost: the provider's, a catalogue, a manual or
-      # Anthropic's list price; PhoenixKitAI.reports_cost?/1).
+      # Anthropic's list price, for chat and the vision verbs alike;
+      # PhoenixKitAI.reports_cost?/1).
       pk_dep(:phoenix_kit_ai,
         git: "https://github.com/timujinne/phoenix_kit_ai.git",
-        ref: "1f1f2f2eb7086641610fa8171a964749a875eb98",
+        ref: "3f1b6d0853fd700e568ed3c2a1e55010cfd9e3f9",
         override: true
       ),
 
