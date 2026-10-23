@@ -97,7 +97,7 @@ defmodule PhoenixKitAgent.MixProject do
       # Switch back to upstream, then to a Hex requirement, once they ship.
       pk_dep(:phoenix_kit,
         git: "https://github.com/timujinne/phoenix_kit.git",
-        ref: "5f9a2945152060fdd6f179337a77d2cb07cf5c81",
+        ref: "ddaba6bf531abeaf4ffd89bcad8073e0c1389aa3",
         override: true
       ),
 
