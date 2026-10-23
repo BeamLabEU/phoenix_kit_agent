@@ -107,7 +107,7 @@ defmodule PhoenixKitAgent.Web.ToolAvailability do
                   <code class="min-w-0 break-all font-mono text-xs">{tool.name}</code>
                   <span
                     :if={tool.kind == :write}
-                    class="badge badge-sm badge-outline badge-warning h-auto"
+                    class="badge badge-sm badge-warning h-auto"
                   >
                     {gettext("Writes")}
                   </span>
