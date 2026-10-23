@@ -110,8 +110,10 @@ change was made — and the chat shows a card:
 At most one change of a round waits; a second one of the same answer is
 refused to the model, and so is any other call of that answer after it (the
 turn ends there). The same change asked for again while its card waits is
-refused too: one card per change. A click is refused while a turn of the user
-or another click runs, and no message starts a turn while a click runs, however
+refused too: one card per change. This includes "Ask again" on an expired
+card when a later turn has already proposed the same change. A click is
+refused while a turn of the user or another click runs, and no message starts
+a turn while a click runs, however
 long it takes (the click keeps its lock fresh; a lock left by a node that went
 down frees the user 30 s after its last keep). A click calls no model and
 spends no turn of the limits; it runs in a task of the module's own

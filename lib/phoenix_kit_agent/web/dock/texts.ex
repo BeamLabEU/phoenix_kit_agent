@@ -257,6 +257,28 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
 
   def notice(_code_with_its_own_text), do: nil
 
+  @doc """
+  The feed's notice text, including the two fixed model-error texts whose
+  shared error code does not say whether the pictures were taken off the
+  message. Older stored notices are translated too; other text stays as stored.
+  """
+  @spec notice(String.t() | nil, String.t() | nil) :: String.t() | nil
+  def notice(code, content), do: notice(code) || notice_content(content)
+
+  defp notice_content("The model did not answer. Try again."),
+    do: gettext("The model did not answer. Try again.")
+
+  defp notice_content(
+         "The model did not answer; it may not take the pictures. " <>
+           "The files were not sent with the message: you can send them again."
+       ),
+       do:
+         gettext(
+           "The model did not answer; it may not take the pictures. The files were not sent with the message: you can send them again."
+         )
+
+  defp notice_content(content), do: content
+
   @doc "The heading of a confirmation card in its state."
   @spec card_title(String.t()) :: String.t()
   def card_title("waiting"), do: gettext("The assistant proposes a change")
@@ -297,6 +319,12 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
 
   def card_refusal(:not_expired),
     do: gettext("This change can be asked for again only once its confirmation ran out.")
+
+  def card_refusal(:already_waiting),
+    do:
+      gettext(
+        "This change is already waiting for confirmation. Run or cancel its card in the chat."
+      )
 
   def card_refusal(:no_arguments),
     do:

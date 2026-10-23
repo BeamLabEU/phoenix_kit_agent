@@ -434,6 +434,27 @@ defmodule PhoenixKitAgent.Turns.GuardTest do
   # ── off-purpose ─────────────────────────────────────────────────────
 
   describe "the off-purpose marker" do
+    test "a long whitespace run before a nonfinal marker is kept without delaying the turn",
+         ctx do
+      text = "Answer" <> String.duplicate(" ", 100_000) <> "⟦off_purpose: private⟧ extra"
+      answer_next(text_answer(text))
+      turn_ref = start!(ctx, "Explain")
+      await_end(ctx.chat, turn_ref)
+
+      assert %Message{role: "assistant", content: ^text} = List.last(messages(ctx.chat))
+      assert flags(ctx.user) == []
+    end
+
+    test "a final marker after Unicode text and whitespace is cut at the right byte offset",
+         ctx do
+      answer_next(text_answer("Відповідь 🌻\n\t  ⟦off_purpose: особисте ⟧\n  "))
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert %Message{role: "assistant", content: "Відповідь 🌻"} = List.last(messages(ctx.chat))
+      assert [%GuardEvent{reason: "особисте"}] = flags(ctx.user)
+    end
+
     test "is cut off the answer before it is stored, and flags the turn", ctx do
       answer_next(text_answer("I can only help with work on this site.\n⟦off_purpose: a recipe⟧"))
       turn_ref = start!(ctx, "A recipe for soup?")

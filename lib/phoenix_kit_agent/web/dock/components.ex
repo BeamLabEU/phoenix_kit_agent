@@ -97,7 +97,7 @@ defmodule PhoenixKitAgent.Web.Dock.Components do
     ~H"""
     <div id={@id} data-role="notice" class="alert alert-soft alert-warning py-2 text-xs">
       <.icon name="hero-information-circle" class="w-4 h-4" />
-      <span>{Texts.notice(@message.error) || @message.content}</span>
+      <span>{Texts.notice(@message.error, @message.content)}</span>
     </div>
     """
   end

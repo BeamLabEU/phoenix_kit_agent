@@ -1642,6 +1642,35 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert has_element?(view, "#pk-agent-feed [data-role=notice]", "Words of its own")
     end
 
+    test "transient errors and rejected pictures keep their guidance in the panel's language",
+         ctx do
+      turn_message!(ctx.chat, %{
+        role: "notice",
+        content: "The model did not answer. Try again.",
+        error: "request_timeout"
+      })
+
+      turn_message!(ctx.chat, %{
+        role: "notice",
+        content:
+          "The model did not answer; it may not take the pictures. " <>
+            "The files were not sent with the message: you can send them again.",
+        error: "api_error"
+      })
+
+      view = dock(ctx, locale: "ru")
+      open_chat(view, ctx.chat)
+
+      assert has_element?(
+               view,
+               "#pk-agent-feed [data-role=notice]",
+               "Модель не ответила. Попробуйте ещё раз."
+             )
+
+      assert has_element?(view, "#pk-agent-feed [data-role=notice]", "Файлы не были отправлены")
+      refute render(view) =~ "The model did not answer"
+    end
+
     test "an account out of credit is told in the panel's language, never as a retry", ctx do
       turn_message!(ctx.chat, %{
         role: "notice",

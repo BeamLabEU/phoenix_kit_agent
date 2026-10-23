@@ -906,6 +906,39 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
   end
 
   describe "repeat/5" do
+    test "an expired card cannot duplicate the same write waiting from a later turn", ctx do
+      old = card!(ctx)
+      expire!(old.confirmation_uuid)
+      fresh = card!(ctx)
+
+      assert old.assistant_message_uuid != fresh.assistant_message_uuid
+      assert %{state: "waiting"} = card_state(ctx, fresh)
+      assert %{state: "expired", repeatable?: false} = card_state(ctx, old)
+
+      assert {:error, :already_waiting} =
+               Confirmations.repeat(ctx.ref, false, ctx.chat.uuid, old.uuid)
+
+      # The check also holds before the expired card's notice was settled.
+      Repo.delete_all(
+        from(m in Message,
+          where: m.confirmation_uuid == ^old.confirmation_uuid and m.role == "notice"
+        )
+      )
+
+      assert {:error, :already_waiting} =
+               Confirmations.repeat(ctx.ref, false, ctx.chat.uuid, old.uuid)
+
+      assert Enum.map(cards(ctx.chat), & &1.uuid) == [old.uuid, fresh.uuid]
+      assert outcome_notices(ctx.chat) == []
+      refute_received {:agent_test_preview, _}
+      assert %UserSettings{busy_turn_ref: nil} = Repo.get!(UserSettings, ctx.user.uuid)
+
+      # Once that proposal is cancelled, the expired card can be used again.
+      assert {:ok, :rejected} = Confirmations.reject(ctx.ref, false, ctx.chat.uuid, fresh.uuid)
+      assert %{state: "expired", repeatable?: true} = card_state(ctx, old)
+      assert {:ok, :repeated} = Confirmations.repeat(ctx.ref, false, ctx.chat.uuid, old.uuid)
+    end
+
     test "is refused for a card still waiting", ctx do
       card = card!(ctx)
 

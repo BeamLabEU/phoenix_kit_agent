@@ -165,7 +165,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
 
   # The model's flag of an off-purpose request: the last thing in its
   # answer (spec §8.2 B, `PhoenixKitAgent.Prompt`).
-  @off_purpose ~r/\s*⟦off_purpose:\s*([^⟧]*)⟧\s*\z/u
+  @off_purpose ~r/⟦off_purpose:([^⟧]*)⟧\s*\z/u
 
   @typedoc "Everything a turn needs; built by `PhoenixKitAgent.Turns.start/6`."
   @type turn :: %{
@@ -495,7 +495,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
             "turn_ref" => turn.turn_ref
           })
 
-        binary_part(text, 0, start)
+        text |> binary_part(0, start) |> String.trim_trailing()
 
       nil ->
         text

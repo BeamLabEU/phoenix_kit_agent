@@ -601,7 +601,7 @@ msgstr "Faili ei saanud lugeda või see on tühi."
 msgid "The file could not be read."
 msgstr "Faili ei saanud lugeda."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:328
+#: lib/phoenix_kit_agent/web/dock/texts.ex:356
 #, elixir-autogen, elixir-format
 msgid "The file could not be uploaded."
 msgstr "Faili ei saanud üles laadida."
@@ -612,7 +612,7 @@ msgid "The file is too large to read."
 msgstr "Fail on lugemiseks liiga suur."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:96
-#: lib/phoenix_kit_agent/web/dock/texts.ex:325
+#: lib/phoenix_kit_agent/web/dock/texts.ex:353
 #, elixir-autogen, elixir-format
 msgid "The file is too large."
 msgstr "Fail on liiga suur."
@@ -744,7 +744,7 @@ msgstr "Täna"
 msgid "Too many files are waiting. Send or remove some of them first."
 msgstr "Liiga palju faile ootab. Saada või eemalda neist esmalt mõned."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:326
+#: lib/phoenix_kit_agent/web/dock/texts.ex:354
 #, elixir-autogen, elixir-format
 msgid "Too many files at once."
 msgstr "Liiga palju faile korraga."
@@ -1135,22 +1135,22 @@ msgstr "[kinnitus] andmed muutusid, uus kinnitus ootab: %{action}"
 msgid "Ask again"
 msgstr "Küsi uuesti"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:273
+#: lib/phoenix_kit_agent/web/dock/texts.ex:295
 #, elixir-autogen, elixir-format
 msgid "Cancelled:"
 msgstr "Tühistatud:"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:272
+#: lib/phoenix_kit_agent/web/dock/texts.ex:294
 #, elixir-autogen, elixir-format
 msgid "Done:"
 msgstr "Tehtud:"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:276
+#: lib/phoenix_kit_agent/web/dock/texts.ex:298
 #, elixir-autogen, elixir-format
 msgid "Failed:"
 msgstr "Ebaõnnestus:"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:274
+#: lib/phoenix_kit_agent/web/dock/texts.ex:296
 #, elixir-autogen, elixir-format
 msgid "Ran out:"
 msgstr "Aegus:"
@@ -1160,77 +1160,77 @@ msgstr "Aegus:"
 msgid "Run"
 msgstr "Käivita"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:285
+#: lib/phoenix_kit_agent/web/dock/texts.ex:307
 #, elixir-autogen, elixir-format
 msgid "The assistant is answering. Try again when it has finished."
 msgstr "Assistent vastab. Proovi uuesti, kui ta on lõpetanud."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:308
+#: lib/phoenix_kit_agent/web/dock/texts.ex:336
 #, elixir-autogen, elixir-format
 msgid "The assistant may not make changes in this part of the site now."
 msgstr "Assistent ei tohi praegu selles saidi osas muudatusi teha."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:262
+#: lib/phoenix_kit_agent/web/dock/texts.ex:284
 #, elixir-autogen, elixir-format
 msgid "The assistant proposes a change"
 msgstr "Assistent pakub muudatust"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:319
+#: lib/phoenix_kit_agent/web/dock/texts.ex:347
 #, elixir-autogen, elixir-format
 msgid "The change cannot be made now. Try again later, or cancel it."
 msgstr "Muudatust ei saa praegu teha. Proovi hiljem uuesti või tühista see."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:316
+#: lib/phoenix_kit_agent/web/dock/texts.ex:344
 #, elixir-autogen, elixir-format
 msgid "The change does not fit what the tool takes any more."
 msgstr "Muudatus ei sobi enam sellega, mida tööriist vastu võtab."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:267
+#: lib/phoenix_kit_agent/web/dock/texts.ex:289
 #, elixir-autogen, elixir-format
 msgid "The change failed"
 msgstr "Muudatus ebaõnnestus"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:264
+#: lib/phoenix_kit_agent/web/dock/texts.ex:286
 #, elixir-autogen, elixir-format
 msgid "The change was cancelled"
 msgstr "Muudatus tühistati"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:263
+#: lib/phoenix_kit_agent/web/dock/texts.ex:285
 #, elixir-autogen, elixir-format
 msgid "The change was made"
 msgstr "Muudatus tehti"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:265
+#: lib/phoenix_kit_agent/web/dock/texts.ex:287
 #, elixir-autogen, elixir-format
 msgid "The confirmation ran out; nothing was changed"
 msgstr "Kinnitus aegus; midagi ei muudetud"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:266
+#: lib/phoenix_kit_agent/web/dock/texts.ex:288
 #, elixir-autogen, elixir-format
 msgid "The data changed — check it again below"
 msgstr "Andmed muutusid — kontrolli allpool uuesti"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:275
+#: lib/phoenix_kit_agent/web/dock/texts.ex:297
 #, elixir-autogen, elixir-format
 msgid "The data changed:"
 msgstr "Andmed muutusid:"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:299
+#: lib/phoenix_kit_agent/web/dock/texts.ex:321
 #, elixir-autogen, elixir-format
 msgid "This change can be asked for again only once its confirmation ran out."
 msgstr "Seda muudatust saab uuesti küsida alles siis, kui selle kinnitus on aegunud."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:268
+#: lib/phoenix_kit_agent/web/dock/texts.ex:290
 #, elixir-autogen, elixir-format
 msgid "This change can no longer be confirmed here"
 msgstr "Seda muudatust ei saa siin enam kinnitada"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:303
+#: lib/phoenix_kit_agent/web/dock/texts.ex:331
 #, elixir-autogen, elixir-format
 msgid "This change cannot be confirmed: the assistant's call is not in the chat any more."
 msgstr "Seda muudatust ei saa kinnitada: assistendi päringut pole enam vestluses."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:296
+#: lib/phoenix_kit_agent/web/dock/texts.ex:318
 #, elixir-autogen, elixir-format
 msgid "This change no longer waits for you."
 msgstr "See muudatus ei oota enam sinu kinnitust."
@@ -1245,7 +1245,7 @@ msgstr "Ootab sind kuni %{time}."
 msgid "What the assistant sent"
 msgstr "Mida assistent saatis"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:310
+#: lib/phoenix_kit_agent/web/dock/texts.ex:338
 #, elixir-autogen, elixir-format
 msgid "You may not make this change now."
 msgstr "Sul pole praegu lubatud seda muudatust teha."
@@ -1265,12 +1265,12 @@ msgstr "Tühista muudatus"
 msgid "[confirmation] waiting: %{action}"
 msgstr "[kinnitus] ootab: %{action}"
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:288
+#: lib/phoenix_kit_agent/web/dock/texts.ex:310
 #, elixir-autogen, elixir-format
 msgid "A change is being confirmed right now. Try again in a moment."
 msgstr "Muudatust kinnitatakse just praegu. Proovi hetke pärast uuesti."
 
-#: lib/phoenix_kit_agent/web/dock/texts.ex:292
+#: lib/phoenix_kit_agent/web/dock/texts.ex:314
 #, elixir-autogen, elixir-format
 msgid "What became of this change could not be saved in the chat. Open the chat again to see it."
 msgstr "Selle muudatuse tulemust ei saanud vestlusesse salvestada. Ava vestlus uuesti, et seda näha."
@@ -1486,3 +1486,18 @@ msgstr "Assistendi taga oleva AI-konto krediit on otsas. Administraator peab sed
 #, elixir-autogen, elixir-format
 msgid "The AI endpoint behind the assistant cannot be used right now. An administrator has to check its settings."
 msgstr "Assistendi taga olevat AI lõpp-punkti ei saa praegu kasutada. Administraator peab selle seaded üle vaatama."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:269
+#, elixir-autogen, elixir-format
+msgid "The model did not answer. Try again."
+msgstr "Mudel ei vastanud. Proovi uuesti."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:276
+#, elixir-autogen, elixir-format
+msgid "The model did not answer; it may not take the pictures. The files were not sent with the message: you can send them again."
+msgstr "Mudel ei vastanud; see ei pruugi pilte vastu võtta. Faile ei saadetud koos sõnumiga: saad need uuesti saata."
+
+#: lib/phoenix_kit_agent/web/dock/texts.ex:325
+#, elixir-autogen, elixir-format
+msgid "This change is already waiting for confirmation. Run or cancel its card in the chat."
+msgstr "See muudatus ootab juba kinnitamist. Käivita või tühista see vestluses oleval kaardil."

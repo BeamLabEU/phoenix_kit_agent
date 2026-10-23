@@ -203,6 +203,40 @@ defmodule PhoenixKitAgent.TranslationsTest do
     end
   end
 
+  test "fixed model-error notices and duplicate-card refusals are translated in every locale" do
+    retry = "The model did not answer. Try again."
+
+    pictures =
+      "The model did not answer; it may not take the pictures. " <>
+        "The files were not sent with the message: you can send them again."
+
+    for locale <- @languages do
+      Gettext.with_locale(PhoenixKitAgent.Gettext, locale, fn ->
+        for code <- ~w(request_timeout invalid_json_response invalid_response_format
+                        no_choices_in_response api_error connection_error model_error) do
+          translated = Texts.notice(code, retry)
+          assert is_binary(translated)
+          if locale != "en", do: refute(translated == retry)
+        end
+
+        translated_pictures = Texts.notice("api_error", pictures)
+        assert translated_pictures != Texts.notice("api_error", retry)
+        assert Texts.notice("api_error", "Details of its own") == "Details of its own"
+
+        refusal = Texts.card_refusal(:already_waiting)
+        assert refusal != Texts.card_refusal(:unknown)
+
+        if locale != "en" do
+          refute translated_pictures == pictures
+          refute refusal =~ "already waiting"
+        end
+
+        # The code's specific guidance still takes priority over older text.
+        assert Texts.notice("insufficient_credits", retry) == Texts.notice("insufficient_credits")
+      end)
+    end
+  end
+
   test "the labels of the permission and of the tabs are in the catalogues" do
     meta = PhoenixKitAgent.permission_metadata()
 

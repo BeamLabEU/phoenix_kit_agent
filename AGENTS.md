@@ -218,6 +218,9 @@ and `Web.Markdown`).
   Nothing of the arguments or the preview is logged, here or by core (its
   insert of the row is `log: false`). The test write tool is
   `agenttest.write_item` in `test/support/agent_test_tools.ex`.
+  "Ask again" also refuses a duplicate waiting write from a later turn
+  (`:already_waiting`, under the click's lock), and an expired card offers
+  it only while no card of the chat waits for the same tool and arguments.
 - **The AI task guard** (`phoenix_kit_ai`): every model call names its task
   (`task: "agent.chat"` / `"agent.attachment"`); a turn is admitted once in
   `Turns` (`Guard.admit/4`, after `Limits.check/3`, under the locks) and its

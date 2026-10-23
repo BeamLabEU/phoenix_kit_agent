@@ -131,6 +131,7 @@ defmodule PhoenixKitAgent.Confirmations do
           Conversations.refusal()
           | :not_waiting
           | :not_expired
+          | :already_waiting
           | :turn_running
           | :click_running
           | :no_arguments
@@ -171,7 +172,8 @@ defmodule PhoenixKitAgent.Confirmations do
   out or is gone: core holds the same call in a new row, a new card with the
   same assistant message (`{:ok, :repeated}`). The old card is closed as
   `expired` if it was not yet. `{:error, :not_expired}` for any other card,
-  and for one asked for again already.
+  and for one asked for again already; `{:error, :already_waiting}` when
+  another card of this chat still waits for the same tool and arguments.
   """
   @spec repeat(Conversations.session_ref(), boolean(), term(), term(), keyword()) ::
           {:ok, :repeated} | {:error, refusal()}
@@ -193,7 +195,8 @@ defmodule PhoenixKitAgent.Confirmations do
       session), when it runs out, and the arguments the model sent, as plain
       JSON text (to be shown as text, never as markup), cut to
       #{@arguments_chars} characters;
-    * `repeatable?` — the card ran out and was not asked for again;
+    * `repeatable?` — the card ran out, its call is still available, it was
+      not asked for again and no other card waits for the same write;
     * `rejectable?` — it can be turned down: it waits, or it is
       `"unavailable"` because the user may no longer use its tool (core lets
       such a row be turned down, not run).
@@ -490,7 +493,8 @@ defmodule PhoenixKitAgent.Confirmations do
 
   defp do_repeat(click) do
     with :ok <- repeatable(click),
-         {:ok, input} <- call_input(click.conversation, click.card) do
+         {:ok, input} <- call_input(click.conversation, click.card),
+         :ok <- no_waiting_duplicate(click, input) do
       click.session_ref
       |> Executor.execute_as(:admin, click.card.tool_name, input,
         allow: :all,
@@ -534,6 +538,32 @@ defmodule PhoenixKitAgent.Confirmations do
 
   defp not_superseded(click) do
     if superseded?(click.conversation, click.card), do: {:error, :not_expired}, else: :ok
+  end
+
+  # A later turn may have asked for the same write with a different assistant
+  # message. Check under the click's lock, before asking core for another row.
+  defp no_waiting_duplicate(click, input) do
+    turn = %{
+      session_ref: click.session_ref,
+      user_uuid: click.conversation.user_uuid,
+      conversation_uuid: click.conversation.uuid
+    }
+
+    if waiting_same?(turn, click.card.tool_name, input),
+      do: {:error, :already_waiting},
+      else: :ok
+  end
+
+  defp repeatable_card?(session_ref, conversation, card) do
+    click = %{session_ref: session_ref, conversation: conversation, card: card}
+
+    with :ok <- not_superseded(click),
+         {:ok, input} <- call_input(conversation, card),
+         :ok <- no_waiting_duplicate(click, input) do
+      true
+    else
+      _unavailable -> false
+    end
   end
 
   # ── what a click writes ─────────────────────────────────────────
@@ -643,10 +673,10 @@ defmodule PhoenixKitAgent.Confirmations do
         }
 
       {:ok, %{status: "expired"}} ->
-        %{base | state: "expired", repeatable?: not superseded?(conversation, row)}
+        %{base | state: "expired", repeatable?: repeatable_card?(session_ref, conversation, row)}
 
       {:error, :unknown} ->
-        %{base | state: "expired", repeatable?: not superseded?(conversation, row)}
+        %{base | state: "expired", repeatable?: repeatable_card?(session_ref, conversation, row)}
 
       # The user may no longer use its tool: it cannot run, but core lets it
       # be turned down.
@@ -658,14 +688,14 @@ defmodule PhoenixKitAgent.Confirmations do
     end
   end
 
-  defp card(_session_ref, conversation, row, outcome) do
+  defp card(session_ref, conversation, row, outcome) do
     %{
       state: outcome,
       tool: row.tool_name,
       preview: nil,
       arguments: nil,
       expires_at: nil,
-      repeatable?: outcome == "expired" and not superseded?(conversation, row),
+      repeatable?: outcome == "expired" and repeatable_card?(session_ref, conversation, row),
       rejectable?: false
     }
   end
