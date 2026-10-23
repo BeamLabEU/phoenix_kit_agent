@@ -41,7 +41,10 @@ defmodule PhoenixKitAgent.Web.ToolAvailability do
   the list by the settings alone, which would show more than such a session
   may call.
   """
-  @spec for_scope(Scope.t() | nil) :: [module_tools()]
+  # Any term: the clauses match a %Scope{} and treat anything else as no scope. A spec
+  # of Scope.t() made Dialyzer refuse a scope built by Scope.for_user/2, whose MapSet
+  # of permissions it sees through (call_without_opaque).
+  @spec for_scope(term()) :: [module_tools()]
   def for_scope(%Scope{} = scope) do
     tools = Executor.tool_availability(scope)
     by_module = Enum.group_by(tools, & &1.module_key)
