@@ -15,7 +15,9 @@ enable/disable switch (`PhoenixKitAgent`), the module-owned migration chain and
 its tables (`PhoenixKitAgent.Migrations`, `PhoenixKitAgent.Schemas.*`), the
 permission keys `agent` / `agent.manage`, the module settings and the
 Settings → AI Agent page (`PhoenixKitAgent.Config`,
-`PhoenixKitAgent.Web.SettingsLive`), the hidden Storage library
+`PhoenixKitAgent.Web.SettingsLive`), the card of what the assistant can use
+now on it and on Users → Configure (`PhoenixKitAgent.Web.ToolAvailability`),
+the hidden Storage library
 (`PhoenixKitAgent.Library`), the user-deletion cleanup
 (`PhoenixKitAgent.UserDeletion`), the chats and messages
 (`PhoenixKitAgent.Conversations`: session-bound, owner-only; a client writes
@@ -45,7 +47,8 @@ and `Web.Markdown`).
   `phoenix_kit` to the fork's branch `feat/session-confirm` until the core PR
   merges (the writes of a live session: `allow: :all`,
   `Executor.redeem_as/6`, the session functions of `API.Confirm`, the
-  `OperationPreview` component), `phoenix_kit_ai` to the fork's integration
+  `OperationPreview` component, `Executor.tool_availability/1`),
+  `phoenix_kit_ai` to the fork's integration
   branch (tool calling, #38),
   `phoenix_live_view`, and `mdex` (already phoenix_kit's) for the markdown
   of the chat panel.

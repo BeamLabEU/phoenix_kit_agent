@@ -8,11 +8,11 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
 
   import Ecto.Query, only: [from: 2]
 
-  alias PhoenixKit.Settings
+  alias PhoenixKit.{ModuleRegistry, Settings}
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Users.{Permissions, RoleAssignment, Roles}
   alias PhoenixKitAgent.Config
-  alias PhoenixKitAgent.Test.LogProbe
+  alias PhoenixKitAgent.Test.{LogProbe, Tools}
 
   @path "/en/admin/settings/agent"
   @stub __MODULE__
@@ -515,6 +515,72 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
 
       assert has_element?(view, "#agent-capture-form")
       refute Config.capture_ai_content?()
+    end
+  end
+
+  describe "what the assistant can use now" do
+    setup do
+      :ok = ModuleRegistry.register(Tools)
+      on_exit(fn -> ModuleRegistry.unregister(Tools) end)
+      :ok
+    end
+
+    defp tool_row(name), do: "#agent-tools [data-tool='#{name}']"
+
+    defp tool_status(view, name, status),
+      do: has_element?(view, tool_row(name) <> "[data-status='#{status}']")
+
+    defp tool_reason(view, name, reason),
+      do: has_element?(view, tool_row(name) <> " [data-reason='#{reason}']")
+
+    test "the module's tools for the session's role: available, or closed and why", %{
+      conn: conn
+    } do
+      manager = user_with(["agent", "agent.manage", "dashboard"], "manager")
+      {:ok, view, _html} = live(log_in(conn, manager), @path)
+
+      assert has_element?(view, "#agent-tools-note", "for your session's role")
+      assert has_element?(view, "#agent-tools-module-agent_test_tools", "Agent test tools")
+
+      assert tool_status(view, "agenttest.list_items", "available")
+      refute has_element?(view, tool_row("agenttest.list_items") <> " [data-reason]")
+
+      # A write of a module without "Agent may act"; its permission is held.
+      assert tool_status(view, "agenttest.write_item", "closed")
+      assert tool_reason(view, "agenttest.write_item", "agent_writes_off")
+      refute tool_reason(view, "agenttest.write_item", "no_permission")
+      assert has_element?(view, tool_row("agenttest.write_item"), "Agent may act")
+
+      # A read whose permission the role does not grant.
+      assert tool_status(view, "agenttest.secret_items", "closed")
+      assert tool_reason(view, "agenttest.secret_items", "no_permission")
+      assert has_element?(view, tool_row("agenttest.secret_items"), "users")
+    end
+
+    test "a module marked \"Agent may act\": its write is available", %{conn: conn} do
+      {:ok, _} = Settings.update_setting("api_session_write_modules", "agent_test_tools")
+      manager = user_with(["agent", "agent.manage", "dashboard"], "manager")
+      {:ok, view, _html} = live(log_in(conn, manager), @path)
+
+      assert tool_status(view, "agenttest.write_item", "available")
+    end
+
+    test "the role the session acts as narrows it", %{conn: conn} do
+      {:ok, _} = Settings.update_setting("role_switcher_enabled", "true")
+      manager = user_with(["agent", "agent.manage", "dashboard"], "manager")
+      {:ok, plain} = Roles.create_role(%{name: "AgentPlain#{System.unique_integer([:positive])}"})
+
+      for key <- ["agent", "agent.manage"],
+          do: {:ok, _} = Permissions.grant_permission(plain.uuid, key)
+
+      {:ok, _} = Roles.assign_role(manager, plain.name)
+
+      {conn, token} = log_in_session(conn, manager)
+      act_as(token, plain)
+      {:ok, view, _html} = live(conn, @path)
+
+      assert tool_status(view, "agenttest.list_items", "closed")
+      assert tool_reason(view, "agenttest.list_items", "no_permission")
     end
   end
 

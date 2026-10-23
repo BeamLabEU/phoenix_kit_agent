@@ -22,7 +22,9 @@ deadline), the writes the user confirms in the chat
 the model, the admin's prompt, the limits, the on/off switch and the personal
 instructions), the system prompt put together in the order of priority
 (`PhoenixKitAgent.Prompt`), Admin → AI Agent → Users, where an admin with
-`agent.manage` sees every user's model, limits and spending and sets them, the
+`agent.manage` sees every user's model, limits and spending and sets them
+(with what the assistant can use now — on Settings → AI Agent for the
+viewer's session, in the user's form by the user's roles), the
 spending and turn limits (`PhoenixKitAgent.Limits` — checked before each turn,
 with a notice in the chat and notifications to the user and the watchers) and
 Admin → AI Agent → Spending, what everyone spent today and this month, and the
