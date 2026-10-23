@@ -158,4 +158,6 @@ if missing_tools != [] do
   """)
 end
 
-ExUnit.start(exclude: exclude ++ missing_tools)
+# `render_async/2` waits for `assert_receive_timeout` (100 ms by default): too
+# short for a task that reads the database on a loaded machine.
+ExUnit.start(exclude: exclude ++ missing_tools, assert_receive_timeout: 2_000)

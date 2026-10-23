@@ -388,6 +388,20 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert unlocked?(ctx)
     end
 
+    test "a refused key is stored under its own code, not as a retry", ctx do
+      error_next(401)
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert %Message{role: "notice", error: "invalid_api_key", content: content} =
+               List.last(messages(ctx.chat))
+
+      assert content =~ "An administrator has to check"
+      refute content =~ "Try again"
+      assert unlocked?(ctx)
+    end
+
     test "an answer that cannot be stored ends the turn with a notice", ctx do
       bad = put_in(text_answer("Hi."), ["usage", "prompt_tokens"], -1)
       answer_next(bad)

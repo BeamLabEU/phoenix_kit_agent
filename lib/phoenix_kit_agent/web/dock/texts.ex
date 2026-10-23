@@ -212,6 +212,16 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
         "The AI account behind the assistant has run out of credit. An administrator has to top it up or choose another model."
       )
 
+  # The endpoint itself cannot be used: trying again changes nothing.
+  def notice(code)
+      when code in ~w(invalid_api_key api_key_forbidden endpoint_not_found endpoint_disabled
+                      endpoint_no_model integration_not_configured integration_deleted
+                      not_configured),
+      do:
+        gettext(
+          "The AI endpoint behind the assistant cannot be used right now. An administrator has to check its settings."
+        )
+
   def notice("not_found"), do: gettext("This chat is gone.")
   def notice("budget_exceeded"), do: gettext("The AI budget is used up.")
 

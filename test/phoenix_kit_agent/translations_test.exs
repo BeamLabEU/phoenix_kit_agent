@@ -146,6 +146,31 @@ defmodule PhoenixKitAgent.TranslationsTest do
     end
   end
 
+  test "an endpoint only an administrator can fix is told in every language, with no retry" do
+    codes =
+      ~w(invalid_api_key api_key_forbidden endpoint_not_found endpoint_disabled endpoint_no_model
+         integration_not_configured integration_deleted not_configured)
+
+    texts =
+      Map.new(@languages, fn locale ->
+        {locale,
+         Gettext.with_locale(PhoenixKitAgent.Gettext, locale, fn ->
+           codes |> Enum.map(&Texts.notice/1) |> Enum.uniq()
+         end)}
+      end)
+
+    for {locale, unique} <- texts do
+      assert [text] = unique, locale
+      refute text =~ ~r/try again/i, locale
+    end
+
+    [english] = texts["en"]
+    assert english =~ "An administrator has to check"
+
+    for locale <- @languages -- ["en"],
+        do: assert(texts[locale] != texts["en"], "#{locale}: is in English")
+  end
+
   test "an account out of credit is told in every language, without a provider or a retry" do
     texts =
       Map.new(@languages, fn locale ->

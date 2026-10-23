@@ -1660,6 +1660,37 @@ defmodule PhoenixKitAgent.Web.DockTest do
       refute render(view) =~ "Try again"
     end
 
+    test "an endpoint that cannot be used is told in the panel's language, never as a retry",
+         ctx do
+      turn_message!(ctx.chat, %{
+        role: "notice",
+        content: "The model did not answer. Try again.",
+        error: "invalid_api_key"
+      })
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      assert has_element?(
+               view,
+               "#pk-agent-feed [data-role=notice]",
+               "An administrator has to check"
+             )
+
+      refute render(view) =~ "Try again"
+
+      view = dock(ctx, locale: "ru")
+      open_chat(view, ctx.chat)
+
+      assert has_element?(
+               view,
+               "#pk-agent-feed [data-role=notice]",
+               "Администратору нужно проверить"
+             )
+
+      refute render(view) =~ "Try again"
+    end
+
     test "a long chat opens at its end; the earlier messages come on request", ctx do
       for n <- 1..60, do: turn_message!(ctx.chat, %{role: "notice", content: "Note #{n}."})
 

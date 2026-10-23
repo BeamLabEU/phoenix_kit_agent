@@ -332,12 +332,16 @@ defmodule PhoenixKitAgent.Confirmations do
 
     case Locks.acquire_user(user_uuid, click_ref, ttl_s, @hold_s) do
       :ok ->
-        keeper = keep_locked(user_uuid, click_ref, ttl_s)
-
+        # The release covers the keeper failing to start too.
         try do
-          fun.(click_ref)
+          keeper = keep_locked(user_uuid, click_ref, ttl_s)
+
+          try do
+            fun.(click_ref)
+          after
+            stop_keeping(keeper)
+          end
         after
-          stop_keeping(keeper)
           Locks.release_user(user_uuid, click_ref)
         end
 

@@ -234,7 +234,7 @@ defmodule PhoenixKitAgent.Web.Dock.Components do
   # Digits only, so it reads the same in every language.
   defp site_moment(datetime) do
     datetime
-    |> TimeZone.shift(Settings.get_setting("time_zone", "0"))
+    |> TimeZone.shift(Settings.get_setting_cached("time_zone", "0"))
     |> Calendar.strftime("%Y-%m-%d %H:%M")
   end
 

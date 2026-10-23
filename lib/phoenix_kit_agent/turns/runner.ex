@@ -152,6 +152,12 @@ defmodule PhoenixKitAgent.Turns.Runner do
                    endpoint_no_model integration_not_configured integration_deleted
                    not_configured)a
 
+  # The model errors that only an administrator can end: the notice does not
+  # say to try again (`PhoenixKitAgent.Web.Dock.Texts`).
+  @endpoint_unusable ~w(invalid_api_key api_key_forbidden endpoint_not_found endpoint_disabled
+                        endpoint_no_model integration_not_configured integration_deleted
+                        not_configured)a
+
   # The refusals of the AI guard (`PhoenixKitAI.Guard`), each a code of its
   # own in `messages.error`: `{reason, …}` is stored as `reason`.
   @guard_errors ~w(model_unfit model_unverified no_provider_for_params task_blocked
@@ -840,6 +846,11 @@ defmodule PhoenixKitAgent.Turns.Runner do
     do:
       "The AI account behind the assistant has run out of credit. " <>
         "An administrator has to top it up or choose another model."
+
+  defp model_error_text(reason, _unsent?) when reason in @endpoint_unusable,
+    do:
+      "The AI endpoint behind the assistant cannot be used right now. " <>
+        "An administrator has to check its settings."
 
   defp model_error_text(_reason, true),
     do:
