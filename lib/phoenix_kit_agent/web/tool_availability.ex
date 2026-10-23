@@ -26,6 +26,7 @@ defmodule PhoenixKitAgent.Web.ToolAvailability do
   import PhoenixKitWeb.Components.Core.FormSection, only: [form_section: 1]
 
   alias PhoenixKit.API.Executor
+  alias PhoenixKit.ModuleRegistry
   alias PhoenixKit.Users.Auth.Scope
 
   @typedoc "One module and its admin tools, as `Executor.tool_availability/1` shows them."
@@ -54,13 +55,27 @@ defmodule PhoenixKitAgent.Web.ToolAvailability do
     |> Enum.map(fn tool ->
       %{
         key: tool.module_key,
-        name: tool.module_name,
+        name: module_label(tool.module_key, tool.module_name),
         tools: Map.fetch!(by_module, tool.module_key)
       }
     end)
   end
 
   def for_scope(_none), do: []
+
+  @doc false
+  # A module's name, translated as Settings -> API does it: by the gettext backend the
+  # module declares in its permission_metadata/0 (the one the permissions matrix uses),
+  # then by core's own catalogue.
+  @spec module_label(String.t() | nil, String.t()) :: String.t()
+  def module_label(key, name) do
+    with {backend, domain} <- Map.get(ModuleRegistry.permission_gettext(), key),
+         translated when translated != name <- Gettext.dgettext(backend, domain, name) do
+      translated
+    else
+      _ -> Gettext.gettext(PhoenixKitWeb.Gettext, name)
+    end
+  end
 
   @doc """
   The card. `subject` says whose rights the list is by: `:session` (the

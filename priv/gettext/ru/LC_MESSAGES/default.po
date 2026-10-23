@@ -1308,87 +1308,87 @@ msgstr "Сейчас подтверждается изменение. Попро
 msgid "What became of this change could not be saved in the chat. Open the chat again to see it."
 msgstr "Не удалось сохранить в чате, чем закончилось это изменение. Откройте чат снова, чтобы увидеть это."
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:123
+#: lib/phoenix_kit_agent/web/tool_availability.ex:138
 #, elixir-autogen, elixir-format
 msgid "Available"
 msgstr "Доступно"
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:128
+#: lib/phoenix_kit_agent/web/tool_availability.ex:143
 #, elixir-autogen, elixir-format
 msgid "Closed"
 msgstr "Закрыт"
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:188
+#: lib/phoenix_kit_agent/web/tool_availability.ex:203
 #, elixir-autogen, elixir-format
 msgid "It writes, and “Agent may act” is off for the module in Settings → API."
 msgstr "Инструмент изменяет данные, а «Агент может выполнять действия» у модуля выключено в Настройки → API."
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:82
+#: lib/phoenix_kit_agent/web/tool_availability.ex:97
 #, elixir-autogen, elixir-format
 msgid "No module offers the assistant tools."
 msgstr "Ни один модуль не даёт ассистенту инструментов."
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:132
+#: lib/phoenix_kit_agent/web/tool_availability.ex:147
 #, elixir-autogen, elixir-format
 msgid "Permission: %{permission}"
 msgstr "Право: %{permission}"
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:118
+#: lib/phoenix_kit_agent/web/tool_availability.ex:133
 #, elixir-autogen, elixir-format
 msgid "Read only"
 msgstr "Только чтение"
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:171
+#: lib/phoenix_kit_agent/web/tool_availability.ex:186
 #, elixir-autogen, elixir-format
 msgid "Reading: %{available} of %{total}"
 msgstr "Чтение: %{available} из %{total}"
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:179
+#: lib/phoenix_kit_agent/web/tool_availability.ex:194
 #, elixir-autogen, elixir-format
 msgid "The module is switched off."
 msgstr "Модуль отключён."
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:182
+#: lib/phoenix_kit_agent/web/tool_availability.ex:197
 #, elixir-autogen, elixir-format
 msgid "The module's API is off in Settings → API."
 msgstr "API модуля выключен в Настройки → API."
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:185
+#: lib/phoenix_kit_agent/web/tool_availability.ex:200
 #, elixir-autogen, elixir-format
 msgid "The tool is hidden in Settings → API."
 msgstr "Инструмент скрыт в Настройки → API."
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:150
+#: lib/phoenix_kit_agent/web/tool_availability.ex:165
 #, elixir-autogen, elixir-format
 msgid "The tools of the site's modules as the assistant finds them for your session's role: available, or closed and why. A write still waits for the user's confirmation."
 msgstr "Инструменты модулей сайта так, как их находит ассистент для роли вашей сессии: доступные или закрытые с причиной. Запись по-прежнему ждёт подтверждения пользователя."
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:156
+#: lib/phoenix_kit_agent/web/tool_availability.ex:171
 #, elixir-autogen, elixir-format
 msgid "The tools of the site's modules as this user's assistant finds them, by the user's roles; the role of a session can narrow it. A write still waits for the user's confirmation."
 msgstr "Инструменты модулей сайта так, как их находит ассистент этого пользователя, по ролям пользователя; роль сессии может их сузить. Запись по-прежнему ждёт подтверждения пользователя."
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:194
+#: lib/phoenix_kit_agent/web/tool_availability.ex:209
 #, elixir-autogen, elixir-format
 msgid "The user's roles do not grant its permission."
 msgstr "Роли пользователя не дают на это права."
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:75
+#: lib/phoenix_kit_agent/web/tool_availability.ex:90
 #, elixir-autogen, elixir-format
 msgid "What the assistant can use now"
 msgstr "Что сейчас может ассистент"
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:115
+#: lib/phoenix_kit_agent/web/tool_availability.ex:130
 #, elixir-autogen, elixir-format
 msgid "Writes"
 msgstr "Изменяет данные"
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:174
+#: lib/phoenix_kit_agent/web/tool_availability.ex:189
 #, elixir-autogen, elixir-format
 msgid "Writing: %{available} of %{total}"
 msgstr "Запись: %{available} из %{total}"
 
-#: lib/phoenix_kit_agent/web/tool_availability.ex:191
+#: lib/phoenix_kit_agent/web/tool_availability.ex:206
 #, elixir-autogen, elixir-format
 msgid "Your session's role does not grant its permission."
 msgstr "Роль вашей сессии не даёт на это права."
