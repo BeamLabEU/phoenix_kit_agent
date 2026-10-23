@@ -50,8 +50,8 @@ and `Web.Markdown`).
   merges (the writes of a live session: `allow: :all`,
   `Executor.redeem_as/6`, the session functions of `API.Confirm`, the
   `OperationPreview` component, `Executor.tool_availability/1`),
-  `phoenix_kit_ai` to the fork's branch
-  `feat/task-user-limits-flag` (the AI task guard, with tool calling, #38),
+  `phoenix_kit_ai` to the fork's integration branch (the AI task guard,
+  with tool calling, #38, and a call's cost from one place, #50),
   `phoenix_live_view`, and `mdex` (already phoenix_kit's) for the markdown
   of the chat panel.
 - **Module key** `"agent"`; settings prefix `agent_`; tables
