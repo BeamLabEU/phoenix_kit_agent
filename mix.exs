@@ -139,7 +139,7 @@ defmodule PhoenixKitAgent.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib priv .formatter.exs mix.exs README.md LICENSE)
+      files: ~w(lib priv .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 
