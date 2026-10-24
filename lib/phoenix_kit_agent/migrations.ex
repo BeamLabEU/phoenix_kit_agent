@@ -42,8 +42,9 @@ defmodule PhoenixKitAgent.Migrations do
   Deleting a user deletes their rows of every table (`ON DELETE CASCADE`); a
   deleted `phoenix_kit_ai_requests` row, AI endpoint or Storage file leaves the
   link `NULL` and never blocks the delete. Money is in micro-dollars
-  (`*_micro_usd`, `$1 = 1_000_000`), the unit of
-  `phoenix_kit_ai_requests.cost_cents`.
+  (`*_micro_usd`, `$1 = 1_000_000`); the AI journal keeps dollars
+  (`phoenix_kit_ai_requests.cost`), turned into micro-dollars by
+  `PhoenixKitAgent.Config.cost_to_micro/1`.
 
   ## Version marker
 

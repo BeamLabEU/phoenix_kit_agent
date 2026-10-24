@@ -230,8 +230,9 @@ fails with `pdf_tools_missing` / `image_tools_missing`, nothing else breaks.
 Per user, the user's own value else the module default (Settings → AI Agent):
 money per day and per month and turns per day. Money is what the AI request
 journal of `phoenix_kit_ai` recorded for the user's assistant calls
-(`metadata.source = "agent"`, attachment descriptions included), in
-micro-dollars (`$1 = 1_000_000`); a turn is one message the user sent. The day
+(`metadata.source = "agent"`, attachment descriptions included). The journal
+holds dollars; the module counts them as whole micro-dollars (`$1 = 1_000_000`),
+each day's and month's sum rounded half up once; a turn is one message the user sent. The day
 and the month are those of the site time zone. Money counts only on an endpoint
 whose calls get a cost in the journal (`PhoenixKitAI.reports_cost?/1`: the
 provider reports it, as OpenRouter does, or `phoenix_kit_ai` prices the model

@@ -216,7 +216,7 @@ defmodule PhoenixKitAgent.ModelsTest do
         %{
           provider: "deepseek",
           model: model,
-          provider_settings: %{"pricing" => %{"input" => 270_000, "output" => 1_100_000}}
+          provider_settings: %{"pricing" => %{"input" => "0.27", "output" => "1.1"}}
         },
         scope: scope_of(owner_fixture())
       )

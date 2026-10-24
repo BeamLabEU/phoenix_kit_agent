@@ -492,17 +492,25 @@ defmodule PhoenixKitAgent.Web.DockTest do
          ctx do
       {:ok, _} = PhoenixKit.Settings.update_setting("time_zone", "Europe/Tallinn")
       chat = conversation_fixture(ctx.user, %{title: "When"})
-
-      chat
-      |> Ecto.Changeset.change(last_message_at: ~U[2026-07-15 12:00:00.000000Z])
-      |> Repo.update!()
+      moment = at(5 * 86_400 + 60)
+      chat |> Ecto.Changeset.change(last_message_at: moment) |> Repo.update!()
 
       view = dock(ctx, locale: "ru")
       selector = "#pk-agent-chat-time-#{chat.uuid}"
 
+      tallinn =
+        moment
+        |> DateTime.shift_zone!("Europe/Tallinn", Tz.TimeZoneDatabase)
+        |> Calendar.strftime("%Y-%m-%d %H:%M")
+
+      ago =
+        Gettext.with_locale(PhoenixKitAgent.Gettext, "ru", fn ->
+          Gettext.ngettext(PhoenixKitAgent.Gettext, "%{count} day ago", "%{count} days ago", 5)
+        end)
+
       refute has_element?(view, "#{selector}[phx-hook]")
-      assert has_element?(view, "#{selector}[title='2026-07-15 15:00']")
-      assert has_element?(view, selector, "дней назад")
+      assert has_element?(view, "#{selector}[title='#{tallinn}']")
+      assert has_element?(view, selector, ago)
     end
 
     test "renames and archives the user's own chat", ctx do

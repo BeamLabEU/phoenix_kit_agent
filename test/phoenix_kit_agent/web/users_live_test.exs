@@ -58,7 +58,7 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
       user_uuid: user.uuid,
       model: endpoint.model,
       status: "success",
-      cost_cents: cost,
+      cost: journal_cost(cost),
       metadata: %{"source" => "agent"},
       inserted_at: DateTime.truncate(DateTime.utc_now(), :second)
     })
@@ -150,7 +150,7 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
             name: "Priced",
             provider: "deepseek",
             model: "deepseek-chat",
-            provider_settings: %{"pricing" => %{"input" => 270_000, "output" => 1_100_000}}
+            provider_settings: %{"pricing" => %{"input" => "0.27", "output" => "1.1"}}
           },
           scope: scope_of(owner_fixture())
         )
