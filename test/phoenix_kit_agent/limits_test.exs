@@ -32,7 +32,7 @@ defmodule PhoenixKitAgent.LimitsTest do
       model: endpoint.model,
       status: "success",
       request_type: Keyword.get(opts, :type, "chat"),
-      cost_cents: cost,
+      cost: journal_cost(cost),
       metadata: Keyword.get(opts, :metadata, %{"source" => "agent"}),
       inserted_at: Keyword.get(opts, :at, DateTime.truncate(DateTime.utc_now(), :second))
     })
@@ -240,8 +240,10 @@ defmodule PhoenixKitAgent.LimitsTest do
 
       # The row phoenix_kit_ai writes for the call: Anthropic reports no cost,
       # its list price gives one ($2 / $10 per 1M tokens).
-      assert {14_000, %{cost_source: "table"} = source} =
+      assert {cost, %{cost_source: "table"} = source} =
                PhoenixKitAI.CallCost.for_call(claude, "claude-sonnet-5-5", nil, 2_000, 1_000)
+
+      assert Decimal.equal?(cost, "0.014")
 
       spend!(ctx.user, claude, 14_000,
         metadata: %{"source" => "agent", "cost_source" => source.cost_source}
@@ -276,8 +278,10 @@ defmodule PhoenixKitAgent.LimitsTest do
                  cache: false
                )
 
-      assert [%{cost_cents: 14_000, metadata: %{"cost_source" => "table"}}] =
+      assert [%{cost: cost, metadata: %{"cost_source" => "table"}}] =
                Repo.all(from(r in PhoenixKitAI.Request, where: r.user_uuid == ^ctx.user.uuid))
+
+      assert Decimal.equal?(cost, "0.014")
 
       assert %{day_micro_usd: 14_000} = Limits.usage(ctx.user.uuid)
 
@@ -291,7 +295,7 @@ defmodule PhoenixKitAgent.LimitsTest do
           %{
             provider: "deepseek",
             model: "deepseek-chat",
-            provider_settings: %{"pricing" => %{"input" => 270_000, "output" => 1_100_000}}
+            provider_settings: %{"pricing" => %{"input" => "0.27", "output" => "1.1"}}
           },
           scope: scope_of(ctx.owner)
         )

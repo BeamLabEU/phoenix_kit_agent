@@ -45,15 +45,13 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
 `Web.Dock.Panel` (markup and hooks), `Web.Dock.Components`, `Web.Dock.Texts`
 and `Web.Markdown`).
 
-- **Depends on:** `phoenix_kit` and `phoenix_kit_ai` — for now git pins:
-  `phoenix_kit` to the fork's branch `feat/session-confirm` until the core PR
-  merges (the writes of a live session: `allow: :all`,
-  `Executor.redeem_as/6`, the session functions of `API.Confirm`, the
-  `OperationPreview` component, `Executor.tool_availability/1`),
-  `phoenix_kit_ai` to the fork's integration branch (the AI task guard,
-  with tool calling, #38, and a call's cost from one place, #50),
-  `phoenix_live_view`, and `mdex` (already phoenix_kit's) for the markdown
-  of the chat panel.
+- **Depends on:** `phoenix_kit` `~> 2.64` (the writes of a live session:
+  `allow: :all`, `Executor.redeem_as/6`, the session functions of
+  `API.Confirm`, the `OperationPreview` component,
+  `Executor.tool_availability/1`; the AI journal's cost in dollars, V223),
+  `phoenix_kit_ai` `~> 0.26` (the AI task guard, tool calling, a call's
+  cost from one place, `Request.cost` in dollars), `phoenix_live_view`, and
+  `mdex` (already phoenix_kit's) for the markdown of the chat panel.
 - **Module key** `"agent"`; settings prefix `agent_`; tables
   `phoenix_kit_agent_*` (marker `pk_agent_schema:<N>` on
   `phoenix_kit_agent_conversations`).
@@ -83,7 +81,9 @@ and `Web.Markdown`).
 - **Money and turns:** money only from the AI journal (`user_uuid` +
   `metadata.source = "agent"`), never from the module's own messages; every
   model call of the module passes `user_uuid:` and `source: "agent"`; every
-  journal row with a cost counts, whatever its status. Turns
+  journal row with a cost counts, whatever its status. The journal's `cost`
+  is dollars; the module counts whole micro-dollars (`*_micro_usd`), made
+  only by `Config.cost_to_micro/1` (half up, a sum rounded once). Turns
   from the `user` messages with a `turn_ref`. The limit check runs under the
   locks, so the previous turn's spending is in. A turn is never killed
   outright: "Stop" and the deadline ask it to stop between steps

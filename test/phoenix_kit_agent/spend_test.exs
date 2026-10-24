@@ -21,7 +21,7 @@ defmodule PhoenixKitAgent.SpendTest do
       user_uuid: user.uuid,
       model: endpoint.model,
       status: status,
-      cost_cents: cost,
+      cost: journal_cost(cost),
       metadata: metadata,
       inserted_at: at
     })
@@ -122,6 +122,20 @@ defmodule PhoenixKitAgent.SpendTest do
 
       assert %{day_micro_usd: 47, month_micro_usd: 47} =
                Spend.for_users([ctx.user.uuid], now)[ctx.user.uuid]
+    end
+
+    test "dollars finer than a micro-dollar are summed first, then rounded half up", ctx do
+      now = ~U[2026-07-15 12:00:00Z]
+
+      spend!(ctx.user, ctx.endpoint, Decimal.new("0.0000004"), ~U[2026-07-15 08:00:00Z])
+      spend!(ctx.user, ctx.endpoint, Decimal.new("0.0000004"), ~U[2026-07-15 09:00:00Z])
+      spend!(ctx.user, ctx.endpoint, Decimal.new("0.0000017"), ~U[2026-07-03 08:00:00Z])
+
+      # Day: $0.0000008 is 0.8 micro, 1. Month: $0.0000025 is 2.5 micro, 3 —
+      # not 2, as rounding each row (0 + 0 + 2) or half to even would give.
+      assert Spend.for_users([ctx.user.uuid], now) == %{
+               ctx.user.uuid => %{day_micro_usd: 1, month_micro_usd: 3}
+             }
     end
 
     test "a sum over what one row can hold is still a whole number", ctx do

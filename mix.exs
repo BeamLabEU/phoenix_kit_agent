@@ -88,35 +88,18 @@ defmodule PhoenixKitAgent.MixProject do
   defp deps do
     [
       # PhoenixKit provides the Module behaviour, the Settings API, the API
-      # Executor (execute_as/visible_for), SessionRef and hidden Storage
-      # libraries.
-      # A fork branch until the core PR merges: feat/session-confirm, upstream
-      # main plus the writes of a live session (allow: :all, Executor.redeem_as/6,
-      # the session functions of API.Confirm, the OperationPreview component,
-      # Executor.tool_availability/1).
-      # Switch back to upstream, then to a Hex requirement, once they ship.
-      pk_dep(:phoenix_kit,
-        git: "https://github.com/timujinne/phoenix_kit.git",
-        ref: "ddaba6bf531abeaf4ffd89bcad8073e0c1389aa3",
-        override: true
-      ),
+      # Executor (execute_as/visible_for, the writes of a live session:
+      # allow: :all, redeem_as/6, tool_availability/1), API.Confirm, the
+      # OperationPreview component, SessionRef and hidden Storage libraries.
+      # 2.64 is the first release with the AI journal's cost in dollars (V223).
+      pk_dep(:phoenix_kit, "~> 2.64"),
 
       # Model calls, endpoints, credentials, budget and the request journal
-      # come from phoenix_kit_ai; this module only adds the chat layer.
-      # Pin until release: the fork's integration branch, which is the branch
-      # fix/endpoint-form-connection-params (#50) plus the fix of an endpoint's
-      # lookup by name (same-second ties broken by uuid): the AI task guard
-      # (tasks, capabilities, admission, blocks, off-purpose flags, the
-      # TaskSpec user_limits flag; #49 and the stack under it, with tool
-      # calling, #38) plus a call's cost from one place
-      # (PhoenixKitAI.CallCost: the provider's, a catalogue, a manual or
-      # Anthropic's list price, for chat and the vision verbs alike;
-      # PhoenixKitAI.reports_cost?/1).
-      pk_dep(:phoenix_kit_ai,
-        git: "https://github.com/timujinne/phoenix_kit_ai.git",
-        ref: "f8f2968867375d71d00e07e1c2172948fe657181",
-        override: true
-      ),
+      # come from phoenix_kit_ai; this module only adds the chat layer: the AI
+      # task guard (tasks, capabilities, admission, blocks, off-purpose flags),
+      # tool calling and a call's cost from one place (PhoenixKitAI.CallCost),
+      # with Request.cost in dollars from 0.26.
+      pk_dep(:phoenix_kit_ai, "~> 0.26"),
 
       # LiveView is needed for the admin pages (Phase 1).
       {:phoenix_live_view, "~> 1.1"},

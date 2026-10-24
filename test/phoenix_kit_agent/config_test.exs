@@ -343,4 +343,19 @@ defmodule PhoenixKitAgent.ConfigTest do
       assert %{daily_cost_limit_usd: [_]} = errors_on(changeset)
     end
   end
+
+  describe "cost_to_micro/1" do
+    test "a journal cost in dollars is whole micro-dollars, rounded half up" do
+      assert Config.cost_to_micro(Decimal.new("0.005")) == 5_000
+      assert Config.cost_to_micro(Decimal.new("0.0000004")) == 0
+      assert Config.cost_to_micro(Decimal.new("0.0000005")) == 1
+      assert Config.cost_to_micro(Decimal.new("0.0000025")) == 3
+      assert Config.cost_to_micro(Decimal.new("0.000000000000000001")) == 0
+      assert Config.cost_to_micro(Decimal.new(0)) == 0
+    end
+
+    test "no cost known stays nil" do
+      assert Config.cost_to_micro(nil) == nil
+    end
+  end
 end

@@ -1889,7 +1889,7 @@ defmodule PhoenixKitAgent.TurnsTest do
         model: endpoint.model,
         status: "success",
         request_type: "vision",
-        cost_cents: cost,
+        cost: journal_cost(cost),
         metadata: %{"source" => "agent"},
         inserted_at: DateTime.truncate(DateTime.utc_now(), :second)
       })
@@ -2106,6 +2106,20 @@ defmodule PhoenixKitAgent.TurnsTest do
                Turns.start(ctx.ref, false, ctx.chat.uuid, "More")
     end
 
+    test "an answer's cost in dollars is kept on its message in whole micro-dollars", ctx do
+      answer_next(answer_with_cost(tool_answer([call("c1", "agenttest_list_items", %{})]), 0.005))
+      answer_next(answer_with_cost(text_answer("Done."), 0.0000025))
+
+      turn_ref = start!(ctx, "Hi")
+      await_end(ctx.chat, turn_ref)
+
+      assert [5_000, 3] =
+               for(
+                 %Message{role: "assistant", cost_micro_usd: cost} <- messages(ctx.chat),
+                 do: cost
+               )
+    end
+
     test "an endpoint without a cost: the money limit does not act, the turn limit does", ctx do
       direct = endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
 
@@ -2118,7 +2132,9 @@ defmodule PhoenixKitAgent.TurnsTest do
       answer_next(text_answer("Fine."))
       turn_ref = start!(ctx, "Hi")
       await_end(ctx.chat, turn_ref)
-      assert %Message{role: "assistant", content: "Fine."} = List.last(messages(ctx.chat))
+
+      assert %Message{role: "assistant", content: "Fine.", cost_micro_usd: nil} =
+               List.last(messages(ctx.chat))
 
       assert {:error, {:limit_reached, :daily_turns}} =
                Turns.start(ctx.ref, false, ctx.chat.uuid, "Again")
@@ -2199,7 +2215,8 @@ defmodule PhoenixKitAgent.TurnsTest do
       await_end(ctx.chat, turn_ref)
 
       assert [%Message{role: "user"}] = messages(ctx.chat)
-      assert [%{cost_cents: 2_000}] = journal(ctx.user)
+      assert [%{cost: cost}] = journal(ctx.user)
+      assert Decimal.equal?(cost, "0.002")
       refute_received {:agent_test_tool, _, _, _}
       assert unlocked?(ctx)
     end
@@ -2224,7 +2241,8 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert [%Message{role: "user"}, %Message{role: "notice", error: "deadline"}] =
                messages(ctx.chat)
 
-      assert [%{cost_cents: 2_000}] = journal(ctx.user)
+      assert [%{cost: cost}] = journal(ctx.user)
+      assert Decimal.equal?(cost, "0.002")
       assert unlocked?(ctx)
     end
 

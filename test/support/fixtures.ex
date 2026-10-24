@@ -93,6 +93,14 @@ defmodule PhoenixKitAgent.Fixtures do
     endpoint
   end
 
+  @doc """
+  A journal cost (`PhoenixKitAI.Request.cost`, dollars) from micro-dollars,
+  the unit the tests count in; a `Decimal` is taken as dollars already.
+  """
+  def journal_cost(nil), do: nil
+  def journal_cost(%Decimal{} = usd), do: usd
+  def journal_cost(micro) when is_integer(micro), do: Decimal.div(micro, 1_000_000)
+
   def ai_request_fixture(user, endpoint) do
     %PhoenixKitAI.Request{}
     |> PhoenixKitAI.Request.changeset(%{

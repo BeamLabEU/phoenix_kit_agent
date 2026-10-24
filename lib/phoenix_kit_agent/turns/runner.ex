@@ -121,7 +121,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   alias PhoenixKit.API.Executor
   alias PhoenixKit.API.MCP.Names
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Attachments, Confirmations, Conversations}
+  alias PhoenixKitAgent.{Attachments, Config, Confirmations, Conversations}
   alias PhoenixKitAgent.Schemas.{Conversation, Message}
   alias PhoenixKitAgent.Turns.{Locks, Monitor, Tools}
 
@@ -503,7 +503,8 @@ defmodule PhoenixKitAgent.Turns.Runner do
   end
 
   # Model, tokens, cost and latency: from the journal row when the usage sink
-  # caught it (cost is in micro-dollars there too), else from the response.
+  # caught it (its cost is dollars, kept here in whole micro-dollars), else
+  # from the response.
   defp usage(nil, response, latency_ms) do
     usage = response["usage"] || %{}
 
@@ -520,7 +521,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
       model: request.model || response["model"],
       input_tokens: request.input_tokens,
       output_tokens: request.output_tokens,
-      cost_micro_usd: request.cost_cents,
+      cost_micro_usd: Config.cost_to_micro(request.cost),
       latency_ms: request.latency_ms || latency_ms
     }
   end
