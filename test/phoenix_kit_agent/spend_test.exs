@@ -138,7 +138,7 @@ defmodule PhoenixKitAgent.SpendTest do
              }
     end
 
-    test "a sum over what one row can hold is still a whole number", ctx do
+    test "a sum of large costs is still a whole number of micro-dollars", ctx do
       spend!(ctx.user, ctx.endpoint, 2_000_000_000, ~U[2026-07-15 08:00:00Z])
       spend!(ctx.user, ctx.endpoint, 2_000_000_000, ~U[2026-07-15 09:00:00Z])
 

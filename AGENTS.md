@@ -83,7 +83,8 @@ and `Web.Markdown`).
   model call of the module passes `user_uuid:` and `source: "agent"`; every
   journal row with a cost counts, whatever its status. The journal's `cost`
   is dollars; the module counts whole micro-dollars (`*_micro_usd`), made
-  only by `Config.cost_to_micro/1` (half up, a sum rounded once). Turns
+  only by `Config.cost_to_micro/1` (half up; a limit's day or month sum is
+  rounded once, a message's own cost on its own — a chat's total adds those). Turns
   from the `user` messages with a `turn_ref`. The limit check runs under the
   locks, so the previous turn's spending is in. A turn is never killed
   outright: "Stop" and the deadline ask it to stop between steps
