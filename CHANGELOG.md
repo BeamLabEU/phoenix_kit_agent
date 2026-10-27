@@ -2,7 +2,7 @@
 
 All notable changes to PhoenixKitAgent will be documented in this file.
 
-## 0.2.0 - 2026-11-13
+## 0.2.0 - 2026-10-27
 
 ### Changed
 
