@@ -1,7 +1,7 @@
 defmodule PhoenixKitAgent.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_agent"
 
   def project do
@@ -99,7 +99,7 @@ defmodule PhoenixKitAgent.MixProject do
       # task guard (tasks, capabilities, admission, blocks, off-purpose flags),
       # tool calling and a call's cost from one place (PhoenixKitAI.CallCost),
       # with Request.cost in dollars from 0.26.
-      pk_dep(:phoenix_kit_ai, "~> 0.26"),
+      pk_dep(:phoenix_kit_ai, "~> 0.27"),
 
       # LiveView is needed for the admin pages (Phase 1).
       {:phoenix_live_view, "~> 1.1"},
