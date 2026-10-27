@@ -81,24 +81,26 @@ repo_available =
     {:ok, _} = TestRepo.start_link()
     PhoenixKit.Migration.ensure_current(TestRepo, log: false)
 
-    # Keyed on the chain version, so a bump re-applies; the chain is
-    # idempotent, so a re-run against an up-to-date database is a no-op.
-    Ecto.Migrator.run(
-      TestRepo,
-      [{PhoenixKitAgent.Migrations.current_version(), PhoenixKitAgent.Test.SchemaMigration}],
-      :up,
-      all: true,
-      log: false
-    )
-
-    # The chain of phoenix_kit_ai (the AI task guard's tables), the way the
-    # host's migration runs it; its key is offset from this module's own.
+    # The chain of phoenix_kit_ai first: this module's tables reference its
+    # requests (core 3.0 creates none of them), and the AI task guard reads them.
+    # Run the way the host's migration runs it; its key is offset from this
+    # module's own.
     Ecto.Migrator.run(
       TestRepo,
       [
         {1_000 + PhoenixKitAI.Migrations.current_version(),
          PhoenixKitAgent.Test.AISchemaMigration}
       ],
+      :up,
+      all: true,
+      log: false
+    )
+
+    # Keyed on the chain version, so a bump re-applies; the chain is
+    # idempotent, so a re-run against an up-to-date database is a no-op.
+    Ecto.Migrator.run(
+      TestRepo,
+      [{PhoenixKitAgent.Migrations.current_version(), PhoenixKitAgent.Test.SchemaMigration}],
       :up,
       all: true,
       log: false
