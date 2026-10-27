@@ -2,6 +2,12 @@
 
 All notable changes to PhoenixKitAgent will be documented in this file.
 
+## Unreleased
+
+### Changed
+
+- **Core pin widened to accept core 3.x** (ceiling `< 4.0.0`; the floor is unchanged).
+
 ## 0.1.0 - 2026-10-24
 
 First release. An AI assistant inside a PhoenixKit application: every user
