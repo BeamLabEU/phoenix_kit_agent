@@ -591,8 +591,8 @@ defmodule PhoenixKitAgent.Web.DockTest do
     test "the browser's memory is pushed on mount and again after a reconnect", ctx do
       script = ctx |> dock() |> hook_script(".DockState")
 
-      assert script =~ ~r/mounted\(\)\s*\{[^`]*this\.restore\(\)\s*\},\s*reconnected\(\)/
-      assert script =~ ~r/reconnected\(\)\s*\{\s*this\.restore\(\)/
+      assert script =~ ~r/mounted\(\)\s*\{[^`]*this\.restore\(\)\s*\},\s*updated\(\)/
+      assert script =~ ~r/reconnected\(\)\s*\{\s*this\.apply\(\)\s*this\.restore\(\)/
       assert script =~ ~r/restore\(\)\s*\{[^}]*pushEvent\("restore"/
     end
 
@@ -1292,6 +1292,33 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert has_element?(view, "#pk-agent-panel[data-restored='2']")
     end
 
+    test "the feed scroller carries the chat and the restore count the hook pins on", ctx do
+      view = dock(ctx)
+      uuid = ctx.chat.uuid
+
+      render_hook(view, "restore", %{"open" => true, "conversation_uuid" => uuid})
+
+      assert has_element?(
+               view,
+               "#pk-agent-feed-scroll[data-conversation='#{uuid}'][data-restored='1']"
+             )
+
+      assert has_element?(view, "#pk-agent-feed-scroll > #pk-agent-feed-content #pk-agent-feed")
+    end
+
+    test "the hooks keep the open state across navigations and pin the feed after them", ctx do
+      view = dock(ctx)
+      state = hook_script(view, ".DockState")
+      feed = hook_script(view, ".Feed")
+
+      assert state =~ "phx:page-loading-stop"
+      assert state =~ ~s|classList.add("pk-dock-open")|
+      refute state =~ ~s|classList.remove("pk-dock-open")|
+      assert feed =~ "phx:page-loading-stop"
+      assert feed =~ "phx:page-loading-start"
+      assert feed =~ "resizer.observe(this.el.firstElementChild)"
+    end
+
     test "the indicator's own timeout starts again after a reconnect and for each turn", ctx do
       view = dock(ctx)
       script = hook_script(view, ".Waiting")
@@ -1368,6 +1395,41 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert html =~ "pk-agent-dock-error"
       assert html =~ "UTF-8"
       refute html =~ "unsupported_encoding"
+      assert attachments_of(ctx.chat) == []
+    end
+
+    test "a picture of an unlisted image type is taken in by the image/* wildcard", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      upload(view, "IMG_20261029_101500", Files.jpeg(64, 48), "image/x-camera-raw")
+
+      # Accepted by LiveView: what stops it is the content check, not the list.
+      assert await_files(view) =~ "no model that sees images"
+      refute render(view) =~ "pk-agent-upload-error"
+    end
+
+    test "a file LiveView refuses is shown and logged by its class only", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      {result, logs} =
+        LogProbe.capture(fn ->
+          input =
+            file_input(view, "#pk-agent-composer", :files, [
+              %{name: "SecretName.exe", content: "MZ", type: "application/octet-stream"}
+            ])
+
+          result = render_upload(input, "SecretName.exe")
+          assert render(view) =~ "text-error"
+          # The browser's change event that follows a file pick.
+          view |> form("#pk-agent-composer") |> render_change()
+          result
+        end)
+
+      assert {:error, [[_ref, :not_accepted]]} = result
+      assert Enum.any?(logs, &(&1 =~ "[PhoenixKitAgent] an upload was refused: :not_accepted"))
+      refute Enum.any?(logs, &(&1 =~ "SecretName"))
       assert attachments_of(ctx.chat) == []
     end
 
