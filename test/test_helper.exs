@@ -145,10 +145,15 @@ end
 
 exclude = if skip_db?, do: [:integration], else: []
 
-# Attachment tests that need an external program carry its tag; without the
+# Tests that need an external program carry its tag (the attachments' poppler and
+# ImageMagick, the browser hooks' node); without the
 # program they are excluded, loudly, never passed.
 missing_tools =
-  [poppler: ["pdftotext", "pdftoppm", "pdfinfo"], imagemagick: ["convert", "identify"]]
+  [
+    poppler: ["pdftotext", "pdftoppm", "pdfinfo"],
+    imagemagick: ["convert", "identify"],
+    node: ["node"]
+  ]
   |> Enum.reject(fn {_tag, tools} -> Enum.all?(tools, &System.find_executable/1) end)
   |> Keyword.keys()
 

@@ -1372,6 +1372,30 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert feed =~ "resizer.observe(this.el.firstElementChild)"
     end
 
+    @tag :node
+    test "the browser hooks behave as the panel promises (run on a fake DOM)", ctx do
+      view = dock(ctx)
+      dir = Path.join(System.tmp_dir!(), "pk_agent_hooks_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      for {env, name} <- [{"HOOK_FEED", ".Feed"}, {"HOOK_COMPOSER", ".Composer"}] do
+        File.write!(Path.join(dir, env), hook_script(view, name))
+      end
+
+      env = for name <- ["HOOK_FEED", "HOOK_COMPOSER"], do: {name, Path.join(dir, name)}
+
+      {output, status} =
+        System.cmd("node", ["--test", Path.expand("../../js/hooks.test.mjs", __DIR__)],
+          env: env,
+          stderr_to_stdout: true
+        )
+
+      assert status == 0, output
+      assert output =~ ~r/# pass [1-9]/
+      assert output =~ "# fail 0"
+    end
+
     test "the indicator's own timeout starts again after a reconnect and for each turn", ctx do
       view = dock(ctx)
       script = hook_script(view, ".Waiting")

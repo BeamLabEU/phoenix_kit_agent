@@ -502,6 +502,8 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           this.conversation = this.el.dataset.conversation || ""
           this.restored = this.el.dataset.restored || ""
           this.restoredOnce = false
+          this.fromBottom = 0
+          this.away = null
           this.pin = () => { this.el.scrollTop = this.el.scrollHeight }
           // The feed is hidden (not removed) until it stands at its end, so
           // that no frame shows it at the top.
@@ -510,8 +512,10 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           this.el.addEventListener("scroll", () => {
             // A hidden panel (display: none) reports 0, and a sticky view that
             // is moved by a navigation is reset to 0: neither is the user.
-            if (this.navigating || this.el.clientHeight === 0) return
-            this.stick = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 48
+            // Nor is the feed while its chat is gone (a re-join): it is empty.
+            if (this.navigating || this.away || this.el.clientHeight === 0) return
+            this.fromBottom = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight
+            this.stick = this.fromBottom < 48
           })
           this.observer = new MutationObserver(() => {
             if (this.stick) this.pin()
@@ -551,10 +555,30 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           const restored = this.el.dataset.restored || ""
           const first = !this.restoredOnce && restored !== this.restored
           if (restored !== this.restored) this.restoredOnce = true
-          const changed = conversation !== this.conversation
+          const previous = this.conversation
           this.conversation = conversation
           this.restored = restored
-          if (changed || first) {
+          if (conversation === "") {
+            // A re-join mounts the panel afresh: no chat for a moment, then the
+            // restore brings it back. Where the reader was is kept for that.
+            if (previous !== "") {
+              this.away = {conversation: previous, stick: this.stick, fromBottom: this.fromBottom}
+            }
+            return
+          }
+          const away = this.away
+          this.away = null
+          if (away && away.conversation === conversation) {
+            // The same chat again: the end for a reader who was at the end,
+            // else the place they were at (the distance from the end).
+            this.stick = away.stick
+            if (away.stick) {
+              this.hide()
+              this.settle()
+            } else {
+              this.keep(away.fromBottom)
+            }
+          } else if (conversation !== previous || first) {
             this.stick = true
             this.hide()
             this.settle()
@@ -581,6 +605,17 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         show() {
           clearTimeout(this.failsafe)
           this.el.style.visibility = ""
+        },
+        keep(fromBottom) {
+          const put = () => {
+            this.el.scrollTop = this.el.scrollHeight - this.el.clientHeight - fromBottom
+            this.fromBottom = fromBottom
+          }
+          put()
+          requestAnimationFrame(() => {
+            put()
+            requestAnimationFrame(put)
+          })
         },
         settle() {
           this.pin()
