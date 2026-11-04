@@ -1471,6 +1471,31 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert attachments_of(ctx.chat) == []
     end
 
+    test "a refusal is logged once for its entry, however many change events follow", ctx do
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      {_, logs} =
+        LogProbe.capture(fn ->
+          input = pick(view, "tool.exe", "MZ", "application/octet-stream")
+          render_upload(input, "tool.exe")
+
+          for _ <- 1..3, do: view |> form("#pk-agent-composer") |> render_change()
+        end)
+
+      assert [_once] = Enum.filter(logs, &(&1 =~ "an upload was refused: :not_accepted"))
+
+      # Another refused file is another entry: it is logged too.
+      {_, logs} =
+        LogProbe.capture(fn ->
+          input = pick(view, "other.exe", "MZ", "application/octet-stream")
+          render_upload(input, "other.exe")
+          view |> form("#pk-agent-composer") |> render_change()
+        end)
+
+      assert [_one_more] = Enum.filter(logs, &(&1 =~ "an upload was refused: :not_accepted"))
+    end
+
     test "the upload manager's cancel takes an upload off; one that is not there changes nothing",
          ctx do
       view = dock(ctx)
@@ -1535,21 +1560,55 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert has_element?(view, "#pk-agent-att-#{att.uuid}")
     end
 
+    test "a file that finishes after another chat was opened goes to the chat it came in", ctx do
+      other = conversation_fixture(ctx.user, %{title: "Elsewhere"})
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      content = String.duplicate("Slow words. ", 400)
+      path = assemble(view, "slow.txt", content)
+      input = pick(view, "slow.txt", content, "text/plain")
+      render_upload(input, "slow.txt", 40)
+      # The browser's change event that comes with the file.
+      view |> form("#pk-agent-composer") |> render_change()
+
+      open_chat(view, other)
+      render_upload(input, "slow.txt", 60)
+      await_files(view)
+
+      assert [%Attachment{filename: "slow.txt"}] = attachments_of(ctx.chat)
+      assert attachments_of(other) == []
+      refute File.exists?(path)
+      # It is not shown on the chat that is open, which is not its own.
+      refute has_element?(view, "#pk-agent-attachments")
+
+      open_chat(view, ctx.chat)
+      assert has_element?(view, "#pk-agent-attachments", "slow.txt")
+    end
+
     test "a cancel of an upload that is with Attachments.add/4 already does not undo the file",
          ctx do
       view = dock(ctx)
       open_chat(view, ctx.chat)
 
       release = hold_the_database()
-      upload(view, "kept.txt", "Kept words", "text/plain")
+      path = assemble(view, "kept.txt", "Kept words")
+      view |> pick("kept.txt", "Kept words", "text/plain") |> render_upload("kept.txt")
       [%{ref: entry_ref}] = upload_entries(view)
 
       render_hook(view, "pk_upload_cancel", %{"ref" => entry_ref, "name" => "files"})
+
+      # The cancel changed nothing: the entry is on the list and so is its file.
+      assert [%{ref: ^entry_ref}] = upload_entries(view)
+      assert File.exists?(path)
 
       release.()
       render_async(view)
       assert await_files(view) =~ ~s(data-status="ready")
       assert [%Attachment{filename: "kept.txt", status: "ready"}] = attachments_of(ctx.chat)
+      # `add/4` was done with it, which took the entry and the file off.
+      assert upload_entries(view) == []
+      refute File.exists?(path)
     end
 
     test "a file for which no chat can be made is dropped from the uploads", ctx do

@@ -95,24 +95,28 @@ defmodule PhoenixKitAgent.Web.Dock do
   between the read of the chat and the subscription, or was lost between
   nodes — is let go of, with the messages it left.
 
-  Files come through `allow_upload` (the kinds and the size of §9, the number
-  of the user's settings) and are handed to `Attachments.add/4` with the path
-  of LiveView's own temporary file (`consume_uploaded_entry/3`, kept until
-  `add/4` is done, which runs off this process); the row is read again after
-  `add/4` (it may be settled already) and shown only while its chat is the
-  one open, and a failed one can be removed. The files go through core's
-  upload manager (`PhoenixKitWeb.Components.Core.UploadManager`) as resumable
-  uploads (`PhoenixKitWeb.ResumableUpload`): the browser sends a file in chunks
-  the server keeps, so a lost connection or a reload goes on from where the
-  file stopped, and the manager's panel (in the composer) lists the files with
-  their own pause, retry and cancel. The manager hands the files to LiveView a
-  few at a time, so a file waiting in the browser is not an entry here yet:
-  the composer's hook sends `uploads_waiting` with the form while the panel
-  has a file waiting or moving, and the panel refuses that send like it does
-  one with an entry still on its way. A file arrives in the chat that is open
-  at that moment (a new chat is made while none is). An upload can be
-  cancelled while it is on its way, not once `add/4` has it. An exception in
-  `add/4` is caught in its task and logged as its class only.
+  Files come through core's upload manager
+  (`PhoenixKitWeb.Components.Core.UploadManager.allow_upload/3`: the kinds and
+  the size of §9, the number of the user's settings) as resumable uploads
+  (`PhoenixKitWeb.ResumableUpload`): the browser sends a file in chunks the
+  server keeps, so a lost connection or a reload goes on from where the file
+  stopped, and the manager's panel (in the composer) lists the files with their
+  own pause, retry and cancel. A whole file is read by
+  `ResumableUpload.consume/3` (`:postpone`, so the assembled file is kept until
+  `Attachments.add/4`, which runs off this process, is done with it and
+  `drop_entry/2` releases it); the row is read again after `add/4` (it may be
+  settled already) and shown only while its chat is the one open, and a failed
+  one can be removed. The manager hands the files to LiveView a few at a time,
+  so a file waiting in the browser is not an entry here yet: the composer's
+  hook sends `uploads_waiting` with the form while the panel has a file waiting
+  or moving, and the panel refuses that send like it does one with an entry
+  still on its way. A file belongs to the chat that was open when its entry
+  came (`bind_entries/1`), also when it is whole later and another chat is open
+  by then; one that came with no chat open goes to the chat open when it is
+  whole, a new chat if there is none. An upload can be cancelled while it is on
+  its way, not once it is whole: the manager's cancel for such an entry is
+  dropped (`keep_finished_upload/3`), `add/4` removes the entry and its file.
+  An exception in `add/4` is caught in its task and logged as its class only.
 
   ## In the browser
 
@@ -234,8 +238,11 @@ defmodule PhoenixKitAgent.Web.Dock do
         card_busy: MapSet.new(),
         card_notes: %{},
         restored: 0,
+        entry_chats: %{},
+        upload_errors_seen: MapSet.new(),
         timeout_ms: Config.turn_deadline_s() * 1_000 + Monitor.stop_grace_ms() + @wait_margin_ms
       )
+      |> attach_hook(:pk_agent_finished_upload, :handle_event, &keep_finished_upload/3)
       |> UploadManager.allow_upload(:files,
         accept: @accept,
         max_entries: max(settings.max_attachments_per_message, 1),
@@ -428,10 +435,8 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  defp event("composer_change", _params, socket) do
-    log_upload_errors(socket)
-    {:noreply, socket}
-  end
+  defp event("composer_change", _params, socket),
+    do: {:noreply, socket |> log_upload_errors() |> bind_entries()}
 
   defp event("send", %{"message" => params}, socket) when is_map(params) do
     case sync_turn(socket) do
@@ -886,10 +891,12 @@ defmodule PhoenixKitAgent.Web.Dock do
   # entry whose file is not whole (`{:error, :incomplete_upload}`) is dropped
   # by `ResumableUpload.consume/3`; the manager sends it again.
   defp progress(:files, %{done?: true} = entry, %{assigns: %{active?: true}} = socket) do
-    case ensure_conversation(socket) do
-      {:ok, socket} ->
+    socket = bind_entries(socket)
+
+    case upload_chat(socket, entry) do
+      {:ok, socket, uuid} ->
         case ResumableUpload.consume(socket, entry, fn %{path: path} -> {:postpone, path} end) do
-          path when is_binary(path) -> {:noreply, attach_file(socket, entry, path)}
+          path when is_binary(path) -> {:noreply, attach_file(socket, entry, uuid, path)}
           _incomplete -> {:noreply, socket}
         end
 
@@ -898,11 +905,56 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
+  defp progress(:files, _entry, %{assigns: %{active?: true}} = socket),
+    do: {:noreply, bind_entries(socket)}
+
   defp progress(:files, _entry, socket), do: {:noreply, socket}
 
-  defp attach_file(socket, entry, path) do
+  # The chat a file belongs to is the one that was open when the entry came
+  # (`bind_entries/1`), not the one open when it is whole: a file that was
+  # slow, paused or waiting in the browser must not land in another chat. An
+  # entry that came with no chat open goes to the open chat, a new one if none.
+  defp upload_chat(socket, entry) do
+    case Map.get(socket.assigns.entry_chats, entry.ref) do
+      uuid when is_binary(uuid) ->
+        {:ok, socket, uuid}
+
+      nil ->
+        with {:ok, socket} <- ensure_conversation(socket),
+             do: {:ok, socket, current_uuid(socket)}
+    end
+  end
+
+  # Notes the chat that is open for every entry the panel has not met yet, and
+  # forgets the entries that are gone. Called when the browser's change event
+  # brings the entries and again as their progress arrives.
+  defp bind_entries(socket) do
+    known = socket.assigns.entry_chats
+    chat = current_uuid(socket)
+
+    chats =
+      Map.new(socket.assigns.uploads.files.entries, fn entry ->
+        {entry.ref, Map.get(known, entry.ref, chat)}
+      end)
+
+    assign(socket, entry_chats: chats)
+  end
+
+  # The manager's cancel for a file that is whole already is no cancel: the
+  # file is with `Attachments.add/4`, which removes the entry and the
+  # assembled file itself. Left to the manager's own handler it would take
+  # the entry off and leave that file on the disk.
+  defp keep_finished_upload("pk_upload_cancel", %{"ref" => ref, "name" => "files"}, socket)
+       when is_binary(ref) do
+    if Enum.any?(socket.assigns.uploads.files.entries, &(&1.ref == ref and &1.done?)),
+      do: {:halt, socket},
+      else: {:cont, socket}
+  end
+
+  defp keep_finished_upload(_event, _params, socket), do: {:cont, socket}
+
+  defp attach_file(socket, entry, uuid, path) do
     %{ref: ref} = socket.assigns
-    uuid = current_uuid(socket)
     upload = %{path: path, filename: entry.client_name}
     opts = me(socket)
 
@@ -911,19 +963,21 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   # What LiveView refused (too large, not accepted, too many, a failed
   # transfer) is only on the screen otherwise: the error class is logged, never
-  # the file or its name.
+  # the file or its name, once for each entry and error (the entry stays in
+  # the list until it is cancelled, and every change event meets it again).
   defp log_upload_errors(socket) do
     upload = socket.assigns.uploads.files
 
-    for entry <- upload.entries, error <- upload_errors(upload, entry) do
-      Logger.warning("[PhoenixKitAgent] an upload was refused: #{inspect(error)}")
+    current =
+      for(entry <- upload.entries, error <- upload_errors(upload, entry), do: {entry.ref, error}) ++
+        for error <- upload_errors(upload), do: {nil, error}
+
+    for {_ref, error} = key <- current,
+        not MapSet.member?(socket.assigns.upload_errors_seen, key) do
+      Logger.warning("[PhoenixKitAgent] an upload was refused: #{inspect(reason_class(error))}")
     end
 
-    for error <- upload_errors(upload) do
-      Logger.warning("[PhoenixKitAgent] an upload was refused: #{inspect(error)}")
-    end
-
-    :ok
+    assign(socket, upload_errors_seen: MapSet.new(current))
   end
 
   # An exception in `add/4` would end the async task with a crash report that
