@@ -104,7 +104,8 @@ and `Web.Markdown`).
   A ready attachment's history line names its Storage `file_uuid`, so a host
   tool can act on the file; a uuid in the model's text is not proof of
   ownership, and such a tool checks it with `Attachments.file_for_user/2`
-  (user uuid and file uuid; the caller has checked the session).
+  (the user uuid from the session's scope, never from the tool's arguments,
+  and the file uuid; the caller has checked the session).
   The content, not the name, decides the kind (`Attachments.Detect`). Files are
   processed in a task under `PhoenixKitAgent.Attachments.TaskSupervisor`
   (`children/0`), with a deadline and a heap limit; a failure is a code in
