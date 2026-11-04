@@ -1386,7 +1386,9 @@ defmodule PhoenixKitAgent.Web.DockTest do
       env = for name <- ["HOOK_FEED", "HOOK_COMPOSER"], do: {name, Path.join(dir, name)}
 
       {output, status} =
-        System.cmd("node", ["--test", Path.expand("../../js/hooks.test.mjs", __DIR__)],
+        System.cmd(
+          "node",
+          ["--test", "--test-reporter=tap", Path.expand("../../js/hooks.test.mjs", __DIR__)],
           env: env,
           stderr_to_stdout: true
         )
