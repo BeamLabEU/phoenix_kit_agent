@@ -623,7 +623,19 @@ defmodule PhoenixKitAgent.Confirmations do
 
   defp counts(_result), do: nil
 
-  defp field(map, key), do: Map.get(map, key, Map.get(map, String.to_existing_atom(key)))
+  # The atom keys are literals: `String.to_existing_atom/1` raises when the atom
+  # does not exist yet, and a `Map.get/3` default is evaluated even when the
+  # string key is there.
+  defp field(map, "summary"), do: field(map, "summary", :summary)
+  defp field(map, "ok"), do: field(map, "ok", :ok)
+  defp field(map, "failed"), do: field(map, "failed", :failed)
+
+  defp field(map, key, atom) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, atom)
+    end
+  end
 
   # A new card for the same call: the same assistant message and call id.
   defp card_message(click, confirmation_uuid) do

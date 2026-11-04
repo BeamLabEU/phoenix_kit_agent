@@ -8,7 +8,8 @@ defmodule PhoenixKitAgent.Turns.History do
   card (`PhoenixKitAgent.Confirmations`) goes in as a `user` message with the
   module's own fixed phrase in the user's language — "[confirmation] done:
   <the tool's name>", "cancelled", "expired", "the data changed", "failed" —
-  never anything the tool returned, and never a text a person wrote. So does a
+  never anything the tool returned but the two counts of a confirmed write
+  (`ok`, `failed`, see `Confirmations`), and never a text a person wrote. So does a
   card with no such notice yet, where it stands in the chat: "[confirmation]
   waiting: <the tool's name>", so the model knows that its proposal still
   waits. Before it reads the chat, a turn gives the cards core no longer holds

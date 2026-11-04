@@ -421,7 +421,8 @@ defmodule PhoenixKitAgent.Attachments do
                join: c in Conversation,
                on: c.uuid == a.conversation_uuid,
                where:
-                 a.user_uuid == ^user_uuid and a.file_uuid == ^file_uuid and
+                 a.user_uuid == ^user_uuid and c.user_uuid == ^user_uuid and
+                   a.file_uuid == ^file_uuid and
                    a.status == "ready" and c.status != "deleted",
                order_by: [desc: a.inserted_at, desc: a.uuid],
                limit: 1,
