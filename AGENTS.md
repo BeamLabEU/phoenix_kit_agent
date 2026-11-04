@@ -152,7 +152,10 @@ and `Web.Markdown`).
   behind it; `mount` and `render` are not covered. The composer's files go
   through core's upload manager (`UploadManager.allow_upload/3`, the manager
   in the composer) as resumable uploads (`ResumableUpload`: chunks the server
-  keeps in its resumable directory, `owner:` is the panel's own signed-in user,
+  keeps in its resumable directory (`:resumable_upload_dir` of `:phoenix_kit`,
+  else `phoenix_kit_resumable` under the system temp directory: a host should
+  point it at a directory only the app can read), `owner:` is the panel's own
+  signed-in user,
   never a value from the browser; with `Storage.resumable_uploads?/0` off it is
   LiveView's own uploader and `consume/3` still works). The path given to
   `Attachments.add/4` is the file `ResumableUpload.consume/3` returns
