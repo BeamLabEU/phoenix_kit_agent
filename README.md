@@ -219,7 +219,17 @@ so the binary memory a busy node may use for workbooks is about
 the processing deadline (the node restarted) is read as `failed`/`timeout`.
 
 The `path` of an upload given to `Attachments.add/4` is trusted: it must be the
-temporary file of LiveView's own upload, never a value from the client.
+file that core's `ResumableUpload.consume/3` returns for an upload of the chat
+panel (the file assembled from the chunks in core's resumable directory, or
+LiveView's own temporary file where an admin turned chunked uploads off), never
+a value from the client.
+
+The chat panel's file input is core's upload manager: files are sent in chunks
+that the server keeps (so a lost connection or a reload goes on from where the
+file stopped), with a pause, retry and cancel for each file. It needs core's
+`UploadManager` and `ResumableUpload`, which no `phoenix_kit` release carries
+yet; until one does, `mix.exs` takes core from a git ref, and a host builds it
+from there as well.
 
 PDF processing needs poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and pictures
 need ImageMagick (`convert`, `identify`) on the host; without them such a file
@@ -366,8 +376,9 @@ The module requires `phoenix_kit_ai` to be enabled (`required_modules/0` is
 `["ai"]`) and is switched on in Admin > Modules; it is off by default
 (setting `agent_enabled`).
 
-It needs `phoenix_kit` 2.64 or later with its migrations run up to V223 (`mix
-phoenix_kit.update`), which keeps the AI journal's cost in dollars (`cost`):
+It needs `phoenix_kit` 2.64 or later (for the chat panel's upload manager, the
+git ref in `mix.exs` until a release ships it) with its migrations run up to
+V223 (`mix phoenix_kit.update`), which keeps the AI journal's cost in dollars (`cost`):
 before V223 every limit check fails on the missing column, and so does every
 turn.
 

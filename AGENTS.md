@@ -45,10 +45,14 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
 `Web.Dock.Panel` (markup and hooks), `Web.Dock.Components`, `Web.Dock.Texts`
 and `Web.Markdown`).
 
-- **Depends on:** `phoenix_kit` `~> 2.64` (the writes of a live session:
+- **Depends on:** `phoenix_kit` (the writes of a live session:
   `allow: :all`, `Executor.redeem_as/6`, the session functions of
   `API.Confirm`, the `OperationPreview` component,
-  `Executor.tool_availability/1`; the AI journal's cost in dollars, V223),
+  `Executor.tool_availability/1`; the AI journal's cost in dollars, V223 —
+  `~> 2.64` for those — and the chat's file input, core's `UploadManager` and
+  `ResumableUpload`, which no release carries yet: `mix.exs` pins core to a git
+  ref until one ships, and goes back to a Hex requirement whose floor is that
+  release; a module with a git dependency cannot be published to Hex),
   `phoenix_kit_ai` `~> 0.26` (the AI task guard, tool calling, a call's
   cost from one place, `Request.cost` in dollars), `phoenix_live_view`, and
   `mdex` (already phoenix_kit's) for the markdown of the chat panel.
@@ -145,10 +149,24 @@ and `Web.Markdown`).
   every `handle_event` / `handle_info` / `handle_async` / upload progress goes
   through `guarded/2`, which catches an exception and logs its class only (a
   crash report carries the event and the whole state) — keep new callbacks
-  behind it; `mount` and `render` are not covered. The
-  path given to `Attachments.add/4` is LiveView's own upload file
-  (`consume_uploaded_entry/3` with `:postpone` until `add/4` is done), and
-  `add/4` runs in its task under a guard that logs only the exception's class.
+  behind it; `mount` and `render` are not covered. The composer's files go
+  through core's upload manager (`UploadManager.allow_upload/3`, the manager
+  in the composer) as resumable uploads (`ResumableUpload`: chunks the server
+  keeps in its resumable directory, `owner:` is the panel's own signed-in user,
+  never a value from the browser; with `Storage.resumable_uploads?/0` off it is
+  LiveView's own uploader and `consume/3` still works). The path given to
+  `Attachments.add/4` is the file `ResumableUpload.consume/3` returns
+  (`{:postpone, path}` until `add/4` is done; `consume/3` runs the function only
+  for a file whole to the declared size, and `drop_entry/2` releases it
+  afterwards), never a path from the browser. `add/4` runs in its task under a
+  guard that logs only the exception's class. The manager hands files over a
+  few at a time, so a file waiting in the browser is no entry: the composer's
+  hook sends `uploads_waiting` with the form and a send is refused while it is
+  `1` or an entry is on its way. A file belongs to the chat open when its entry
+  came (`bind_entries/1`), not the one open when it is whole; the manager's
+  cancel for a whole file is dropped (`keep_finished_upload/3`), since
+  `add/4` removes the entry and its file; an upload's refusal is logged once
+  per entry.
   Browser hooks are runtime colocated hooks (`runtime` attribute), since a
   dependency's extracted hooks would not reach the host's bundle; they live in
   `Web.Dock.Panel` with the elements that use them (a colocated hook is named
@@ -156,7 +174,11 @@ and `Web.Markdown`).
   composer's textarea). A re-join after a lost connection mounts the LiveView
   afresh but calls the hook's `reconnected()`, not `mounted()`: state the
   server must get back (`restore`) is pushed from both. They are inline
-  scripts: a host CSP needs `script-src 'unsafe-inline'`. The indicator and
+  scripts: a host CSP needs `script-src 'unsafe-inline'`. `.Feed` keeps a
+  reader who scrolled up where they are over a re-join (while the chat is gone it remembers the chat and the distance from the end,
+  and ignores the empty feed's scroll events). The hooks are run on a fake DOM
+  by `test/js/hooks.test.mjs` (called from `Web.DockTest`, tag `:node`,
+  excluded with a message where `node` is missing). The indicator and
   "Stop" come from the server only: while a turn is shown the panel reads the
   chat's lock again every `:turn_check_ms` and lets an ended turn go (with the
   messages it left), and every `restore` changes `data-restored`, so its
