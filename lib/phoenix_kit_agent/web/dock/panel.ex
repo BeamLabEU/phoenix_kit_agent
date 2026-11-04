@@ -504,6 +504,9 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           this.restoredOnce = false
           this.fromBottom = 0
           this.away = null
+          this.held = null
+          // How long the chat may be gone and still count as a re-join.
+          this.rejoinMs = 10000
           this.pin = () => { this.el.scrollTop = this.el.scrollHeight }
           // The feed is hidden (not removed) until it stands at its end, so
           // that no frame shows it at the top.
@@ -513,12 +516,14 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             // A hidden panel (display: none) reports 0, and a sticky view that
             // is moved by a navigation is reset to 0: neither is the user.
             // Nor is the feed while its chat is gone (a re-join): it is empty.
-            if (this.navigating || this.away || this.el.clientHeight === 0) return
+            // Nor is the feed while a remembered place waits for its content.
+            if (this.navigating || this.away || this.held !== null || this.el.clientHeight === 0) return
             this.fromBottom = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight
             this.stick = this.fromBottom < 48
           })
           this.observer = new MutationObserver(() => {
-            if (this.stick) this.pin()
+            if (this.held !== null) this.apply()
+            else if (this.stick) this.pin()
           })
           this.observer.observe(this.el, {childList: true, subtree: true})
           // The content, not only the scroller: a picture or a rendered card
@@ -558,17 +563,27 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           const previous = this.conversation
           this.conversation = conversation
           this.restored = restored
+          if (conversation !== previous) this.release()
           if (conversation === "") {
             // A re-join mounts the panel afresh: no chat for a moment, then the
             // restore brings it back. Where the reader was is kept for that.
             if (previous !== "") {
-              this.away = {conversation: previous, stick: this.stick, fromBottom: this.fromBottom}
+              this.away = {
+                conversation: previous,
+                stick: this.stick,
+                fromBottom: this.fromBottom,
+                restored: restored,
+                at: Date.now()
+              }
             }
             return
           }
           const away = this.away
           this.away = null
-          if (away && away.conversation === conversation) {
+          // Only a re-join: the restore changes `restored`, and follows at once.
+          // The reader's own switch (a new chat, then this chat) does neither.
+          if (away && away.conversation === conversation && restored !== away.restored &&
+              Date.now() - away.at < this.rejoinMs) {
             // The same chat again: the end for a reader who was at the end,
             // else the place they were at (the distance from the end).
             this.stick = away.stick
@@ -576,12 +591,14 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
               this.hide()
               this.settle()
             } else {
-              this.keep(away.fromBottom)
+              this.hold(away.fromBottom)
             }
           } else if (conversation !== previous || first) {
             this.stick = true
             this.hide()
             this.settle()
+          } else if (this.held !== null) {
+            this.apply()
           } else if (this.stick) {
             this.pin()
           }
@@ -596,6 +613,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           if (this.resizer) this.resizer.disconnect()
           clearTimeout(this.failsafe)
           clearTimeout(this.navFailsafe)
+          clearTimeout(this.heldFailsafe)
         },
         hide() {
           this.el.style.visibility = "hidden"
@@ -605,6 +623,28 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         show() {
           clearTimeout(this.failsafe)
           this.el.style.visibility = ""
+        },
+        // The place to go back to waits until the content is tall enough for it
+        // (the messages may come in a later patch than the chat): the browser
+        // would clamp it to the top, and the scroll that follows would be taken
+        // for the reader's.
+        hold(fromBottom) {
+          this.held = fromBottom
+          // If the content never comes, the reader's own scrolling counts again.
+          clearTimeout(this.heldFailsafe)
+          this.heldFailsafe = setTimeout(() => { this.held = null }, 3000)
+          this.apply()
+        },
+        apply() {
+          if (this.held === null) return
+          if (this.el.scrollHeight - this.el.clientHeight < this.held) return
+          const fromBottom = this.held
+          this.release()
+          this.keep(fromBottom)
+        },
+        release() {
+          this.held = null
+          clearTimeout(this.heldFailsafe)
         },
         keep(fromBottom) {
           const put = () => {

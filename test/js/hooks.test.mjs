@@ -65,7 +65,13 @@ function environment() {
         now.forEach((fn) => fn())
       }
     },
-    timers: () => timers.size
+    timers: () => timers.size,
+    // Every timer that is waiting, as if its time had come.
+    fireTimers() {
+      const due = [...timers.values()]
+      timers = new Map()
+      due.forEach(({fn}) => fn())
+    }
   }
   return env
 }
@@ -190,6 +196,89 @@ test("another chat starts at its end, whatever the reader did in the last", () =
 
   assert.equal(rig.fromBottom(), 0)
   assert.equal(rig.el.style.visibility, "")
+})
+
+test("a restored chat whose messages come in a later patch keeps the reader's place", () => {
+  const rig = feed(environment())
+  rig.read(500)
+
+  rig.patch({conversation: undefined, restored: "0", height: 0})
+  rig.el.deliver()
+  // The chat is back, its messages are not yet.
+  rig.patch({conversation: "chat-a", restored: "1", height: 100})
+  rig.settle()
+  rig.patch({conversation: "chat-a", restored: "1", height: 1000})
+  rig.settle()
+
+  assert.equal(rig.fromBottom(), 500)
+  rig.el.grow(1100)
+  rig.hook.observer.fn()
+  assert.equal(rig.fromBottom(), 600)
+})
+
+test("a restored chat whose messages come as a change of the content keeps the reader's place", () => {
+  const rig = feed(environment())
+  rig.read(500)
+
+  rig.patch({conversation: undefined, restored: "0", height: 0})
+  rig.el.deliver()
+  rig.patch({conversation: "chat-a", restored: "1", height: 100})
+  rig.settle()
+  rig.el.grow(1000)
+  rig.hook.observer.fn()
+  rig.settle()
+
+  assert.equal(rig.fromBottom(), 500)
+})
+
+test("a reader who scrolls before the held place can be applied is not moved back", () => {
+  const env = environment()
+  const rig = feed(env)
+  rig.read(500)
+
+  rig.patch({conversation: undefined, restored: "0", height: 0})
+  rig.el.deliver()
+  rig.patch({conversation: "chat-a", restored: "1", height: 100})
+  rig.settle()
+  // The place was never applied (no content for it): after the wait, the
+  // reader's own scrolling counts again.
+  env.fireTimers()
+  rig.el.grow(1000)
+  rig.read(200)
+  rig.el.grow(1100)
+  rig.hook.observer.fn()
+  assert.equal(rig.fromBottom(), 300)
+})
+
+test("the same chat opened again after a new chat starts at its end", () => {
+  const rig = feed(environment())
+  rig.read(500)
+
+  // "New chat" empties the feed; the panel was not restored.
+  rig.patch({conversation: undefined, restored: "0", height: 0})
+  rig.el.deliver()
+  rig.patch({conversation: "chat-a", restored: "0", height: 1000})
+  rig.settle()
+
+  assert.equal(rig.fromBottom(), 0)
+})
+
+test("a chat that comes back long after the feed was emptied starts at its end", () => {
+  const rig = feed(environment())
+  rig.read(500)
+
+  rig.patch({conversation: undefined, restored: "0", height: 0})
+  rig.el.deliver()
+  const now = Date.now
+  Date.now = () => now() + 60000
+  try {
+    rig.patch({conversation: "chat-a", restored: "1", height: 1000})
+  } finally {
+    Date.now = now
+  }
+  rig.settle()
+
+  assert.equal(rig.fromBottom(), 0)
 })
 
 test("a different chat after a re-join starts at its end", () => {

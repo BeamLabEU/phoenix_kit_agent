@@ -176,7 +176,10 @@ and `Web.Markdown`).
   server must get back (`restore`) is pushed from both. They are inline
   scripts: a host CSP needs `script-src 'unsafe-inline'`. `.Feed` keeps a
   reader who scrolled up where they are over a re-join (while the chat is gone it remembers the chat and the distance from the end,
-  and ignores the empty feed's scroll events). The hooks are run on a fake DOM
+  and ignores the empty feed's scroll events; the place is applied once the
+  content is tall enough for it, and only for the same chat back within a few
+  seconds with `restored` changed — a new chat then this one starts at its end).
+  The hooks are run on a fake DOM
   by `test/js/hooks.test.mjs` (called from `Web.DockTest`, tag `:node`,
   excluded with a message where `node` is missing). The indicator and
   "Stop" come from the server only: while a turn is shown the panel reads the
