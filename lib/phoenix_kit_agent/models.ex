@@ -112,6 +112,17 @@ defmodule PhoenixKitAgent.Models do
     |> image_input_support()
   end
 
+  @doc """
+  `audio_input_support/1` for the endpoints with these uuids, read again from
+  the database (one that is gone is left out).
+  """
+  @spec audio_input_support_of([String.t()]) :: %{String.t() => support()}
+  def audio_input_support_of(uuids) when is_list(uuids) do
+    from(e in Endpoint, where: e.uuid in ^Enum.uniq(uuids))
+    |> RepoHelper.repo().all()
+    |> audio_input_support()
+  end
+
   @doc "Whether each endpoint's model takes tools (see the moduledoc): `%{endpoint_uuid => support}`."
   @spec tools_support([Endpoint.t()]) :: %{String.t() => support()}
   def tools_support(endpoints), do: capability(endpoints, :tools)
@@ -122,6 +133,13 @@ defmodule PhoenixKitAgent.Models do
   """
   @spec image_input_support([Endpoint.t()]) :: %{String.t() => support()}
   def image_input_support(endpoints), do: capability(endpoints, :vision)
+
+  @doc """
+  Whether each endpoint's model takes audio as input (see the moduledoc):
+  `%{endpoint_uuid => support}`.
+  """
+  @spec audio_input_support([Endpoint.t()]) :: %{String.t() => support()}
+  def audio_input_support(endpoints), do: capability(endpoints, :audio_input)
 
   @doc """
   `image_input_support/1` for the one endpoint with this uuid, read again from

@@ -1,19 +1,21 @@
 defmodule PhoenixKitAgent.Web.SettingsLive do
   @moduledoc """
   Settings → AI Agent: the module defaults (`PhoenixKitAgent.Config`, spec
-  §5.6, §7) — the model the assistant uses and the one that describes
-  pictures, the per-user limits a user without settings of their own gets,
+  §5.6, §7) — the model the assistant uses, the one that describes
+  pictures and the one that writes speech down, the per-user limits a user without settings of their own gets,
   the limits of one turn, the module's system prompt and who is told when
   someone reaches a limit.
 
   The models are chosen among the AI endpoints that chat
   (`PhoenixKitAgent.Models.list_endpoints/1`); the default model's list marks
   the ones known not to take tools, the vision model's the ones known not to
-  take pictures (both fetched off the page process after it opens). A model
+  take pictures, the speech model's the ones known not to take audio (all
+  fetched off the page process after it opens). A model
   the page did not offer is refused, and `Config` takes only an existing
   endpoint that chats. A newly chosen model must also fit its AI task
   (`PhoenixKitAI.Tasks.check_selection/2`): the default model `agent.chat`
-  (tools), the vision model `agent.attachment` (pictures). One known not to
+  (tools), the vision model `agent.attachment` (pictures), the speech model
+  `agent.speech` (audio). One known not to
   have what the task needs is refused, and so is one nobody knows about
   until an admin marks what it can do on its AI endpoint. The watchers are chosen among the people who hold
   `agent.manage`, the Owners and the watchers there are; nobody chosen means
@@ -71,7 +73,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   alias PhoenixKitAgent.Web.{Access, ToolAvailability}
 
   # The fields of the models form.
-  @model_fields ~w(default_endpoint_uuid vision_endpoint_uuid)
+  @model_fields ~w(default_endpoint_uuid vision_endpoint_uuid speech_endpoint_uuid)
 
   @impl true
   def mount(_params, session, socket) do
@@ -164,14 +166,24 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       do: {:noreply, socket}
 
   @impl true
-  def handle_async(:capabilities, {:ok, {tools, images}}, socket),
+  def handle_async(:capabilities, {:ok, {tools, images, audio}}, socket),
     do:
-      {:noreply, update(socket, :models, &%{&1 | tools: tools, images: images, loading?: false})}
+      {:noreply,
+       update(
+         socket,
+         :models,
+         &%{&1 | tools: tools, images: images, audio: audio, loading?: false}
+       )}
 
   def handle_async(:capabilities, {:exit, _reason}, socket) do
     unknown = Map.new(socket.assigns.models.endpoints, &{&1.uuid, :unknown})
 
-    {:noreply, update(socket, :models, &%{&1 | tools: unknown, images: unknown, loading?: false})}
+    {:noreply,
+     update(
+       socket,
+       :models,
+       &%{&1 | tools: unknown, images: unknown, audio: unknown, loading?: false}
+     )}
   end
 
   defp denied(socket),
@@ -200,6 +212,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
           errors: %{},
           tools: %{},
           images: %{},
+          audio: %{},
           loading?: endpoints != [] and connected?(socket)
         }
       )
@@ -207,7 +220,8 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     if endpoints != [] and connected?(socket),
       do:
         start_async(socket, :capabilities, fn ->
-          {Models.tools_support_of(uuids), Models.image_input_support_of(uuids)}
+          {Models.tools_support_of(uuids), Models.image_input_support_of(uuids),
+           Models.audio_input_support_of(uuids)}
         end),
       else: socket
   end
@@ -215,7 +229,8 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   defp current_models do
     %{
       "default_endpoint_uuid" => Config.default_endpoint_uuid(),
-      "vision_endpoint_uuid" => Config.vision_endpoint_uuid()
+      "vision_endpoint_uuid" => Config.vision_endpoint_uuid(),
+      "speech_endpoint_uuid" => Config.speech_endpoint_uuid()
     }
   end
 
@@ -267,6 +282,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
   defp task_of("default_endpoint_uuid"), do: "agent.chat"
   defp task_of("vision_endpoint_uuid"), do: "agent.attachment"
+  defp task_of("speech_endpoint_uuid"), do: "agent.speech"
 
   defp unfit_text("default_endpoint_uuid", {:error, {:model_unfit, _missing}}),
     do: gettext("cannot be used: its model does not take tools, which the assistant needs")
@@ -284,6 +300,15 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     do:
       gettext(
         "cannot be used yet: nobody knows whether its model takes pictures. Mark what it can do on its AI endpoint first"
+      )
+
+  defp unfit_text("speech_endpoint_uuid", {:error, {:model_unfit, _missing}}),
+    do: gettext("cannot be used: its model does not take audio")
+
+  defp unfit_text("speech_endpoint_uuid", {:error, {:model_unverified, _unclear}}),
+    do:
+      gettext(
+        "cannot be used yet: nobody knows whether its model takes audio. Mark what it can do on its AI endpoint first"
       )
 
   defp unfit_text(_field, _not_offered), do: gettext("is not available")
@@ -315,6 +340,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     do: Config.put_default_endpoint(uuid, opts)
 
   defp write_model("vision_endpoint_uuid", uuid, opts), do: Config.put_vision_endpoint(uuid, opts)
+  defp write_model("speech_endpoint_uuid", uuid, opts), do: Config.put_speech_endpoint(uuid, opts)
 
   defp model_label(endpoint, support, unsupported, unknown) do
     base = "#{endpoint.name} (#{endpoint.model})"
@@ -345,6 +371,20 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
              models.images,
              gettext("does not take pictures"),
              gettext("pictures unknown")
+           ), endpoint.uuid}
+        end)
+    ]
+  end
+
+  defp speech_options(models) do
+    [
+      {gettext("None"), ""}
+      | Enum.map(models.endpoints, fn endpoint ->
+          {model_label(
+             endpoint,
+             models.audio,
+             gettext("does not take audio"),
+             gettext("audio unknown")
            ), endpoint.uuid}
         end)
     ]
@@ -553,7 +593,20 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
                 options={vision_options(@models)}
                 errors={Map.get(@models.errors, "vision_endpoint_uuid", [])}
               />
+              <.select
+                id="agent-speech-endpoint"
+                name="models[speech_endpoint_uuid]"
+                label={gettext("Speech recognition model")}
+                value={@models.params["speech_endpoint_uuid"]}
+                options={speech_options(@models)}
+                errors={Map.get(@models.errors, "speech_endpoint_uuid", [])}
+              />
             </div>
+            <p id="agent-speech-hint" class="text-xs text-base-content/60">
+              {gettext(
+                "The speech recognition model writes down the voice messages of the Telegram bot and the recordings of the chat panel's microphone. Choose a model that takes audio, for example Gemini Flash. Without it, voice input is off."
+              )}
+            </p>
             <p :if={@models.loading?} class="text-xs text-base-content/60">
               {gettext("Checking what the models take…")}
             </p>

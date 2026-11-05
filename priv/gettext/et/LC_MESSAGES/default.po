@@ -38,7 +38,7 @@ msgstr[1] "%{count} leitud"
 msgid "A file is not ready or not in this chat. Remove it and try again."
 msgstr "Fail ei ole valmis või ei kuulu sellesse vestlusse. Eemalda see ja proovi uuesti."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:310
+#: lib/phoenix_kit_agent/web/settings_live.ex:335
 #, elixir-autogen, elixir-format
 msgid "A model could not be saved: it is no longer available. Choose again."
 msgstr "Mudelit ei saanud salvestada: see pole enam saadaval. Vali uuesti."
@@ -56,7 +56,7 @@ msgstr "Kasutaja"
 #: lib/phoenix_kit_agent.ex:104
 #: lib/phoenix_kit_agent.ex:138
 #: lib/phoenix_kit_agent.ex:206
-#: lib/phoenix_kit_agent/web/settings_live.ex:84
+#: lib/phoenix_kit_agent/web/settings_live.ex:86
 #: lib/phoenix_kit_agent/web/spending_live.ex:35
 #: lib/phoenix_kit_agent/web/users_live.ex:103
 #, elixir-autogen, elixir-format
@@ -71,17 +71,17 @@ msgstr "AI-agent"
 msgid "AI assistant"
 msgstr "AI-assistent"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:416
+#: lib/phoenix_kit_agent/web/settings_live.ex:456
 #, elixir-autogen, elixir-format
 msgid "AI assistant defaults saved."
 msgstr "AI-assistendi vaikeväärtused on salvestatud."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:305
+#: lib/phoenix_kit_agent/web/settings_live.ex:330
 #, elixir-autogen, elixir-format
 msgid "AI assistant models saved."
 msgstr "AI-assistendi mudelid on salvestatud."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:441
+#: lib/phoenix_kit_agent/web/settings_live.ex:481
 #, elixir-autogen, elixir-format
 msgid "AI request journal setting saved."
 msgstr "AI päringute logi säte on salvestatud."
@@ -96,7 +96,7 @@ msgstr "Aktiivne"
 msgid "Allowed"
 msgstr "Lubatud"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:574
+#: lib/phoenix_kit_agent/web/settings_live.ex:627
 #, elixir-autogen, elixir-format
 msgid "Apply to every user without limits of their own. Money is counted from the AI request journal, in US dollars, for endpoints that report a cost."
 msgstr "Kehtib igale kasutajale, kellel pole omi limiite. Raha arvestatakse AI päringute logist USA dollarites nende lõpp-punktide puhul, mis teatavad hinna."
@@ -123,7 +123,7 @@ msgstr "Assistent"
 msgid "Attach a file"
 msgstr "Lisa fail"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:602
+#: lib/phoenix_kit_agent/web/settings_live.ex:655
 #: lib/phoenix_kit_agent/web/users_live.ex:649
 #, elixir-autogen, elixir-format
 msgid "Attachments per message"
@@ -146,7 +146,7 @@ msgstr "Kutsun tööriista…"
 msgid "Cancel"
 msgstr "Tühista"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:558
+#: lib/phoenix_kit_agent/web/settings_live.ex:611
 #, elixir-autogen, elixir-format
 msgid "Checking what the models take…"
 msgstr "Kontrollin, mida mudelid toetavad…"
@@ -173,17 +173,17 @@ msgstr "Seadista"
 msgid "Confirm your email address to use the assistant."
 msgstr "Assistendi kasutamiseks kinnita oma e-posti aadress."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:572
+#: lib/phoenix_kit_agent/web/settings_live.ex:625
 #, elixir-autogen, elixir-format
 msgid "Default limits per user"
 msgstr "Vaikelimiidid kasutaja kohta"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:543
+#: lib/phoenix_kit_agent/web/settings_live.ex:583
 #, elixir-autogen, elixir-format
 msgid "Default model"
 msgstr "Vaikemudel"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:85
+#: lib/phoenix_kit_agent/web/settings_live.ex:87
 #, elixir-autogen, elixir-format
 msgid "Defaults of the AI assistant"
 msgstr "AI-assistendi vaikeväärtused"
@@ -198,12 +198,12 @@ msgstr "Varasemad sõnumid"
 msgid "Edit the module defaults and other users' assistant settings, and see everyone's spending"
 msgstr "Muuda mooduli vaikeväärtusi ja teiste kasutajate assistendi sätteid ning vaata kõigi kulusid"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:645
+#: lib/phoenix_kit_agent/web/settings_live.ex:698
 #, elixir-autogen, elixir-format
 msgid "Goes first into every request of every user, before the site's own part, the prompt an administrator sets for a user and the user's own instructions."
 msgstr "Läheb iga kasutaja iga päringu algusesse, enne saidi enda osa, administraatori kasutajale seatud promptit ja kasutaja enda juhiseid."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:623
+#: lib/phoenix_kit_agent/web/settings_live.ex:676
 #, elixir-autogen, elixir-format
 msgid "History sent to the model, characters"
 msgstr "Mudelile saadetav ajalugu, tähemärki"
@@ -218,7 +218,7 @@ msgstr "Kuidas assistent peaks sulle vastama. Esmalt järgitakse saidi enda reeg
 msgid "It could not be read."
 msgstr "Seda ei saanud lugeda."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:597
+#: lib/phoenix_kit_agent/web/settings_live.ex:650
 #: lib/phoenix_kit_agent/web/users_live.ex:640
 #, elixir-autogen, elixir-format
 msgid "Largest attachment"
@@ -245,7 +245,7 @@ msgstr "Sõnum"
 msgid "Model"
 msgstr "Mudel"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:533
+#: lib/phoenix_kit_agent/web/settings_live.ex:573
 #, elixir-autogen, elixir-format
 msgid "Models"
 msgstr "Mudelid"
@@ -301,7 +301,7 @@ msgstr "Selle lugemiseks pole seadistatud pilte nägevat mudelit."
 msgid "No result."
 msgstr "Tulemust pole."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:676
+#: lib/phoenix_kit_agent/web/settings_live.ex:729
 #, elixir-autogen, elixir-format
 msgid "Nobody is chosen: every Owner is told."
 msgstr "Kedagi pole valitud: teavitatakse kõiki omanikke."
@@ -311,8 +311,9 @@ msgstr "Kedagi pole valitud: teavitatakse kõiki omanikke."
 msgid "Nobody used the assistant this month."
 msgstr "Keegi ei kasutanud assistenti sel kuul."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:331
-#: lib/phoenix_kit_agent/web/settings_live.ex:341
+#: lib/phoenix_kit_agent/web/settings_live.ex:357
+#: lib/phoenix_kit_agent/web/settings_live.ex:367
+#: lib/phoenix_kit_agent/web/settings_live.ex:381
 #, elixir-autogen, elixir-format
 msgid "None"
 msgstr "Puudub"
@@ -327,20 +328,20 @@ msgstr "Pole lubatud: tööriista ei käivitatud."
 msgid "Nothing is running in this chat."
 msgstr "Selles vestluses ei tööta praegu midagi."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:399
+#: lib/phoenix_kit_agent/web/settings_live.ex:439
 #, elixir-autogen, elixir-format
 msgid "Nothing was saved. Choose again."
 msgstr "Midagi ei salvestatud. Vali uuesti."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:248
-#: lib/phoenix_kit_agent/web/settings_live.ex:370
-#: lib/phoenix_kit_agent/web/settings_live.ex:422
+#: lib/phoenix_kit_agent/web/settings_live.ex:263
+#: lib/phoenix_kit_agent/web/settings_live.ex:410
+#: lib/phoenix_kit_agent/web/settings_live.ex:462
 #: lib/phoenix_kit_agent/web/users_live.ex:400
 #, elixir-autogen, elixir-format
 msgid "Nothing was saved: check the highlighted fields."
 msgstr "Midagi ei salvestatud: kontrolli esiletõstetud välju."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:404
+#: lib/phoenix_kit_agent/web/settings_live.ex:444
 #, elixir-autogen, elixir-format
 msgid "Nothing was saved: someone chosen is not on the list."
 msgstr "Midagi ei salvestatud: keegi valituist pole nimekirjas."
@@ -350,22 +351,22 @@ msgstr "Midagi ei salvestatud: keegi valituist pole nimekirjas."
 msgid "Notify"
 msgstr "Teavita"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:732
+#: lib/phoenix_kit_agent/web/settings_live.ex:785
 #, elixir-autogen, elixir-format
 msgid "Off"
 msgstr "Väljas"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:732
+#: lib/phoenix_kit_agent/web/settings_live.ex:785
 #, elixir-autogen, elixir-format
 msgid "On"
 msgstr "Sees"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:627
+#: lib/phoenix_kit_agent/web/settings_live.ex:680
 #, elixir-autogen, elixir-format
 msgid "One tool result, characters"
 msgstr "Ühe tööriista tulemus, tähemärki"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:610
+#: lib/phoenix_kit_agent/web/settings_live.ex:663
 #, elixir-autogen, elixir-format
 msgid "One turn"
 msgstr "Üks vestlusring"
@@ -375,8 +376,8 @@ msgstr "Üks vestlusring"
 msgid "Only an Owner can change an Owner's assistant."
 msgstr "Omaniku assistenti saab muuta ainult omanik."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:122
-#: lib/phoenix_kit_agent/web/settings_live.ex:734
+#: lib/phoenix_kit_agent/web/settings_live.ex:124
+#: lib/phoenix_kit_agent/web/settings_live.ex:787
 #, elixir-autogen, elixir-format
 msgid "Only an Owner can change this setting."
 msgstr "Seda sätet saab muuta ainult omanik."
@@ -414,19 +415,19 @@ msgstr "Eemalda fail"
 msgid "Rename"
 msgstr "Nimeta ümber"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:705
+#: lib/phoenix_kit_agent/web/settings_live.ex:758
 #, elixir-autogen, elixir-format
 msgid "Request content in the AI journal"
 msgstr "Päringu sisu AI logis"
 
 #: lib/phoenix_kit_agent/web/dock/panel.ex:149
 #: lib/phoenix_kit_agent/web/dock/panel.ex:262
-#: lib/phoenix_kit_agent/web/settings_live.ex:562
-#: lib/phoenix_kit_agent/web/settings_live.ex:635
-#: lib/phoenix_kit_agent/web/settings_live.ex:659
-#: lib/phoenix_kit_agent/web/settings_live.ex:696
-#: lib/phoenix_kit_agent/web/settings_live.ex:727
-#: lib/phoenix_kit_agent/web/settings_live.ex:762
+#: lib/phoenix_kit_agent/web/settings_live.ex:615
+#: lib/phoenix_kit_agent/web/settings_live.ex:688
+#: lib/phoenix_kit_agent/web/settings_live.ex:712
+#: lib/phoenix_kit_agent/web/settings_live.ex:749
+#: lib/phoenix_kit_agent/web/settings_live.ex:780
+#: lib/phoenix_kit_agent/web/settings_live.ex:815
 #: lib/phoenix_kit_agent/web/users_live.ex:668
 #, elixir-autogen, elixir-format
 msgid "Save"
@@ -437,7 +438,7 @@ msgstr "Salvesta"
 msgid "Send"
 msgstr "Saada"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:86
+#: lib/phoenix_kit_agent/web/settings_live.ex:88
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr "Seaded"
@@ -468,13 +469,13 @@ msgstr "Midagi läks valesti. Proovi hetke pärast uuesti."
 msgid "Spending"
 msgstr "Kulud"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:586
+#: lib/phoenix_kit_agent/web/settings_live.ex:639
 #: lib/phoenix_kit_agent/web/users_live.ex:614
 #, elixir-autogen, elixir-format
 msgid "Spending per day"
 msgstr "Kulu päevas"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:591
+#: lib/phoenix_kit_agent/web/settings_live.ex:644
 #: lib/phoenix_kit_agent/web/users_live.ex:623
 #, elixir-autogen, elixir-format
 msgid "Spending per month"
@@ -511,7 +512,7 @@ msgstr "AI eelarve on otsas, seega seda ei loetud."
 msgid "The AI budget is used up."
 msgstr "AI eelarve on otsas."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:535
+#: lib/phoenix_kit_agent/web/settings_live.ex:575
 #, elixir-autogen, elixir-format
 msgid "The AI endpoints of the AI module. A user without a model of their own uses the default one; without it the assistant does not answer. The vision model describes pictures for a model that does not take them."
 msgstr "AI mooduli AI lõpp-punktid. Kasutaja, kellel pole oma mudelit, kasutab vaikemudelit; ilma selleta assistent ei vasta. Pildimudel kirjeldab pilte mudelile, mis neid ei toeta."
@@ -567,22 +568,22 @@ msgstr "Assistent vastab selles vestluses veel. Oota või vajuta nuppu Peata."
 msgid "The assistant used all its tool rounds for this turn."
 msgstr "Assistent kasutas selle vestlusringi jaoks ära kõik tööriistaringid."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:643
+#: lib/phoenix_kit_agent/web/settings_live.ex:696
 #, elixir-autogen, elixir-format
 msgid "The assistant's prompt"
 msgstr "Assistendi prompt"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:363
+#: lib/phoenix_kit_agent/web/settings_live.ex:403
 #, elixir-autogen, elixir-format
 msgid "The assistant's prompt saved."
 msgstr "Assistendi prompt on salvestatud."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:579
+#: lib/phoenix_kit_agent/web/settings_live.ex:632
 #, elixir-autogen, elixir-format
 msgid "The default model does not report what a call costs: money is not counted, only the turn limit applies."
 msgstr "Vaikemudel ei teata, kui palju üks AI-päring maksab: raha ei arvestata, kehtib ainult vestlusringide limiit."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:428
+#: lib/phoenix_kit_agent/web/settings_live.ex:468
 #, elixir-autogen, elixir-format
 msgid "The defaults could not be saved. Nothing was changed."
 msgstr "Vaikeväärtusi ei saanud salvestada. Midagi ei muudetud."
@@ -658,8 +659,8 @@ msgstr "Tulemus lõigati mahu järgi."
 msgid "The server was too busy to read it. Add it again."
 msgstr "Server oli liiga hõivatud, et seda lugeda. Lisa see uuesti."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:447
-#: lib/phoenix_kit_agent/web/settings_live.ex:462
+#: lib/phoenix_kit_agent/web/settings_live.ex:487
+#: lib/phoenix_kit_agent/web/settings_live.ex:502
 #, elixir-autogen, elixir-format
 msgid "The setting could not be saved. Nothing was changed."
 msgstr "Sätet ei saanud salvestada. Midagi ei muudetud."
@@ -762,17 +763,17 @@ msgstr "Ühe sõnumi jaoks on liiga palju faile. Eemalda mõned."
 msgid "Too many requests at once; try again in a minute."
 msgstr "Liiga palju päringuid korraga; proovi minuti pärast uuesti."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:614
+#: lib/phoenix_kit_agent/web/settings_live.ex:667
 #, elixir-autogen, elixir-format
 msgid "Tool rounds per turn"
 msgstr "Tööriistaringe vestlusringi kohta"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:618
+#: lib/phoenix_kit_agent/web/settings_live.ex:671
 #, elixir-autogen, elixir-format
 msgid "Turn deadline"
 msgstr "Vestlusringi tähtaeg"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:594
+#: lib/phoenix_kit_agent/web/settings_live.ex:647
 #: lib/phoenix_kit_agent/web/users_live.ex:632
 #, elixir-autogen, elixir-format
 msgid "Turns per day"
@@ -800,7 +801,7 @@ msgstr "Kasutaja"
 msgid "Users"
 msgstr "Kasutajad"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:551
+#: lib/phoenix_kit_agent/web/settings_live.ex:591
 #, elixir-autogen, elixir-format
 msgid "Vision model"
 msgstr "Pildimudel"
@@ -815,22 +816,22 @@ msgstr "Oota, kuni failid on loetud."
 msgid "What the AI assistant cost, by user"
 msgstr "Mis AI-assistent kasutajate kaupa maksis"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:671
+#: lib/phoenix_kit_agent/web/settings_live.ex:724
 #, elixir-autogen, elixir-format
 msgid "When a user reaches a limit and their settings say to tell someone, and when the AI budget is used up."
 msgstr "Kui kasutaja jõuab limiidini ja tema sätete järgi tuleb kedagi teavitada, ning kui AI eelarve saab otsa."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:707
+#: lib/phoenix_kit_agent/web/settings_live.ex:760
 #, elixir-autogen, elixir-format
 msgid "When on, the full text of the assistant's requests and answers, with the data its tools returned, is written to the AI request journal, where everyone who holds the AI permission can read it on the AI usage page (/admin/ai/usage). When off, the journal keeps only the counts and the cost."
 msgstr "Kui sees, kirjutatakse assistendi päringute ja vastuste täistekst koos tööriistade tagastatud andmetega AI päringute logisse, kus kõik AI õigusega kasutajad saavad seda lugeda AI kasutuse lehel (/admin/ai/usage). Kui väljas, hoiab logi ainult arvud ja hinna."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:669
+#: lib/phoenix_kit_agent/web/settings_live.ex:722
 #, elixir-autogen, elixir-format
 msgid "Who is told about limits"
 msgstr "Keda limiitidest teavitatakse"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:396
+#: lib/phoenix_kit_agent/web/settings_live.ex:436
 #, elixir-autogen, elixir-format
 msgid "Who is told about limits saved."
 msgstr "Limiitidest teavitatavad on salvestatud."
@@ -850,7 +851,7 @@ msgstr "Kirjuta esmalt sõnum."
 msgid "Write a message…"
 msgstr "Kirjuta sõnum…"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:724
+#: lib/phoenix_kit_agent/web/settings_live.ex:777
 #, elixir-autogen, elixir-format
 msgid "Write request content to the AI journal"
 msgstr "Kirjuta päringu sisu AI logisse"
@@ -860,8 +861,8 @@ msgstr "Kirjuta päringu sisu AI logisse"
 msgid "Yes"
 msgstr "Jah"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:100
-#: lib/phoenix_kit_agent/web/settings_live.ex:178
+#: lib/phoenix_kit_agent/web/settings_live.ex:102
+#: lib/phoenix_kit_agent/web/settings_live.ex:190
 #, elixir-autogen, elixir-format
 msgid "You do not have access to the AI assistant settings."
 msgstr "Sul puudub juurdepääs AI-assistendi sätetele."
@@ -983,7 +984,7 @@ msgstr "tööriist"
 msgid "day"
 msgstr "päev"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:346
+#: lib/phoenix_kit_agent/web/settings_live.ex:372
 #, elixir-autogen, elixir-format
 msgid "does not take pictures"
 msgstr "ei toeta pilte"
@@ -1008,8 +1009,8 @@ msgstr "ei ole kehtiv summa"
 msgid "is not a whole number"
 msgstr "ei ole täisarv"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:235
-#: lib/phoenix_kit_agent/web/settings_live.ex:289
+#: lib/phoenix_kit_agent/web/settings_live.ex:250
+#: lib/phoenix_kit_agent/web/settings_live.ex:314
 #: lib/phoenix_kit_agent/web/users_live.ex:484
 #: lib/phoenix_kit_agent/web/users_live.ex:506
 #, elixir-autogen, elixir-format
@@ -1036,7 +1037,7 @@ msgstr "raha ei arvestata — kehtib ainult vestlusringide limiit"
 msgid "month"
 msgstr "kuu"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:333
+#: lib/phoenix_kit_agent/web/settings_live.ex:359
 #: lib/phoenix_kit_agent/web/users_live.ex:536
 #, elixir-autogen, elixir-format
 msgid "no tools"
@@ -1047,12 +1048,12 @@ msgstr "tööriistu pole"
 msgid "not set"
 msgstr "pole määratud"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:347
+#: lib/phoenix_kit_agent/web/settings_live.ex:373
 #, elixir-autogen, elixir-format
 msgid "pictures unknown"
 msgstr "piltide tugi teadmata"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:333
+#: lib/phoenix_kit_agent/web/settings_live.ex:359
 #: lib/phoenix_kit_agent/web/users_live.ex:537
 #, elixir-autogen, elixir-format
 msgid "tools unknown"
@@ -1068,14 +1069,14 @@ msgstr "vestlusringi"
 msgid "AI assistant limits"
 msgstr "AI-assistendi limiidid"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:598
+#: lib/phoenix_kit_agent/web/settings_live.ex:651
 #: lib/phoenix_kit_agent/web/users_live.ex:641
 #, elixir-autogen, elixir-format
 msgctxt "unit"
 msgid "MB"
 msgstr "MB"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:619
+#: lib/phoenix_kit_agent/web/settings_live.ex:672
 #, elixir-autogen, elixir-format
 msgctxt "unit"
 msgid "s"
@@ -1332,23 +1333,23 @@ msgstr "Blokeering on tühistatud."
 msgid "This user is not blocked now."
 msgstr "See kasutaja ei ole praegu blokeeritud."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:285
+#: lib/phoenix_kit_agent/web/settings_live.ex:301
 #, elixir-autogen, elixir-format
 msgid "cannot be used yet: nobody knows whether its model takes pictures. Mark what it can do on its AI endpoint first"
 msgstr "ei saa veel kasutada: keegi ei tea, kas selle mudel toetab pilte. Märgi esmalt selle AI lõpp-punktis, mida see oskab"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:276
+#: lib/phoenix_kit_agent/web/settings_live.ex:292
 #: lib/phoenix_kit_agent/web/users_live.ex:502
 #, elixir-autogen, elixir-format
 msgid "cannot be used yet: nobody knows whether its model takes tools. Mark what it can do on its AI endpoint first"
 msgstr "ei saa veel kasutada: keegi ei tea, kas selle mudel toetab tööriistu. Märgi esmalt selle AI lõpp-punktis, mida see oskab"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:281
+#: lib/phoenix_kit_agent/web/settings_live.ex:297
 #, elixir-autogen, elixir-format
 msgid "cannot be used: its model does not take pictures"
 msgstr "ei saa kasutada: selle mudel ei toeta pilte"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:272
+#: lib/phoenix_kit_agent/web/settings_live.ex:288
 #: lib/phoenix_kit_agent/web/users_live.ex:498
 #, elixir-autogen, elixir-format
 msgid "cannot be used: its model does not take tools, which the assistant needs"
@@ -1519,17 +1520,17 @@ msgstr "Telegram"
 msgid "Use the AI assistant from the Telegram chat linked to the site bot, to read data with the user's own rights"
 msgstr "Kasuta tehisintellekti assistenti saidi botiga seotud Telegrami vestlusest, et lugeda andmeid kasutaja enda õigustega"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:759
+#: lib/phoenix_kit_agent/web/settings_live.ex:812
 #, elixir-autogen, elixir-format
 msgid "Answer in Telegram"
 msgstr "Vasta Telegramis"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:741
+#: lib/phoenix_kit_agent/web/settings_live.ex:794
 #, elixir-autogen, elixir-format
 msgid "Assistant in Telegram"
 msgstr "Assistent Telegramis"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:494
+#: lib/phoenix_kit_agent/web/settings_live.ex:534
 #, elixir-autogen, elixir-format
 msgid "Conflict: the bot is read by someone else (another reader or a webhook). The reader waits and tries again."
 msgstr "Konflikt: boti loeb keegi teine (teine lugeja või webhook). Lugeja ootab ja proovib uuesti."
@@ -1544,22 +1545,22 @@ msgstr "Edastatud sõnumeid ma ei loe. Kirjuta oma sõnadega."
 msgid "I understand text only for now."
 msgstr "Praegu saan aru ainult tekstist."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:500
+#: lib/phoenix_kit_agent/web/settings_live.ex:540
 #, elixir-autogen, elixir-format
 msgid "No default model is chosen, so only users with a model of their own are answered."
 msgstr "Vaikemudelit pole valitud, seega vastatakse ainult neile, kellel on oma mudel."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:485
+#: lib/phoenix_kit_agent/web/settings_live.ex:525
 #, elixir-autogen, elixir-format
 msgid "No website bot is chosen for user notifications, so there is no chat to answer. Choose one in the Telegram integration."
 msgstr "Kasutajateavituste jaoks pole veebisaidi botti valitud, seega pole kellele vastata. Vali bot Telegrami integratsioonis."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:481
+#: lib/phoenix_kit_agent/web/settings_live.ex:521
 #, elixir-autogen, elixir-format
 msgid "Off: the assistant does not answer in Telegram."
 msgstr "Väljas: assistent ei vasta Telegramis."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:502
+#: lib/phoenix_kit_agent/web/settings_live.ex:542
 #, elixir-autogen, elixir-format
 msgid "Reading the bot's messages."
 msgstr "Boti sõnumeid loetakse."
@@ -1569,22 +1570,22 @@ msgstr "Boti sõnumeid loetakse."
 msgid "Started a new conversation."
 msgstr "Alustasin uut vestlust."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:767
+#: lib/phoenix_kit_agent/web/settings_live.ex:820
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr "Olek"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:505
+#: lib/phoenix_kit_agent/web/settings_live.ex:545
 #, elixir-autogen, elixir-format
 msgid "Switched on. The reader starts within half a minute."
 msgstr "Sees. Lugeja käivitub poole minuti jooksul."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:457
+#: lib/phoenix_kit_agent/web/settings_live.ex:497
 #, elixir-autogen, elixir-format
 msgid "Telegram setting saved."
 msgstr "Telegrami säte salvestatud."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:490
+#: lib/phoenix_kit_agent/web/settings_live.ex:530
 #, elixir-autogen, elixir-format
 msgid "The bot has a webhook set, so its messages cannot be read. Remove the webhook."
 msgstr "Botil on webhook, seega selle sõnumeid ei saa lugeda. Eemalda webhook."
@@ -1604,7 +1605,7 @@ msgstr "See vestlus pole kontoga seotud. Seo see saidil: Profiil → Telegram"
 msgid "Wait a little: I am still answering your previous message."
 msgstr "Oota hetk: vastan veel su eelmisele sõnumile."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:743
+#: lib/phoenix_kit_agent/web/settings_live.ex:796
 #, elixir-autogen, elixir-format
 msgid "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. It only reads: a change is made on the site."
 msgstr "Kui sees, võib inimene, kes on oma Telegrami vestluse veebisaidi botiga sidunud (Profiil → Telegram) ja kelle rollil on õigus „Agent Telegramis“, botile kirjutada ning assistent vastab seal selle inimese enda õiguste, mudeli ja piirangutega. See ainult loeb: muudatus tehakse saidil."
@@ -1813,3 +1814,33 @@ msgstr "Kirjutada tekstiks häälsõnum või salvestus, mille kasutaja tegi AI-a
 #, elixir-autogen, elixir-format
 msgid "🎙 Recognised: %{text}"
 msgstr "🎙 Tuvastatud: %{text}"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:599
+#, elixir-autogen, elixir-format
+msgid "Speech recognition model"
+msgstr "Kõnetuvastusmudel"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:606
+#, elixir-autogen, elixir-format
+msgid "The speech recognition model writes down the voice messages of the Telegram bot and the recordings of the chat panel's microphone. Choose a model that takes audio, for example Gemini Flash. Without it, voice input is off."
+msgstr "Kõnetuvastusmudel kirjutab üles Telegrami roboti häälsõnumid ja vestluspaneeli mikrofoni salvestused. Vali mudel, mis toetab heli, näiteks Gemini Flash. Ilma selleta on häälsisend välja lülitatud."
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:387
+#, elixir-autogen, elixir-format
+msgid "audio unknown"
+msgstr "heli tugi teadmata"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:310
+#, elixir-autogen, elixir-format
+msgid "cannot be used yet: nobody knows whether its model takes audio. Mark what it can do on its AI endpoint first"
+msgstr "ei saa veel kasutada: keegi ei tea, kas selle mudel toetab heli. Märgi esmalt selle AI lõpp-punktis, mida see oskab"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:306
+#, elixir-autogen, elixir-format
+msgid "cannot be used: its model does not take audio"
+msgstr "ei saa kasutada: selle mudel ei toeta heli"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:386
+#, elixir-autogen, elixir-format
+msgid "does not take audio"
+msgstr "ei toeta heli"
