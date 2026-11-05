@@ -131,4 +131,60 @@ defmodule PhoenixKitAgent.Telegram.ChatQueueTest do
       assert [] = ChatQueue.take_siblings("bot", ctx.chat, "other")
     end
   end
+
+  describe "an album that comes while the chat is busy with something else" do
+    setup do
+      Process.flag(:trap_exit, true)
+      chat = System.unique_integer([:positive])
+      {:ok, pid} = ChatQueue.start_link(key: {"bot", chat}, connection_uuid: "bot")
+      ref = {:telegram_link, "user", "bot", chat}
+
+      # A text turn runs.
+      :sys.replace_state(pid, fn state -> %{state | task: :running} end)
+      %{pid: pid, ref: ref}
+    end
+
+    defp part(group, id), do: %{kind: :photo, message_id: id, text: nil, group: group}
+
+    test "waits as one job: the other parts are kept with it, none is told to wait", ctx do
+      for id <- 1..6,
+          do: assert(:ok = GenServer.call(ctx.pid, {:enqueue, ctx.ref, part("g", id)}))
+
+      assert %{waiting: waiting, held: held} = :sys.get_state(ctx.pid)
+      assert :queue.len(waiting) == 1
+      assert [{_ref, %{message_id: 1}}] = :queue.to_list(waiting)
+      assert held["g"] |> Enum.map(fn {_ref, job} -> job.message_id end) == [2, 3, 4, 5, 6]
+    end
+
+    test "does not take the places of other messages", ctx do
+      for id <- 1..5,
+          do: assert(:ok = GenServer.call(ctx.pid, {:enqueue, ctx.ref, part("g", id)}))
+
+      for id <- 21..22 do
+        assert :ok =
+                 GenServer.call(
+                   ctx.pid,
+                   {:enqueue, ctx.ref, %{kind: :turn, message_id: id, text: "t"}}
+                 )
+      end
+
+      assert :full =
+               GenServer.call(
+                 ctx.pid,
+                 {:enqueue, ctx.ref, %{kind: :turn, message_id: 23, text: "t"}}
+               )
+
+      # Still one of the album's, though the places are all taken.
+      assert :ok = GenServer.call(ctx.pid, {:enqueue, ctx.ref, part("g", 6)})
+    end
+
+    test "another album is a job of its own", ctx do
+      assert :ok = GenServer.call(ctx.pid, {:enqueue, ctx.ref, part("g", 1)})
+      assert :ok = GenServer.call(ctx.pid, {:enqueue, ctx.ref, part("h", 2)})
+
+      assert %{waiting: waiting, held: held} = :sys.get_state(ctx.pid)
+      assert :queue.len(waiting) == 2
+      assert held == %{}
+    end
+  end
 end
