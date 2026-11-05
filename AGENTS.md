@@ -243,32 +243,48 @@ and `Web.Markdown`).
   speech model (`agent_speech_endpoint_uuid`, `Config.put_speech_endpoint/2`,
   the AI task `agent.speech`, needs `[:audio_input]`; validated like the vision
   model on Settings → AI Agent). `Config.speech?/0` is the one question —
-  `PhoenixKitAI.transcribe/3` exists (feature-detected: the requirement of
-  `phoenix_kit_ai` is below the first release with it; `config
-  :phoenix_kit_agent, :speech_ai` stands in for the module in tests) and a model
-  is chosen; empty = voice off everywhere. `Speech.transcribe/4` takes a
+  `Config.transcribe?/0` (`PhoenixKitAI.transcribe/3` exists: feature-detected,
+  since the requirement of `phoenix_kit_ai` is below the first release with it;
+  `config :phoenix_kit_agent, :speech_ai` stands in for the module in tests)
+  and a model is chosen; empty = voice off everywhere. On an AI module without
+  it Settings does not offer the speech select (it says voice needs a newer AI
+  module) and refuses a forged field; a capabilities map without the
+  `audio_input` key is `:unknown` for the model (`Models.flag_support/2`, never
+  `Map.fetch!`). `Speech.transcribe/4` takes a
   session reference (a site session or a Telegram chat, `impersonated:` in the
   options), never a uuid: it checks the AI module, the session as
   `Conversations.authorize_session/2` does, the size (10 MB) and the user's
-  limits (`use: :speech`), under a `:global` lock per user so each sees what
-  the last cost, then calls with `user_uuid:`, `source: "agent"`, `task:
+  limits (`use: :speech`) — `Speech.check/2` — and asks them **again** under a
+  `:global` lock per user, right before paying, so each sees what the last cost
+  and a session, a link or a limit that went while it waited is seen. It calls with `user_uuid:`, `source: "agent"`, `task:
   "agent.speech"`, `capture_request_content: false`, `cache: false`; the result
   is `{:ok, text}` or a code (`:speech_off`, `:no_speech`, `:too_long`,
-  `:unfit`, `:failed`, …, texts in `Web.Dock.Texts.speech_error/1`). Neither
-  the audio nor the words are logged or kept. **Telegram:** a `voice` / `audio`
-  message of a linked, fresh, private, non-forwarded chat is a `:voice` job in
+  `:unfit`, `:budget_exceeded`, `:task_blocked`, `:rate_limited`, `:failed`, …,
+  texts in `Web.Dock.Texts.speech_error/1`, the guard's and the provider's
+  refusals worded as for a turn). Neither
+  the audio nor the words are logged or kept. **Telegram:** a `voice` or `audio`
+  message (music files are taken too: they are audio, and the owner asked for
+  audio messages) of a linked, fresh, private, non-forwarded chat is a `:voice` job in
   the same `ChatQueue` (its place keeps the order); `Telegram.Turn` checks the
   speech model, the chat's link and rights (`Conversations.authorize_session/2`,
-  so `agent.telegram`) and the length (120 s) and size (10 MB) **before** the
+  so `agent.telegram`) the user's limits (`Speech.check/2`) and the length (120 s,
+  Telegram's `duration`; a message with none relies on the 10 MB bound) and
+  size (10 MB) **before** the
   download (`Client.download_file/3` → core's `Telegram.download_file/3`,
-  `{:error, :unavailable}` on a core without it), then sends "🎙 Recognised: …"
+  `{:error, :unavailable}` on a core without it; `Client.can_download?/0` says
+  so up front: such a core's voice and pictures are `text_only` and the help
+  text has no voice line), then sends "🎙 Recognised: …"
+  (`typing` is sent every 4 s while it recognises, as in a turn)
   and runs the normal `:turn` with the text; any error is a `Texts.speech/1`
   text and 🤷, no turn. **Panel:** the microphone is core's
   `PhoenixKitWeb.Components.Core.AudioRecorder` (named as an atom in the
   template and `Code.ensure_loaded?`-checked, since older cores lack it), id
   `pk-agent-mic`; `{:audio_recorded, "pk-agent-mic", clip}` goes through
-  `info/2` (so `guarded/2`) into `start_async(:speech, …)` under `safe_transcribe/4`
-  (logs the class only); the words reach the composer as the push event
+  `info/2` (so `guarded/2`) into `start_async(:speech, …)`, whose function runs the call with `detached/1`
+  (a task of `Confirmations.TaskSupervisor`, not linked to the panel: a closed
+  tab does not cut a paid call short before it is journaled) under
+  `safe_transcribe/4` (logs the class only); the panel waits `:speech_wait_ms`
+  (2 minutes), then frees the microphone and a late answer is let go; the words reach the composer as the push event
   `pk-agent:dictated` (the textarea is `phx-update="ignore"`) and nothing is
   sent by itself.
 - **Pictures from Telegram:** a `photo` (the largest size of up to 10 MB), or a
