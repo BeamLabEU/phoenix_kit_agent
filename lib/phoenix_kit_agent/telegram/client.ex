@@ -20,7 +20,12 @@ defmodule PhoenixKitAgent.Telegram.Client do
   @callback bot_username(uuid()) :: String.t() | nil
   @callback webhook_set?(uuid()) :: boolean()
   @callback get_updates(uuid(), keyword()) :: {:ok, [map()]} | {:error, term()}
-  @callback send_message(uuid(), chat_id(), String.t()) :: {:ok, term()} | {:error, term()}
+  @callback send_message(uuid(), chat_id(), String.t(), keyword()) ::
+              {:ok, term()} | {:error, term()}
+  @callback answer_callback(uuid(), String.t(), String.t() | nil) ::
+              {:ok, term()} | {:error, term()}
+  @callback edit_message(uuid(), chat_id(), integer(), String.t(), map() | nil) ::
+              {:ok, term()} | {:error, term()}
   @callback react(uuid(), chat_id(), integer(), String.t() | nil) ::
               {:ok, term()} | {:error, term()}
   @callback typing(uuid(), chat_id()) :: {:ok, term()} | {:error, term()}
@@ -43,9 +48,24 @@ defmodule PhoenixKitAgent.Telegram.Client do
   @impl true
   def get_updates(uuid, opts), do: Telegram.get_updates(uuid, [owner: :system] ++ opts)
 
+  # `opts`: `reply_markup:` (an inline keyboard map).
   @impl true
-  def send_message(uuid, chat_id, text),
-    do: Telegram.send_message(uuid, chat_id, text, owner: :system)
+  def send_message(uuid, chat_id, text, opts),
+    do: Telegram.send_message(uuid, chat_id, text, [owner: :system] ++ opts)
+
+  # The press of a button answered, with a toast (`text`) or without one.
+  @impl true
+  def answer_callback(uuid, callback_id, text) do
+    opts = if text, do: [owner: :system, text: text], else: [owner: :system]
+    Telegram.answer_callback_query(uuid, callback_id, opts)
+  end
+
+  # `markup` `nil` takes the keyboard off the message.
+  @impl true
+  def edit_message(uuid, chat_id, message_id, text, markup) do
+    opts = if markup, do: [owner: :system, reply_markup: markup], else: [owner: :system]
+    Telegram.edit_message_text(uuid, chat_id, message_id, text, opts)
+  end
 
   @impl true
   def react(uuid, chat_id, message_id, emoji),

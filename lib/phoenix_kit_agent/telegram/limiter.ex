@@ -11,6 +11,9 @@ defmodule PhoenixKitAgent.Telegram.Limiter do
     * a linked chat gets an answer that needs no turn (help, a refusal, "wait")
       once in 3 seconds for each kind of answer (`allow_quick_reply?/3`).
 
+    * the presses of buttons: at most 10 a minute for a chat of the bot
+      (`allow_press?/2`), counted before anything is read from the database.
+
   A table is owned by this process (started by `PhoenixKitAgent.Telegram.Supervisor`);
   without it every question is answered as if there was nothing remembered,
   and every answer is allowed.
@@ -23,6 +26,7 @@ defmodule PhoenixKitAgent.Telegram.Limiter do
   @reply_every_ms 600_000
   @quick_every_ms 3_000
   @replies_per_minute 20
+  @presses_per_minute 10
   @sweep_ms 60_000
 
   @doc false
@@ -74,6 +78,21 @@ defmodule PhoenixKitAgent.Telegram.Limiter do
     end
   end
 
+  @doc """
+  Whether a press of a button in the chat may be looked at now (10 a minute
+  for each chat of the bot); a press is counted when asked, whatever the
+  answer, so a flood from a stranger's chat costs a counter and no more.
+  """
+  @spec allow_press?(String.t(), integer()) :: boolean()
+  def allow_press?(connection_uuid, chat_id) do
+    if exists?() do
+      key = {:press, connection_uuid, chat_id, div(now(), 60_000)}
+      :ets.update_counter(@table, key, {2, 1}, {key, 0}) <= @presses_per_minute
+    else
+      true
+    end
+  end
+
   # A chat is marked answered before the bot's budget is looked at: a chat the
   # budget refused is not answered later either (a flood from many strangers
   # does not get a second chance each minute).
@@ -111,7 +130,8 @@ defmodule PhoenixKitAgent.Telegram.Limiter do
       {{{:unlinked, :_, :_}, :"$1"}, [{:<, :"$1", horizon}], [true]},
       {{{:replied, :_, :_}, :"$1"}, [{:<, :"$1", horizon}], [true]},
       {{{:quick, :_, :_, :_}, :"$1"}, [{:<, :"$1", horizon}], [true]},
-      {{{:budget, :_, :"$2"}, :_}, [{:<, :"$2", minute}], [true]}
+      {{{:budget, :_, :"$2"}, :_}, [{:<, :"$2", minute}], [true]},
+      {{{:press, :_, :_, :"$2"}, :_}, [{:<, :"$2", minute}], [true]}
     ])
 
     schedule_sweep()

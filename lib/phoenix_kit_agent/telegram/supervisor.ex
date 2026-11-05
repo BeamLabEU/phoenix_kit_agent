@@ -8,7 +8,8 @@ defmodule PhoenixKitAgent.Telegram.Supervisor do
       chat, at most 20 at a time;
     * `PhoenixKitAgent.Telegram.TaskSupervisor` — the turns of the queues;
     * `PhoenixKitAgent.Telegram.ReplySupervisor` — the replies that need no
-      turn, apart from the turns so that they cannot take their place;
+      turn, the presses of buttons and the edits of cards after an outcome,
+      apart from the turns so that they cannot take their place;
     * `PhoenixKitAgent.Telegram.Limiter` — what is remembered about chats that
       are not linked and the pace of the replies that need no turn; only the
       reader's bridge uses it, so it comes late and its restart does not touch

@@ -78,6 +78,21 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
       assert [%{timeout: 25, limit: 100}] = polls()
     end
 
+    test "the bot is told to send button presses too, where the core lets a chat write", ctx do
+      Application.put_env(:phoenix_kit_agent, :telegram_link_writes, true)
+      on_exit(fn -> Application.put_env(:phoenix_kit_agent, :telegram_link_writes, false) end)
+
+      assert {:reading, 0} = cycle()
+      assert [%{allowed_updates: ["message", "callback_query"]}] = polls()
+      assert ctx.connection
+    end
+
+    test "and is not asked for them where it does not", _ctx do
+      assert {:reading, 0} = cycle()
+      assert [poll] = polls()
+      refute Map.has_key?(poll, :allowed_updates)
+    end
+
     test "holds? answers for anything that is not a bot, and never calls the process", ctx do
       refute Reader.holds?(nil)
       refute Reader.holds?(123)
@@ -433,7 +448,9 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
         def bot_username(_), do: nil
         def webhook_set?(_), do: false
         def get_updates(_, _), do: {:ok, []}
-        def send_message(_, _, _), do: {:ok, %{}}
+        def send_message(_, _, _, _), do: {:ok, %{}}
+        def answer_callback(_, _, _), do: {:ok, true}
+        def edit_message(_, _, _, _, _), do: {:ok, true}
         def react(_, _, _, _), do: {:ok, true}
         def typing(_, _), do: {:ok, true}
       end

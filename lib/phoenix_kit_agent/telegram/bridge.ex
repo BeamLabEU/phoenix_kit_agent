@@ -5,8 +5,10 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   (`dispatch/3`).
 
   An update is acted on only when it is a `message` in the **private chat of
-  the person who wrote it** (`Linking.chat_for_update/1`); a group, a channel,
-  an edit, a button press or a service update is `:ignore`, as is a message
+  the person who wrote it** (`Linking.chat_for_update/1`) or, where the core
+  lets a chat hold a change (`PhoenixKitAgent.Config.writes?/0`), the press of
+  a button under a card of the bot there; a group, a channel, an edit or a
+  service update is `:ignore` (a press from a group is answered empty), as is a message
   older than ten minutes (a backlog after the bot stood idle) and a `/start`
   with a link token, which `Linking.handle_updates/3` has answered already.
   The reference of the actor is `Linking.actor_ref/2` and nothing else: no
@@ -21,6 +23,13 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   unlinked chat in the limiter's table, but changes nothing else and sends
   nothing.
 
+  A press is `{:press, ref, …}` (`PhoenixKitAgent.Telegram.Press`, in a task of
+  the reply supervisor, never in the queue of the chat) after, in this order:
+  the pace of the chat (ten a minute, before anything is read), the chat being
+  a private one of the person who pressed, linked, and the button's data being
+  `c:` or `x:` and a uuid exactly as the bot wrote it (else a toast "unknown
+  button"). The age of a press is no matter: the row's own time decides.
+
   A linked person's message becomes a job for the serial queue of their chat
   (`PhoenixKitAgent.Telegram.ChatQueue`): `:turn` for text, `:new` for `/new`;
   `/help` and a bare `/start` are the help; a forwarded message and anything
@@ -31,7 +40,8 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   alias PhoenixKit.Integrations.Telegram.Linking
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Utils.RecipientLocale
-  alias PhoenixKitAgent.Telegram.{ChatQueue, Client, Format, Limiter, Texts}
+  alias PhoenixKitAgent.Config
+  alias PhoenixKitAgent.Telegram.{ChatQueue, Client, Format, Limiter, Press, Texts}
 
   @max_age_s 600
 
@@ -45,13 +55,22 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
           | {:unlinked, integer()}
           | {:static, ref(), integer(), integer(), :help | :forwarded | :text_only}
           | {:job, ref(), %{kind: :turn | :new, message_id: integer(), text: String.t() | nil}}
+          | {:press, ref(), Press.press()}
+          | {:answer, String.t(), nil | :unknown_button | {:unlinked, integer()}}
 
   @doc """
   The decision for `update` read from the bot `connection_uuid`. Option
   `:now` (unix seconds) stands in for the clock.
   """
   @spec handle_update(String.t(), term(), keyword()) :: decision()
-  def handle_update(connection_uuid, update, opts \\ []) when is_binary(connection_uuid) do
+  def handle_update(connection_uuid, update, opts \\ [])
+
+  def handle_update(connection_uuid, %{"callback_query" => query} = update, _opts)
+      when is_binary(connection_uuid) do
+    if Config.writes?(), do: press(connection_uuid, update, query), else: :ignore
+  end
+
+  def handle_update(connection_uuid, update, opts) when is_binary(connection_uuid) do
     now = Keyword.get(opts, :now, System.system_time(:second))
 
     with %{"message" => %{"message_id" => message_id} = message} when is_integer(message_id) <-
@@ -68,6 +87,54 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
     end
   end
 
+  # A press of a button (only where the core lets a chat hold a change). In
+  # this order, the cheap checks first: the pace of the chat; whether it is
+  # a private chat of the person who pressed; whether it is linked; the
+  # data of the button. A press that is not for the bot's cards is answered
+  # with nothing (an empty answer takes the "clock" off the button).
+  defp press(connection_uuid, update, query) do
+    callback_id = if is_binary(query["id"]), do: query["id"]
+
+    with true <- callback_id != nil,
+         true <- Limiter.allow_press?(connection_uuid, press_chat(query)),
+         {:ok, chat_id} <- Linking.chat_for_update(update),
+         {:ok, ref} <- linked_press(connection_uuid, update, chat_id),
+         {:ok, action, uuid} <- parse_data(query["data"]),
+         message_id when is_integer(message_id) <- get_in(query, ["message", "message_id"]) do
+      {:press, ref,
+       %{
+         callback_id: callback_id,
+         message_id: message_id,
+         action: action,
+         confirmation_uuid: uuid
+       }}
+    else
+      :unlinked -> {:answer, callback_id, {:unlinked, press_chat(query)}}
+      :bad_data -> {:answer, callback_id, :unknown_button}
+      _not_for_us -> if callback_id, do: {:answer, callback_id, nil}, else: :ignore
+    end
+  end
+
+  defp press_chat(%{"message" => %{"chat" => %{"id" => id}}}) when is_integer(id), do: id
+  defp press_chat(_query), do: 0
+
+  defp linked_press(connection_uuid, update, chat_id) do
+    case linked_ref(connection_uuid, update, chat_id) do
+      {:ok, ref} -> {:ok, ref}
+      :error -> :unlinked
+    end
+  end
+
+  # `c:` or `x:` and the uuid of a confirmation, in the form the bot wrote.
+  defp parse_data(<<action, ?:, uuid::binary-size(36)>>) when action in [?c, ?x] do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, ^uuid} -> {:ok, if(action == ?c, do: :confirm, else: :reject), uuid}
+      _other -> :bad_data
+    end
+  end
+
+  defp parse_data(_data), do: :bad_data
+
   @doc """
   Carries `handle_update/3` out: queues the job, or answers in a task of its
   own (a call to Telegram never holds the reader). An answer that cannot be
@@ -78,6 +145,12 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
     case handle_update(connection_uuid, update, opts) do
       :ignore ->
         :ok
+
+      {:press, {:telegram_link, _user, _connection, _chat} = ref, press} ->
+        async(fn -> Press.run(connection_uuid, ref, press) end)
+
+      {:answer, callback_id, kind} ->
+        answer_press(connection_uuid, callback_id, kind)
 
       {:unlinked, chat_id} ->
         if Limiter.allow_unlinked_reply?(connection_uuid, chat_id) do
@@ -102,6 +175,27 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
         end
     end
   end
+
+  # The answer to a press the bot does not carry out: a toast only for a
+  # chat that is not linked (within the pace of that answer) and for data the
+  # bot never wrote; else nothing.
+  defp answer_press(connection_uuid, callback_id, kind) do
+    toast = press_toast(connection_uuid, kind)
+    async(fn -> safely(fn -> send_answer(connection_uuid, callback_id, toast) end) end)
+  end
+
+  defp send_answer(connection_uuid, callback_id, toast) do
+    in_locale(nil, fn _locale ->
+      text = if toast, do: Texts.toast(toast)
+      _ = Client.impl().answer_callback(connection_uuid, callback_id, text)
+    end)
+  end
+
+  defp press_toast(_connection_uuid, :unknown_button), do: :unknown_button
+  defp press_toast(_connection_uuid, nil), do: nil
+
+  defp press_toast(connection_uuid, {:unlinked, chat_id}),
+    do: if(Limiter.allow_unlinked_reply?(connection_uuid, chat_id), do: :unlinked)
 
   # The answer of a linked person that needs no turn: once in a few seconds
   # for a chat and a kind of answer (a flood of `/help` is not answered each time), and never on
@@ -209,17 +303,33 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
     |> Enum.reduce_while(:ok, fn {part, index}, :ok ->
       if index > 0, do: Process.sleep(part_pause_ms())
 
-      case send_part(connection_uuid, chat_id, part) do
-        :ok -> {:cont, :ok}
+      case send_part(connection_uuid, chat_id, part, []) do
+        {:ok, _message} -> {:cont, :ok}
         :error -> {:halt, :error}
       end
     end)
   end
 
-  defp send_part(connection_uuid, chat_id, part, retried? \\ false) do
-    case Client.impl().send_message(connection_uuid, chat_id, part) do
-      {:ok, _message} ->
-        :ok
+  @doc false
+  # Sends a card (`text` under the inline keyboard `markup`, or without one) the
+  # way `say/3` sends a text: `{:ok, message_id}` (`nil` when Telegram's answer
+  # names none) or `:error`.
+  @spec send_card(String.t(), integer(), String.t(), map() | nil) ::
+          {:ok, integer() | nil} | :error
+  def send_card(connection_uuid, chat_id, text, markup) do
+    opts = if markup, do: [reply_markup: markup], else: []
+
+    case send_part(connection_uuid, chat_id, text, opts) do
+      {:ok, %{"message_id" => message_id}} when is_integer(message_id) -> {:ok, message_id}
+      {:ok, _other} -> {:ok, nil}
+      :error -> :error
+    end
+  end
+
+  defp send_part(connection_uuid, chat_id, part, opts, retried? \\ false) do
+    case Client.impl().send_message(connection_uuid, chat_id, part, opts) do
+      {:ok, message} ->
+        {:ok, message}
 
       {:error, reason} when is_binary(reason) and not retried? ->
         case retry_after_ms(reason) do
@@ -228,7 +338,7 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
 
           ms ->
             Process.sleep(ms)
-            send_part(connection_uuid, chat_id, part, true)
+            send_part(connection_uuid, chat_id, part, opts, true)
         end
 
       {:error, reason} ->

@@ -236,13 +236,20 @@ defmodule PhoenixKitAgent.Telegram.Reader do
     offset = Config.telegram_offset(state.connection)
 
     options =
-      [timeout: @poll_timeout_s, limit: 100] ++ if(offset, do: [offset: offset + 1], else: [])
+      [timeout: @poll_timeout_s, limit: 100] ++
+        if(offset, do: [offset: offset + 1], else: []) ++ allowed_updates()
 
     case Client.impl().get_updates(state.connection, options) do
       {:ok, []} -> ok(state)
       {:ok, updates} when is_list(updates) -> handle_batch(state, updates)
       {:error, reason} -> handle_error(state, reason)
     end
+  end
+
+  # With buttons in play the bot must be sent the presses: a bot set up
+  # earlier may have been told to send messages only.
+  defp allowed_updates do
+    if Config.writes?(), do: [allowed_updates: ["message", "callback_query"]], else: []
   end
 
   defp ok(state) do

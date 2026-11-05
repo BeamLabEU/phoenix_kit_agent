@@ -1534,12 +1534,12 @@ msgstr "Assistant dans Telegram"
 msgid "Conflict: the bot is read by someone else (another reader or a webhook). The reader waits and tries again."
 msgstr "Conflit : le bot est lu par quelqu'un d'autre (un autre lecteur ou un webhook). Le lecteur attend et réessaie."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:31
+#: lib/phoenix_kit_agent/telegram/texts.ex:45
 #, elixir-autogen, elixir-format
 msgid "I do not read forwarded messages. Put it in your own words."
 msgstr "Je ne lis pas les messages transférés. Écrivez-le avec vos propres mots."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:28
+#: lib/phoenix_kit_agent/telegram/texts.ex:42
 #, elixir-autogen, elixir-format
 msgid "I understand text only for now."
 msgstr "Pour l'instant, je ne comprends que le texte."
@@ -1564,7 +1564,7 @@ msgstr "Désactivé : l'assistant ne répond pas dans Telegram."
 msgid "Reading the bot's messages."
 msgstr "Les messages du bot sont lus."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:33
+#: lib/phoenix_kit_agent/telegram/texts.ex:47
 #, elixir-autogen, elixir-format
 msgid "Started a new conversation."
 msgstr "Nouvelle conversation commencée."
@@ -1589,17 +1589,17 @@ msgstr "Paramètre Telegram enregistré."
 msgid "The bot has a webhook set, so its messages cannot be read. Remove the webhook."
 msgstr "Le bot a un webhook : ses messages ne peuvent pas être lus. Supprimez le webhook."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:26
+#: lib/phoenix_kit_agent/telegram/texts.ex:40
 #, elixir-autogen, elixir-format
 msgid "The bot is busy right now. Write again in a minute."
 msgstr "Le bot est occupé pour le moment. Réécrivez dans une minute."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:24
+#: lib/phoenix_kit_agent/telegram/texts.ex:38
 #, elixir-autogen, elixir-format
 msgid "This chat is not linked to an account. Link it on the site: Profile → Telegram"
 msgstr "Ce chat n'est pas lié à un compte. Liez-le sur le site : Profil → Telegram"
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:27
+#: lib/phoenix_kit_agent/telegram/texts.ex:41
 #, elixir-autogen, elixir-format
 msgid "Wait a little: I am still answering your previous message."
 msgstr "Patientez un peu : je réponds encore à votre message précédent."
@@ -1609,23 +1609,151 @@ msgstr "Patientez un peu : je réponds encore à votre message précédent."
 msgid "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. It only reads: a change is made on the site."
 msgstr "Lorsque c'est activé, une personne qui a lié son chat Telegram au bot du site (Profil → Telegram) et dont le rôle a le droit « Agent dans Telegram » peut écrire au bot, et l'assistant y répond avec les droits, le modèle et les limites de cette personne. Il ne fait que lire : un changement se fait sur le site."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:19
+#: lib/phoenix_kit_agent/telegram/texts.ex:32
 #, elixir-autogen, elixir-format
 msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only, and I cannot change anything here: for a change I will point you to the site."
 msgstr "Écrivez-moi en texte simple et je répondrai à partir de vos données sur le site. /new commence une nouvelle conversation. Je ne lis que du texte et ne peux rien modifier ici : pour un changement, je vous renverrai vers le site."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:40
-#: lib/phoenix_kit_agent/telegram/texts.ex:57
+#: lib/phoenix_kit_agent/telegram/texts.ex:92
+#: lib/phoenix_kit_agent/telegram/texts.ex:109
 #, elixir-autogen, elixir-format
 msgid "You may not use the assistant in Telegram."
 msgstr "Vous n'avez pas le droit d'utiliser l'assistant dans Telegram."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:48
+#: lib/phoenix_kit_agent/telegram/texts.ex:100
 #, elixir-autogen, elixir-format
 msgid "A change is being confirmed on the site. Write again in a moment."
 msgstr "Une modification est en cours de confirmation sur le site. Réécrivez dans un instant."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:45
+#: lib/phoenix_kit_agent/telegram/texts.ex:97
 #, elixir-autogen, elixir-format
 msgid "That message is too long for me. Write a shorter one."
 msgstr "Ce message est trop long pour moi. Écrivez-en un plus court."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:70
+#: lib/phoenix_kit_agent/telegram/card.ex:103
+#: lib/phoenix_kit_agent/telegram/texts.ex:62
+#, elixir-autogen, elixir-format
+msgid "Already handled."
+msgstr "Déjà traité."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:117
+#, elixir-autogen, elixir-format
+msgid "Confirm this change:"
+msgstr "Confirmez ce changement :"
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:50
+#, elixir-autogen, elixir-format
+msgid "I could not show the buttons. Confirm the change on the site."
+msgstr "Je n'ai pas pu afficher les boutons. Confirmez le changement sur le site."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:83
+#, elixir-autogen, elixir-format
+msgid "Not allowed: %{code}"
+msgstr "Non autorisé : %{code}"
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:85
+#, elixir-autogen, elixir-format
+msgid "Not allowed: %{reason}"
+msgstr "Non autorisé : %{reason}"
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:80
+#, elixir-autogen, elixir-format
+msgid "Not allowed: too many requests. Try again in a minute."
+msgstr "Non autorisé : trop de requêtes. Réessayez dans une minute."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:123
+#: lib/phoenix_kit_agent/telegram/texts.ex:77
+#, elixir-autogen, elixir-format
+msgid "Not allowed: you have no right to make this change."
+msgstr "Non autorisé : vous n'avez pas le droit d'effectuer ce changement."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:208
+#: lib/phoenix_kit_agent/telegram/card.ex:209
+#: lib/phoenix_kit_agent/telegram/card.ex:211
+#, elixir-autogen, elixir-format
+msgid "Technical details:"
+msgstr "Détails techniques :"
+
+#: lib/phoenix_kit_agent/telegram/card.ex:102
+#, elixir-autogen, elixir-format
+msgid "The change could not be made."
+msgstr "Le changement n'a pas pu être effectué."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:101
+#, elixir-autogen, elixir-format
+msgid "The data changed under the preview."
+msgstr "Les données ont changé depuis l'aperçu."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:63
+#, elixir-autogen, elixir-format
+msgid "The time to confirm ran out. Ask again."
+msgstr "Le délai de confirmation est écoulé. Redemandez."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:65
+#, elixir-autogen, elixir-format
+msgid "This button does not work any more."
+msgstr "Ce bouton ne fonctionne plus."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:129
+#: lib/phoenix_kit_agent/telegram/texts.ex:64
+#, elixir-autogen, elixir-format
+msgid "This change cannot be confirmed here. Open the site."
+msgstr "Ce changement ne peut pas être confirmé ici. Ouvrez le site."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:73
+#: lib/phoenix_kit_agent/telegram/texts.ex:61
+#, elixir-autogen, elixir-format
+msgid "This change is no longer available."
+msgstr "Ce changement n'est plus disponible."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:113
+#, elixir-autogen, elixir-format
+msgid "This change is too large to confirm here. Confirm it on the site."
+msgstr "Ce changement est trop volumineux pour être confirmé ici. Confirmez-le sur le site."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:66
+#, elixir-autogen, elixir-format
+msgid "This chat is not linked to an account."
+msgstr "Ce chat n'est pas lié à un compte."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:28
+#, elixir-autogen, elixir-format
+msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
+msgstr "Écrivez-moi en texte simple et je répondrai à partir de vos données sur le site. /new commence une nouvelle conversation. Je ne lis que du texte. Si vous demandez un changement, je vous montrerai une carte avec ses détails et deux boutons : le confirmer ou l'annuler."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:182
+#, elixir-autogen, elixir-format
+msgid "…and %{count} more"
+msgstr "…et %{count} de plus"
+
+#: lib/phoenix_kit_agent/telegram/card.ex:100
+#, elixir-autogen, elixir-format
+msgid "⌛ The time to confirm ran out. Ask again."
+msgstr "⌛ Le délai de confirmation est écoulé. Redemandez."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:74
+#, elixir-autogen, elixir-format
+msgid "⏳ The agent is answering. Press again in a moment."
+msgstr "⏳ L'agent est en train de répondre. Appuyez à nouveau dans un instant."
+
+#: lib/phoenix_kit_agent/telegram/card.ex:81
+#, elixir-autogen, elixir-format
+msgid "✅ Confirm"
+msgstr "✅ Confirmer"
+
+#: lib/phoenix_kit_agent/telegram/card.ex:98
+#, elixir-autogen, elixir-format
+msgid "✅ Done"
+msgstr "✅ Fait"
+
+#: lib/phoenix_kit_agent/telegram/card.ex:82
+#: lib/phoenix_kit_agent/telegram/card.ex:91
+#, elixir-autogen, elixir-format
+msgid "❌ Cancel"
+msgstr "❌ Annuler"
+
+#: lib/phoenix_kit_agent/telegram/card.ex:99
+#, elixir-autogen, elixir-format
+msgid "❌ Cancelled"
+msgstr "❌ Annulé"

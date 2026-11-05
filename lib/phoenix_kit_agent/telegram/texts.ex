@@ -12,13 +12,27 @@ defmodule PhoenixKitAgent.Telegram.Texts do
   alias PhoenixKitAgent.Web.Dock.Texts, as: Panel
 
   @doc "The text of a reply that needs no turn."
-  @spec static(:help | :unlinked | :bot_busy | :wait | :text_only | :forwarded | :new_started) ::
-          String.t()
-  def static(:help),
-    do:
-      gettext(
-        "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only, and I cannot change anything here: for a change I will point you to the site."
-      )
+  @spec static(
+          :help
+          | :unlinked
+          | :bot_busy
+          | :wait
+          | :text_only
+          | :forwarded
+          | :new_started
+          | :card_not_shown
+        ) :: String.t()
+  def static(:help) do
+    if PhoenixKitAgent.Config.writes?(),
+      do:
+        gettext(
+          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
+        ),
+      else:
+        gettext(
+          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only, and I cannot change anything here: for a change I will point you to the site."
+        )
+  end
 
   def static(:unlinked),
     do: gettext("This chat is not linked to an account. Link it on the site: Profile → Telegram")
@@ -31,6 +45,44 @@ defmodule PhoenixKitAgent.Telegram.Texts do
     do: gettext("I do not read forwarded messages. Put it in your own words.")
 
   def static(:new_started), do: gettext("Started a new conversation.")
+
+  def static(:card_not_shown),
+    do: gettext("I could not show the buttons. Confirm the change on the site.")
+
+  @doc "The toast that answers a press of a button the bot refuses."
+  @spec toast(
+          :unavailable
+          | :processed
+          | :expired
+          | :foreign
+          | :unknown_button
+          | :unlinked
+        ) :: String.t()
+  def toast(:unavailable), do: gettext("This change is no longer available.")
+  def toast(:processed), do: gettext("Already handled.")
+  def toast(:expired), do: gettext("The time to confirm ran out. Ask again.")
+  def toast(:foreign), do: gettext("This change cannot be confirmed here. Open the site.")
+  def toast(:unknown_button), do: gettext("This button does not work any more.")
+  def toast(:unlinked), do: gettext("This chat is not linked to an account.")
+
+  @doc """
+  The line under a card for a press that could not be carried out and left
+  the buttons on it: a turn or another press is running, or a refusal.
+  """
+  @spec press_note(term()) :: String.t()
+  def press_note(reason) when reason in [:turn_running, :click_running],
+    do: gettext("⏳ The agent is answering. Press again in a moment.")
+
+  def press_note({:refused, code}) when code in [:forbidden, "forbidden"],
+    do: gettext("Not allowed: you have no right to make this change.")
+
+  def press_note({:refused, code}) when code in [:rate_limited, "rate_limited"],
+    do: gettext("Not allowed: too many requests. Try again in a minute.")
+
+  def press_note({:refused, code}),
+    do: gettext("Not allowed: %{code}", code: code |> to_string() |> String.slice(0, 60))
+
+  def press_note(reason), do: gettext("Not allowed: %{reason}", reason: refusal(reason))
 
   @doc "The text for the refusal of `Turns.start/6` (or of `Conversations`)."
   @spec refusal(term()) :: String.t()

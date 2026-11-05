@@ -13,6 +13,9 @@ config :phoenix_kit_agent, turn_stop_grace_ms: 200
 # retry are short.
 config :phoenix_kit_agent,
   telegram_reader_autostart: false,
+  # Off unless a test turns it on: the core at hand may or may not let a chat hold
+  # writes (`PhoenixKitAgent.Config.writes?/0`).
+  telegram_link_writes: false,
   telegram_part_pause_ms: 0,
   telegram_quick_reply_ms: 0,
   telegram_max_retry_ms: 50

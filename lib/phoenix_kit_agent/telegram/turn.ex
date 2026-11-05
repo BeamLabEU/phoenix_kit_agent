@@ -9,7 +9,10 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   every 4 seconds), then 👍 with the answer, or 🤷 with a short explanation
   when the turn was refused, ended in a notice, asked for a change the chat
   may not make (a tool of the turn was denied) or when the answer could not
-  be sent. The topic of the
+  be sent. A turn that ended with a change held for the user's confirmation
+  says what the assistant said (if it said anything), then sends the card
+  (`PhoenixKitAgent.Telegram.Cards`): 👍; when the card could not be sent, one
+  message that sends the person to the site, and 🤷. The topic of the
   conversation is subscribed **before** the turn starts, so its end cannot be
   missed; the wait is the turn's deadline plus a minute. If this process dies
   mid-turn (a deploy), the message keeps its 👀 and is not answered.
@@ -21,7 +24,7 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitAgent.{Config, Conversations, Turns}
-  alias PhoenixKitAgent.Telegram.{Bridge, Client, Format, Texts}
+  alias PhoenixKitAgent.Telegram.{Bridge, Cards, Client, Format, Texts}
 
   @typing_every_ms 4_000
   @grace_ms 60_000
@@ -58,7 +61,7 @@ defmodule PhoenixKitAgent.Telegram.Turn do
         try do
           Bridge.react(connection_uuid, chat_id, job.message_id, "👀")
           start = Turns.start(ref, false, conversation.uuid, job.text, [], options(locale))
-          outcome(connection_uuid, chat_id, job.message_id, conversation, start)
+          outcome(connection_uuid, ref, job.message_id, conversation, start)
         after
           PubSub.unsubscribe(topic)
         end
@@ -85,7 +88,13 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     )
   end
 
-  defp outcome(connection_uuid, chat_id, message_id, conversation, {:ok, turn_ref}) do
+  defp outcome(
+         connection_uuid,
+         {:telegram_link, _user, _connection, chat_id} = ref,
+         message_id,
+         conversation,
+         {:ok, turn_ref}
+       ) do
     await(connection_uuid, chat_id, conversation.uuid, turn_ref)
 
     case Conversations.turn_result(conversation.uuid, turn_ref) do
@@ -98,6 +107,9 @@ defmodule PhoenixKitAgent.Telegram.Turn do
           not Conversations.turn_denied?(conversation.uuid, turn_ref)
         )
 
+      {:needs_confirmation, text, card} ->
+        held(connection_uuid, ref, message_id, conversation, turn_ref, {text, card})
+
       {:notice, code} ->
         refuse_with(connection_uuid, chat_id, message_id, Texts.notice(code))
 
@@ -106,8 +118,47 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     end
   end
 
-  defp outcome(connection_uuid, chat_id, message_id, _conversation, {:error, reason}),
-    do: refuse(connection_uuid, chat_id, message_id, reason)
+  defp outcome(
+         connection_uuid,
+         {:telegram_link, _user, _connection, chat_id},
+         message_id,
+         _conversation,
+         {:error, reason}
+       ),
+       do: refuse(connection_uuid, chat_id, message_id, reason)
+
+  # The turn ended with a change held for the user: what the assistant said,
+  # then the card with its buttons, and 👍. A card Telegram would not take is
+  # one message that sends the person to the site (🤷); the change waits there.
+  # An error that ended the turn after the hold is told in a message of its own.
+  defp held(connection_uuid, ref, message_id, conversation, turn_ref, {text, card}) do
+    {:telegram_link, _user, _connection, chat_id} = ref
+    if text, do: say_plain(connection_uuid, chat_id, text)
+
+    emoji =
+      case Cards.deliver(connection_uuid, ref, conversation.uuid, card) do
+        :ok ->
+          "👍"
+
+        :error ->
+          Bridge.say(connection_uuid, chat_id, Texts.static(:card_not_shown))
+          "🤷"
+      end
+
+    case Conversations.turn_error(conversation.uuid, turn_ref) do
+      nil -> :ok
+      code -> Bridge.say(connection_uuid, chat_id, Texts.notice(code))
+    end
+
+    Bridge.react(connection_uuid, chat_id, message_id, emoji)
+  end
+
+  defp say_plain(connection_uuid, chat_id, text) do
+    case Format.plain(text) do
+      "" -> :ok
+      plain -> Bridge.say(connection_uuid, chat_id, plain)
+    end
+  end
 
   # "Typing…" every 4 seconds until the turn says it is over, or gives up
   # one minute after the turn's own deadline.

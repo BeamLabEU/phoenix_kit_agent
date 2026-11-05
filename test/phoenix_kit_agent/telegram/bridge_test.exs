@@ -188,6 +188,32 @@ defmodule PhoenixKitAgent.Telegram.BridgeTest do
       assert Limiter.allow_unlinked_reply?(connection, 31)
     end
 
+    test "ten presses of buttons a minute for a chat, and the table is cleaned of old minutes" do
+      minute_start = div(System.system_time(:millisecond), 60_000) * 60_000
+      Application.put_env(:phoenix_kit_agent, :telegram_now_ms, minute_start)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :telegram_now_ms) end)
+
+      connection = UUIDv7.generate()
+      allowed = for _ <- 1..15, do: Limiter.allow_press?(connection, 1)
+
+      assert Enum.count(allowed, & &1) == 10
+      assert Limiter.allow_press?(connection, 2)
+      assert Limiter.allow_press?(UUIDv7.generate(), 1)
+
+      Application.put_env(:phoenix_kit_agent, :telegram_now_ms, minute_start + 60_000)
+      assert Limiter.allow_press?(connection, 1)
+
+      send(Process.whereis(Limiter), :sweep)
+      _ = :sys.get_state(Limiter)
+
+      old =
+        :ets.select(Limiter, [
+          {{{:press, connection, :"$1", :"$2"}, :_}, [], [{{:"$1", :"$2"}}]}
+        ])
+
+      assert old == [{1, div(minute_start + 60_000, 60_000)}]
+    end
+
     test "a linked chat gets an answer without a turn once in a while" do
       connection = UUIDv7.generate()
       Application.put_env(:phoenix_kit_agent, :telegram_quick_reply_ms, 3_000)
