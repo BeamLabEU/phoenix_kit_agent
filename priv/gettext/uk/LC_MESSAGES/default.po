@@ -1634,14 +1634,14 @@ msgstr "Зміну зараз підтверджують на сайті. Нап
 msgid "That message is too long for me. Write a shorter one."
 msgstr "Це повідомлення завелике для мене. Напишіть коротше."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:70
-#: lib/phoenix_kit_agent/telegram/card.ex:103
+#: lib/phoenix_kit_agent/telegram/card.ex:71
+#: lib/phoenix_kit_agent/telegram/card.ex:104
 #: lib/phoenix_kit_agent/telegram/texts.ex:62
 #, elixir-autogen, elixir-format
 msgid "Already handled."
 msgstr "Уже оброблено."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:117
+#: lib/phoenix_kit_agent/telegram/card.ex:118
 #, elixir-autogen, elixir-format
 msgid "Confirm this change:"
 msgstr "Підтвердьте цю зміну:"
@@ -1666,25 +1666,25 @@ msgstr "Не можна: %{reason}"
 msgid "Not allowed: too many requests. Try again in a minute."
 msgstr "Не можна: забагато запитів. Спробуйте за хвилину."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:123
+#: lib/phoenix_kit_agent/telegram/card.ex:124
 #: lib/phoenix_kit_agent/telegram/texts.ex:77
 #, elixir-autogen, elixir-format
 msgid "Not allowed: you have no right to make this change."
 msgstr "Не можна: у вас немає права на цю зміну."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:208
 #: lib/phoenix_kit_agent/telegram/card.ex:209
-#: lib/phoenix_kit_agent/telegram/card.ex:211
+#: lib/phoenix_kit_agent/telegram/card.ex:210
+#: lib/phoenix_kit_agent/telegram/card.ex:212
 #, elixir-autogen, elixir-format
 msgid "Technical details:"
 msgstr "Технічні деталі:"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:102
+#: lib/phoenix_kit_agent/telegram/card.ex:103
 #, elixir-autogen, elixir-format
 msgid "The change could not be made."
 msgstr "Не вдалося виконати зміну."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:101
+#: lib/phoenix_kit_agent/telegram/card.ex:102
 #, elixir-autogen, elixir-format
 msgid "The data changed under the preview."
 msgstr "Дані змінилися після попереднього перегляду."
@@ -1699,19 +1699,19 @@ msgstr "Час підтвердження минув. Попросіть ще р
 msgid "This button does not work any more."
 msgstr "Ця кнопка більше не працює."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:129
+#: lib/phoenix_kit_agent/telegram/card.ex:130
 #: lib/phoenix_kit_agent/telegram/texts.ex:64
 #, elixir-autogen, elixir-format
 msgid "This change cannot be confirmed here. Open the site."
 msgstr "Цю зміну не можна підтвердити тут. Відкрийте сайт."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:73
+#: lib/phoenix_kit_agent/telegram/card.ex:74
 #: lib/phoenix_kit_agent/telegram/texts.ex:61
 #, elixir-autogen, elixir-format
 msgid "This change is no longer available."
 msgstr "Ця зміна більше недоступна."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:113
+#: lib/phoenix_kit_agent/telegram/card.ex:114
 #, elixir-autogen, elixir-format
 msgid "This change is too large to confirm here. Confirm it on the site."
 msgstr "Ця зміна завелика, щоб підтверджувати її тут. Підтвердьте її на сайті."
@@ -1726,12 +1726,12 @@ msgstr "Цей чат не пов'язаний з акаунтом."
 msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
 msgstr "Напишіть мені звичайним текстом, і я відповім за вашими даними на сайті. /new починає нову розмову. Я читаю лише текст. Якщо ви попросите зміну, я покажу картку з подробицями та двома кнопками: підтвердити або скасувати."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:182
+#: lib/phoenix_kit_agent/telegram/card.ex:183
 #, elixir-autogen, elixir-format
 msgid "…and %{count} more"
 msgstr "…і ще %{count}"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:100
+#: lib/phoenix_kit_agent/telegram/card.ex:101
 #, elixir-autogen, elixir-format
 msgid "⌛ The time to confirm ran out. Ask again."
 msgstr "⌛ Час підтвердження минув. Попросіть ще раз."
@@ -1741,23 +1741,23 @@ msgstr "⌛ Час підтвердження минув. Попросіть щ�
 msgid "⏳ The agent is answering. Press again in a moment."
 msgstr "⏳ Агент зараз відповідає. Натисніть ще раз за мить."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:81
+#: lib/phoenix_kit_agent/telegram/card.ex:82
 #, elixir-autogen, elixir-format
 msgid "✅ Confirm"
 msgstr "✅ Підтвердити"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:98
+#: lib/phoenix_kit_agent/telegram/card.ex:99
 #, elixir-autogen, elixir-format
 msgid "✅ Done"
 msgstr "✅ Зроблено"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:82
-#: lib/phoenix_kit_agent/telegram/card.ex:91
+#: lib/phoenix_kit_agent/telegram/card.ex:83
+#: lib/phoenix_kit_agent/telegram/card.ex:92
 #, elixir-autogen, elixir-format
 msgid "❌ Cancel"
 msgstr "❌ Скасувати"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:99
+#: lib/phoenix_kit_agent/telegram/card.ex:100
 #, elixir-autogen, elixir-format
 msgid "❌ Cancelled"
 msgstr "❌ Скасовано"

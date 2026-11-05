@@ -1630,14 +1630,14 @@ msgstr "Eine Änderung wird gerade auf der Website bestätigt. Schreiben Sie gle
 msgid "That message is too long for me. Write a shorter one."
 msgstr "Diese Nachricht ist für mich zu lang. Schreiben Sie eine kürzere."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:70
-#: lib/phoenix_kit_agent/telegram/card.ex:103
+#: lib/phoenix_kit_agent/telegram/card.ex:71
+#: lib/phoenix_kit_agent/telegram/card.ex:104
 #: lib/phoenix_kit_agent/telegram/texts.ex:62
 #, elixir-autogen, elixir-format
 msgid "Already handled."
 msgstr "Bereits erledigt."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:117
+#: lib/phoenix_kit_agent/telegram/card.ex:118
 #, elixir-autogen, elixir-format
 msgid "Confirm this change:"
 msgstr "Bestätigen Sie diese Änderung:"
@@ -1662,25 +1662,25 @@ msgstr "Nicht erlaubt: %{reason}"
 msgid "Not allowed: too many requests. Try again in a minute."
 msgstr "Nicht erlaubt: zu viele Anfragen. Versuchen Sie es in einer Minute erneut."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:123
+#: lib/phoenix_kit_agent/telegram/card.ex:124
 #: lib/phoenix_kit_agent/telegram/texts.ex:77
 #, elixir-autogen, elixir-format
 msgid "Not allowed: you have no right to make this change."
 msgstr "Nicht erlaubt: Sie haben kein Recht, diese Änderung vorzunehmen."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:208
 #: lib/phoenix_kit_agent/telegram/card.ex:209
-#: lib/phoenix_kit_agent/telegram/card.ex:211
+#: lib/phoenix_kit_agent/telegram/card.ex:210
+#: lib/phoenix_kit_agent/telegram/card.ex:212
 #, elixir-autogen, elixir-format
 msgid "Technical details:"
 msgstr "Technische Details:"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:102
+#: lib/phoenix_kit_agent/telegram/card.ex:103
 #, elixir-autogen, elixir-format
 msgid "The change could not be made."
 msgstr "Die Änderung konnte nicht vorgenommen werden."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:101
+#: lib/phoenix_kit_agent/telegram/card.ex:102
 #, elixir-autogen, elixir-format
 msgid "The data changed under the preview."
 msgstr "Die Daten haben sich seit der Vorschau geändert."
@@ -1695,19 +1695,19 @@ msgstr "Die Bestätigungszeit ist abgelaufen. Fragen Sie erneut."
 msgid "This button does not work any more."
 msgstr "Diese Schaltfläche funktioniert nicht mehr."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:129
+#: lib/phoenix_kit_agent/telegram/card.ex:130
 #: lib/phoenix_kit_agent/telegram/texts.ex:64
 #, elixir-autogen, elixir-format
 msgid "This change cannot be confirmed here. Open the site."
 msgstr "Diese Änderung kann hier nicht bestätigt werden. Öffnen Sie die Website."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:73
+#: lib/phoenix_kit_agent/telegram/card.ex:74
 #: lib/phoenix_kit_agent/telegram/texts.ex:61
 #, elixir-autogen, elixir-format
 msgid "This change is no longer available."
 msgstr "Diese Änderung ist nicht mehr verfügbar."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:113
+#: lib/phoenix_kit_agent/telegram/card.ex:114
 #, elixir-autogen, elixir-format
 msgid "This change is too large to confirm here. Confirm it on the site."
 msgstr "Diese Änderung ist zu umfangreich, um sie hier zu bestätigen. Bestätigen Sie sie auf der Website."
@@ -1722,12 +1722,12 @@ msgstr "Dieser Chat ist nicht mit einem Konto verknüpft."
 msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
 msgstr "Schreiben Sie mir in einfachem Text, und ich antworte anhand Ihrer Daten auf der Website. /new beginnt ein neues Gespräch. Ich lese nur Text. Wenn Sie eine Änderung wünschen, zeige ich eine Karte mit den Einzelheiten und zwei Schaltflächen: bestätigen oder abbrechen."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:182
+#: lib/phoenix_kit_agent/telegram/card.ex:183
 #, elixir-autogen, elixir-format
 msgid "…and %{count} more"
 msgstr "…und %{count} weitere"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:100
+#: lib/phoenix_kit_agent/telegram/card.ex:101
 #, elixir-autogen, elixir-format
 msgid "⌛ The time to confirm ran out. Ask again."
 msgstr "⌛ Die Bestätigungszeit ist abgelaufen. Fragen Sie erneut."
@@ -1737,23 +1737,23 @@ msgstr "⌛ Die Bestätigungszeit ist abgelaufen. Fragen Sie erneut."
 msgid "⏳ The agent is answering. Press again in a moment."
 msgstr "⏳ Der Agent antwortet gerade. Drücken Sie gleich noch einmal."
 
-#: lib/phoenix_kit_agent/telegram/card.ex:81
+#: lib/phoenix_kit_agent/telegram/card.ex:82
 #, elixir-autogen, elixir-format
 msgid "✅ Confirm"
 msgstr "✅ Bestätigen"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:98
+#: lib/phoenix_kit_agent/telegram/card.ex:99
 #, elixir-autogen, elixir-format
 msgid "✅ Done"
 msgstr "✅ Erledigt"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:82
-#: lib/phoenix_kit_agent/telegram/card.ex:91
+#: lib/phoenix_kit_agent/telegram/card.ex:83
+#: lib/phoenix_kit_agent/telegram/card.ex:92
 #, elixir-autogen, elixir-format
 msgid "❌ Cancel"
 msgstr "❌ Abbrechen"
 
-#: lib/phoenix_kit_agent/telegram/card.ex:99
+#: lib/phoenix_kit_agent/telegram/card.ex:100
 #, elixir-autogen, elixir-format
 msgid "❌ Cancelled"
 msgstr "❌ Abgebrochen"

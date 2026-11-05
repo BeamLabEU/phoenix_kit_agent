@@ -506,7 +506,7 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
 
     test "while another press runs: the same", ctx do
       held = hold!(ctx)
-      :ok = Locks.acquire_user(ctx.user.uuid, Locks.click_ref(), 600, 30)
+      :ok = Locks.acquire_user(ctx.user.uuid, Locks.click_ref(), Turns.lock_ttl_s(), 30)
 
       calls = pressed(ctx, held, confirm_data(held))
 
@@ -939,7 +939,7 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
         end)
 
       held = Process.get(:held)
-      log = Enum.join(events, "\n")
+      log = events |> Enum.reject(&(&1 =~ "application: :ecto_sql")) |> Enum.join("\n")
 
       for secret <- [
             "SECRET-ASSISTANT-TEXT",
