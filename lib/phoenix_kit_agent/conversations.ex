@@ -63,8 +63,8 @@ defmodule PhoenixKitAgent.Conversations do
   delete a chat, add a message through `add_message/4`, or write the personal
   instructions (`{:error, :not_in_telegram}`).
 
-  `create_conversation_for/2`, `latest_telegram_conversation/1` and
-  `turn_result/2` are the bridge's own, trusted: they take no session and are
+  `create_conversation_for/2`, `latest_telegram_conversation/1`,
+  `turn_result/2` and `turn_denied?/2` are the bridge's own, trusted: they take no session and are
   never to be called from a client's event.
 
   ## Writing

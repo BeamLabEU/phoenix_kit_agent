@@ -253,8 +253,9 @@ and `Web.Markdown`).
   own model, instructions and spending are the user's, as for the panel. The
   trusted entry points of a bridge, which take no session and are never for a
   client's event: `Conversations.create_conversation_for/2`,
-  `latest_telegram_conversation/1` and `turn_result/2` (a notice with an error
-  code of the turn outranks any text it said). The panel marks a chat whose
+  `latest_telegram_conversation/1`, `turn_result/2` (a notice with an error
+  code of the turn outranks any text it said) and `turn_denied?/2` (the turn
+  asked for a write tool and was refused). The panel marks a chat whose
   `metadata.source` is `"telegram"`.
 - **The Telegram reader and bridge** (`PhoenixKitAgent.Telegram.*`, started
   by `children/0`; off by default, the switch is `agent_telegram_enabled` on
