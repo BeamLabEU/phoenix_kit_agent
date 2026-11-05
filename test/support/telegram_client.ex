@@ -30,8 +30,10 @@ defmodule PhoenixKitAgent.Test.TelegramClient do
   @behaviour PhoenixKitAgent.Telegram.Client
 
   def start do
+    # Not linked to the test: a bot's job still running as the test ends must
+    # find the script, not an exit (`stop/0`, in `on_exit`, ends it).
     {:ok, pid} =
-      Agent.start_link(fn -> %{connection: nil, webhook: false, updates: [], next_id: 5000} end)
+      Agent.start(fn -> %{connection: nil, webhook: false, updates: [], next_id: 5000} end)
 
     Application.put_env(:phoenix_kit_agent, :telegram_script, pid)
     Application.put_env(:phoenix_kit_agent, :telegram_client, __MODULE__)
@@ -40,6 +42,9 @@ defmodule PhoenixKitAgent.Test.TelegramClient do
   end
 
   def stop do
+    with pid when is_pid(pid) <- Application.get_env(:phoenix_kit_agent, :telegram_script),
+         do: if(Process.alive?(pid), do: Agent.stop(pid))
+
     Application.delete_env(:phoenix_kit_agent, :telegram_script)
     Application.delete_env(:phoenix_kit_agent, :telegram_client)
     Application.delete_env(:phoenix_kit_agent, :telegram_test_listener)
