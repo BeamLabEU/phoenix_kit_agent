@@ -50,7 +50,8 @@ and `Web.Markdown`).
   `API.Confirm`, the `OperationPreview` component,
   `Executor.tool_availability/1`; the AI journal's cost in dollars, V223),
   `phoenix_kit_ai` `~> 0.26` (the AI task guard, tool calling, a call's
-  cost from one place, `Request.cost` in dollars), `phoenix_live_view`, and
+  cost from one place, `Request.cost` in dollars; `transcribe/3`, optional,
+  for voice), `phoenix_live_view`, and
   `mdex` (already phoenix_kit's) for the markdown of the chat panel.
 - **Module key** `"agent"`; settings prefix `agent_`; tables
   `phoenix_kit_agent_*` (marker `pk_agent_schema:<N>` on
@@ -238,6 +239,38 @@ and `Web.Markdown`).
   a new choice; the lift of a block goes through `Web.Access` and then
   `Guard.unblock/3` with the session's scope (the guard decides own and
   Owner blocks).
+- **Voice** (`PhoenixKitAgent.Speech`): a recording is written down by the
+  speech model (`agent_speech_endpoint_uuid`, `Config.put_speech_endpoint/2`,
+  the AI task `agent.speech`, needs `[:audio_input]`; validated like the vision
+  model on Settings → AI Agent). `Config.speech?/0` is the one question —
+  `PhoenixKitAI.transcribe/3` exists (feature-detected: the requirement of
+  `phoenix_kit_ai` is below the first release with it; `config
+  :phoenix_kit_agent, :speech_ai` stands in for the module in tests) and a model
+  is chosen; empty = voice off everywhere. `Speech.transcribe/4` takes a
+  session reference (a site session or a Telegram chat, `impersonated:` in the
+  options), never a uuid: it checks the AI module, the session as
+  `Conversations.authorize_session/2` does, the size (10 MB) and the user's
+  limits (`use: :speech`), under a `:global` lock per user so each sees what
+  the last cost, then calls with `user_uuid:`, `source: "agent"`, `task:
+  "agent.speech"`, `capture_request_content: false`, `cache: false`; the result
+  is `{:ok, text}` or a code (`:speech_off`, `:no_speech`, `:too_long`,
+  `:unfit`, `:failed`, …, texts in `Web.Dock.Texts.speech_error/1`). Neither
+  the audio nor the words are logged or kept. **Telegram:** a `voice` / `audio`
+  message of a linked, fresh, private, non-forwarded chat is a `:voice` job in
+  the same `ChatQueue` (its place keeps the order); `Telegram.Turn` checks the
+  speech model, the chat's link and rights (`Conversations.authorize_session/2`,
+  so `agent.telegram`) and the length (120 s) and size (10 MB) **before** the
+  download (`Client.download_file/3` → core's `Telegram.download_file/3`,
+  `{:error, :unavailable}` on a core without it), then sends "🎙 Recognised: …"
+  and runs the normal `:turn` with the text; any error is a `Texts.speech/1`
+  text and 🤷, no turn. **Panel:** the microphone is core's
+  `PhoenixKitWeb.Components.Core.AudioRecorder` (named as an atom in the
+  template and `Code.ensure_loaded?`-checked, since older cores lack it), id
+  `pk-agent-mic`; `{:audio_recorded, "pk-agent-mic", clip}` goes through
+  `info/2` (so `guarded/2`) into `start_async(:speech, …)` under `safe_transcribe/4`
+  (logs the class only); the words reach the composer as the push event
+  `pk-agent:dictated` (the textarea is `phx-update="ignore"`) and nothing is
+  sent by itself.
 - **A linked Telegram chat** is the second kind of actor reference,
   `{:telegram_link, user_uuid, connection_uuid, chat_id}` (core's
   `Linking.actor_ref/2`, built from an update read at the bot, never from a
@@ -291,7 +324,7 @@ and `Web.Markdown`).
   only a private text message of a chat `Linking.chat_for_update/1` knows, not
   older than 10 minutes; `/start <anything>` never reaches the agent (core's),
   bare `/start` and `/help` get the help text, `/new` a new conversation,
-  forwarded messages and anything but text a fixed refusal; an edited message
+  forwarded messages and anything but text and voice a fixed refusal (voice: see Voice); an edited message
   or a group is ignored. `Bridge.dispatch/3` runs it: a per-chat serial queue
   (`ChatQueue`: a process per `{bot, chat}`, at most 3 waiting, 20 queues in
   all, overflow texts "wait" / "busy") and the turns in

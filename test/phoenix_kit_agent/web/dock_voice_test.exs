@@ -12,7 +12,6 @@ defmodule PhoenixKitAgent.Web.DockVoiceTest do
 
   import Ecto.Query, only: [from: 2]
 
-
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Permissions
   alias PhoenixKit.Users.Roles

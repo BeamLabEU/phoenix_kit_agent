@@ -11,6 +11,7 @@ defmodule PhoenixKitAgent.SpeechTest do
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.Settings
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitAgent.{Config, Speech, Spend}
   alias PhoenixKitAgent.Schemas.UserSettings
   alias PhoenixKitAgent.Test.LogProbe
@@ -190,7 +191,7 @@ defmodule PhoenixKitAgent.SpeechTest do
 
     test "an ended session is refused", %{user: user} do
       {ref, token} = session_fixture(user)
-      PhoenixKit.Users.Auth.delete_user_session_token(token)
+      Auth.delete_user_session_token(token)
       model_not_called()
 
       assert {:error, :session_gone} = transcribe(ref)

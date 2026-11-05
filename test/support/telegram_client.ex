@@ -76,7 +76,10 @@ defmodule PhoenixKitAgent.Test.TelegramClient do
     }
   end
 
-  @doc "A private-chat voice message (`kind`: `\"voice\"` or `\"audio\"`; `opts`: as `update/3`, plus `:duration`, `:file_size`, `:file_id`, `:mime_type`)."
+  @doc """
+  A private-chat voice message (`kind`: "voice" or "audio"; `opts`: as `update/3`,
+  plus `:duration`, `:file_size`, `:file_id`, `:mime_type`).
+  """
   def voice_update(chat_id, kind \\ "voice", opts \\ []) do
     media =
       %{"file_id" => Keyword.get(opts, :file_id, "voice-file-1"), "file_unique_id" => "u1"}
