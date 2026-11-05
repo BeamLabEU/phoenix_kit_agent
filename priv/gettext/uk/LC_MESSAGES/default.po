@@ -1619,18 +1619,18 @@ msgstr "Коли ввімкнено, людина, яка пов’язала с
 msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only, and I cannot change anything here: for a change I will point you to the site."
 msgstr "Напишіть мені звичайним текстом, і я відповім за вашими даними на сайті. /new починає нову розмову. Я читаю лише текст і нічого не можу змінювати тут: для зміни підкажу, де це зробити на сайті."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:123
-#: lib/phoenix_kit_agent/telegram/texts.ex:140
+#: lib/phoenix_kit_agent/telegram/texts.ex:142
+#: lib/phoenix_kit_agent/telegram/texts.ex:159
 #, elixir-autogen, elixir-format
 msgid "You may not use the assistant in Telegram."
 msgstr "Вам не можна користуватися асистентом у Telegram."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:131
+#: lib/phoenix_kit_agent/telegram/texts.ex:150
 #, elixir-autogen, elixir-format
 msgid "A change is being confirmed on the site. Write again in a moment."
 msgstr "Зміну зараз підтверджують на сайті. Напишіть ще раз за хвилину."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:128
+#: lib/phoenix_kit_agent/telegram/texts.ex:147
 #, elixir-autogen, elixir-format
 msgid "That message is too long for me. Write a shorter one."
 msgstr "Це повідомлення завелике для мене. Напишіть коротше."
@@ -1638,7 +1638,7 @@ msgstr "Це повідомлення завелике для мене. Напи
 #: lib/phoenix_kit_agent/telegram/card.ex:72
 #: lib/phoenix_kit_agent/telegram/card.ex:105
 #: lib/phoenix_kit_agent/telegram/card.ex:127
-#: lib/phoenix_kit_agent/telegram/texts.ex:91
+#: lib/phoenix_kit_agent/telegram/texts.ex:110
 #, elixir-autogen, elixir-format
 msgid "Already handled."
 msgstr "Уже оброблено."
@@ -1653,18 +1653,18 @@ msgstr "Підтвердьте цю зміну:"
 msgid "I could not show the buttons. Confirm the change on the site."
 msgstr "Не вдалося показати кнопки. Підтвердьте зміну на сайті."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:116
+#: lib/phoenix_kit_agent/telegram/texts.ex:135
 #, elixir-autogen, elixir-format
 msgid "Not allowed: %{reason}"
 msgstr "Не можна: %{reason}"
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:110
+#: lib/phoenix_kit_agent/telegram/texts.ex:129
 #, elixir-autogen, elixir-format
 msgid "Not allowed: too many requests. Try again in a minute."
 msgstr "Не можна: забагато запитів. Спробуйте за хвилину."
 
 #: lib/phoenix_kit_agent/telegram/card.ex:131
-#: lib/phoenix_kit_agent/telegram/texts.ex:107
+#: lib/phoenix_kit_agent/telegram/texts.ex:126
 #, elixir-autogen, elixir-format
 msgid "Not allowed: you have no right to make this change."
 msgstr "Не можна: у вас немає права на цю зміну."
@@ -1686,24 +1686,24 @@ msgstr "Не вдалося виконати зміну."
 msgid "The data changed under the preview."
 msgstr "Дані змінилися після попереднього перегляду."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:92
+#: lib/phoenix_kit_agent/telegram/texts.ex:111
 #, elixir-autogen, elixir-format
 msgid "The time to confirm ran out. Ask again."
 msgstr "Час підтвердження минув. Попросіть ще раз."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:94
+#: lib/phoenix_kit_agent/telegram/texts.ex:113
 #, elixir-autogen, elixir-format
 msgid "This button does not work any more."
 msgstr "Ця кнопка більше не працює."
 
 #: lib/phoenix_kit_agent/telegram/card.ex:137
-#: lib/phoenix_kit_agent/telegram/texts.ex:93
+#: lib/phoenix_kit_agent/telegram/texts.ex:112
 #, elixir-autogen, elixir-format
 msgid "This change cannot be confirmed here. Open the site."
 msgstr "Цю зміну не можна підтвердити тут. Відкрийте сайт."
 
 #: lib/phoenix_kit_agent/telegram/card.ex:75
-#: lib/phoenix_kit_agent/telegram/texts.ex:90
+#: lib/phoenix_kit_agent/telegram/texts.ex:109
 #, elixir-autogen, elixir-format
 msgid "This change is no longer available."
 msgstr "Ця зміна більше недоступна."
@@ -1713,7 +1713,7 @@ msgstr "Ця зміна більше недоступна."
 msgid "This change is too large to confirm here. Confirm it on the site."
 msgstr "Ця зміна завелика, щоб підтверджувати її тут. Підтвердьте її на сайті."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:95
+#: lib/phoenix_kit_agent/telegram/texts.ex:114
 #, elixir-autogen, elixir-format
 msgid "This chat is not linked to an account."
 msgstr "Цей чат не пов'язаний з акаунтом."
@@ -1733,7 +1733,7 @@ msgstr "…і ще %{count}"
 msgid "⌛ The time to confirm ran out. Ask again."
 msgstr "⌛ Час підтвердження минув. Попросіть ще раз."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:104
+#: lib/phoenix_kit_agent/telegram/texts.ex:123
 #, elixir-autogen, elixir-format
 msgid "⏳ The agent is answering. Press again in a moment."
 msgstr "⏳ Агент зараз відповідає. Натисніть ще раз за мить."
@@ -1759,12 +1759,12 @@ msgstr "❌ Скасувати"
 msgid "❌ Cancelled"
 msgstr "❌ Скасовано"
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:114
+#: lib/phoenix_kit_agent/telegram/texts.ex:133
 #, elixir-autogen, elixir-format
 msgid "Not allowed right now."
 msgstr "Зараз не можна."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:96
+#: lib/phoenix_kit_agent/telegram/texts.ex:115
 #, elixir-autogen, elixir-format
 msgid "The bot is busy right now. Press again in a minute."
 msgstr "Бот зараз зайнятий. Натисніть ще раз за хвилину."
@@ -1814,7 +1814,7 @@ msgstr "Голосові повідомлення теж підійдуть: я 
 msgid "Write down a voice message or a recording that a user made for the AI assistant."
 msgstr "Записати текстом голосове повідомлення або запис, який користувач зробив для ШІ-асистента."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:78
+#: lib/phoenix_kit_agent/telegram/texts.ex:97
 #, elixir-autogen, elixir-format
 msgid "🎙 Recognised: %{text}"
 msgstr "🎙 Розпізнано: %{text}"
@@ -1858,3 +1858,23 @@ msgstr "Надиктувати"
 #, elixir-autogen, elixir-format
 msgid "Writing down what you said…"
 msgstr "Записую, що ви сказали…"
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:83
+#, elixir-autogen, elixir-format
+msgid "I could not get the picture from Telegram. Send it again."
+msgstr "Не вдалося отримати зображення з Telegram. Надішліть його ще раз."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:86
+#, elixir-autogen, elixir-format
+msgid "That is too many pictures at once. Send fewer of them."
+msgstr "Забагато зображень одразу. Надішліть менше."
+
+#: lib/phoenix_kit_agent/telegram/turn.ex:304
+#, elixir-autogen, elixir-format
+msgid "What is in these pictures?"
+msgstr "Що на цих зображеннях?"
+
+#: lib/phoenix_kit_agent/telegram/turn.ex:303
+#, elixir-autogen, elixir-format
+msgid "What is in this picture?"
+msgstr "Що на цьому зображенні?"

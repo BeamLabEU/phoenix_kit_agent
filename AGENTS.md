@@ -271,6 +271,29 @@ and `Web.Markdown`).
   (logs the class only); the words reach the composer as the push event
   `pk-agent:dictated` (the textarea is `phx-update="ignore"`) and nothing is
   sent by itself.
+- **Pictures from Telegram:** a `photo` (the largest size of up to 10 MB), or a
+  `document` whose type is image/jpeg, png or webp, of a linked, fresh,
+  private, non-forwarded chat is a `:photo` job (the caption is its text; its
+  `media_group_id` the job's `group`). `Telegram.Turn` checks the chat as for
+  text (`Conversations.authorize_session/2`), downloads the file
+  (`Client.download_file/3`, 10 MB), and adds it with the **only** attachment
+  entry point open to a chat: `Attachments.add_picture_for_telegram/4` — the
+  panel's `add/4` flow unchanged (ownership, size, `Detect` by content, only a
+  picture is taken: a "picture" that is a PDF is `:unsupported_type`, quotas,
+  Library, `Processor`, `Jpeg.strip_metadata`, `picture_mode/1`: pixels, a
+  description, or `:no_vision_model` before anything is stored), the bytes
+  written to a `Work` scratch directory; `get_for_telegram/2` and
+  `discard_for_telegram/2` (the bridge waits, for `Bounds` queue wait + process
+  deadline + 10 s, `:telegram_attachment_wait_ms` in tests, and removes every
+  file the turn did not take — a chat has no panel to discard them in). The
+  turn runs on the caption, else "What is in this picture?" in the user's
+  language. The pictures of one album are **one turn**: the first picture's job
+  waits `:telegram_album_settle_ms` (1 s) and takes the siblings that
+  `ChatQueue` kept for it (`take_siblings/3`: same group, not counted among the
+  3 waiting ones, at most 9; one not taken goes in front of the waiting ones);
+  every one that could be added and read goes into the message, with the first
+  caption there is; the ones that could not are left out (told only if none
+  went). Other documents (PDF, sheets) stay refused as text only.
 - **A linked Telegram chat** is the second kind of actor reference,
   `{:telegram_link, user_uuid, connection_uuid, chat_id}` (core's
   `Linking.actor_ref/2`, built from an update read at the bot, never from a
@@ -291,8 +314,8 @@ and `Web.Markdown`).
   the cards) follows that one answer; without it a chat reads only (no `allow:
   :all`, no `via:`, core's own "telegram"). `Prompt` gets `channel: :telegram`
   (plain text, absolute links, and the chat's rule on changes instead of the
-  site's write rule). `Attachments` refuses a chat with `:not_in_telegram`,
-  and so does `Confirmations` for everything but the presses below.
+  site's write rule). `Attachments` refuses a chat with `:not_in_telegram` (but for the
+  bridge's pictures, below), and so does `Confirmations` for everything but the presses below.
   Limits, locks and the user's
   own model, instructions and spending are the user's, as for the panel. The
   trusted entry points of a bridge, which take no session and are never for a

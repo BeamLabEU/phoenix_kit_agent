@@ -73,6 +73,25 @@ defmodule PhoenixKitAgent.Telegram.Texts do
   def speech(reason) when reason in [:forbidden, :inactive], do: refusal(reason)
   def speech(reason), do: Panel.speech_error(reason)
 
+  @doc """
+  The text for the refusal of a picture: a download that failed (or a core
+  that cannot download), else the refusal of `Attachments` /
+  `Conversations`, worded for the chat.
+  """
+  @spec picture(term()) :: String.t()
+  def picture(reason) when reason in [:download_failed, :unavailable],
+    do: gettext("I could not get the picture from Telegram. Send it again.")
+
+  def picture(:too_many),
+    do: gettext("That is too many pictures at once. Send fewer of them.")
+
+  def picture(reason), do: refusal(reason)
+
+  @doc "The text for the `error` code of a picture that could not be read."
+  @spec attachment_error(String.t() | nil) :: String.t()
+  def attachment_error(code) when code in ["session_gone", "forbidden"], do: refusal(:forbidden)
+  def attachment_error(code), do: Panel.attachment_error(code)
+
   @doc "The line that shows what a voice message was understood as."
   @spec recognised(String.t()) :: String.t()
   def recognised(text), do: gettext("🎙 Recognised: %{text}", text: text)

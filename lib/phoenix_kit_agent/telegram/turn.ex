@@ -25,14 +25,29 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   on a typed message. When it cannot be written down, the person is told why
   (🤷) and no turn is started.
 
-  The job holds the text of the message (or the recording) only while it
-  runs; nothing of it is logged.
+  A picture (`:photo` job: a photo, or a document that is a jpeg, png or webp)
+  is added to the person's Telegram conversation as the chat panel's upload is
+  (`PhoenixKitAgent.Attachments.add_picture_for_telegram/4`: the same checks,
+  storage, processing and limits; the model sees pixels or a description as
+  `Processor.picture_mode/1` says, and a person whose model cannot see and who
+  has no vision model is told so). The turn waits, for a bounded time, for the
+  picture to be read, and then runs on the caption (or "What is in this
+  picture?") with the picture. The pictures of one album are one question: the
+  first one waits a moment, takes the others (`ChatQueue.take_siblings/3`), and
+  all that could be read go in one message with the first caption there is. A
+  picture that is not read, or a turn that is refused, leaves no file behind.
+
+  The job holds the text of the message (the caption, the recording) only
+  while it runs; nothing of it is logged.
   """
 
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.Utils.Routes
-  alias PhoenixKitAgent.{Config, Conversations, Speech, Turns}
-  alias PhoenixKitAgent.Telegram.{Bridge, Cards, Client, Format, Texts}
+  use Gettext, backend: PhoenixKitAgent.Gettext
+
+  alias PhoenixKitAgent.{Attachments, Config, Conversations, Speech, Turns}
+  alias PhoenixKitAgent.Attachments.Bounds
+  alias PhoenixKitAgent.Telegram.{Bridge, Cards, ChatQueue, Client, Format, Texts}
 
   @typing_every_ms 4_000
   @grace_ms 60_000
@@ -46,6 +61,7 @@ defmodule PhoenixKitAgent.Telegram.Turn do
           :new -> new_conversation(connection_uuid, ref, job, user_uuid, chat_id)
           :turn -> converse(connection_uuid, ref, job, user_uuid, chat_id, locale)
           :voice -> voice(connection_uuid, ref, job, user_uuid, chat_id, locale)
+          :photo -> photo(connection_uuid, ref, job, user_uuid, chat_id, locale)
         end
       end)
     end)
@@ -97,14 +113,24 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   defp too?(value, max), do: is_integer(value) and value > max
 
   defp download(connection_uuid, file_id) do
+    case fetch(connection_uuid, file_id, Speech.max_bytes()) do
+      {:ok, bytes} -> {:ok, bytes}
+      {:error, :too_large} -> {:error, :too_long}
+      {:error, :unavailable} -> {:error, :voice_unavailable}
+      {:error, :failed} -> {:error, :download_failed}
+    end
+  end
+
+  # The file from Telegram, within `max_bytes`.
+  defp fetch(connection_uuid, file_id, max_bytes) do
     case Client.impl().download_file(connection_uuid, file_id,
-           max_bytes: Speech.max_bytes(),
+           max_bytes: max_bytes,
            deadline_ms: download_deadline_ms()
          ) do
       {:ok, bytes} when is_binary(bytes) -> {:ok, bytes}
-      {:error, {:file_too_large, _size, _max}} -> {:error, :too_long}
-      {:error, :unavailable} -> {:error, :voice_unavailable}
-      _failed -> {:error, :download_failed}
+      {:error, {:file_too_large, _size, _max}} -> {:error, :too_large}
+      {:error, :unavailable} -> {:error, :unavailable}
+      _failed -> {:error, :failed}
     end
   end
 
@@ -114,21 +140,183 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   defp converse(connection_uuid, ref, job, user_uuid, chat_id, locale) do
     case current_conversation(user_uuid, ref) do
       {:ok, conversation} ->
-        topic = Conversations.topic(conversation.uuid)
-        :ok = PubSub.subscribe(topic)
-
-        try do
+        with_topic(conversation, fn ->
           Bridge.react(connection_uuid, chat_id, job.message_id, "👀")
-          start = Turns.start(ref, false, conversation.uuid, job.text, [], options(locale))
-          outcome(connection_uuid, ref, job.message_id, conversation, start)
-        after
-          PubSub.unsubscribe(topic)
-        end
+          start_turn(connection_uuid, ref, job.message_id, conversation, job.text, [], locale)
+        end)
 
       {:error, _changeset} ->
         refuse(connection_uuid, chat_id, job.message_id, :not_found)
     end
   end
+
+  # The conversation's topic is subscribed **before** anything starts, so the
+  # end of its turn cannot be missed.
+  defp with_topic(conversation, fun) do
+    topic = Conversations.topic(conversation.uuid)
+    :ok = PubSub.subscribe(topic)
+
+    try do
+      fun.()
+    after
+      PubSub.unsubscribe(topic)
+    end
+  end
+
+  # The turn, and its answer in the chat. A turn that is refused leaves the
+  # pictures it was to carry nowhere (`attachments`, uuids).
+  defp start_turn(connection_uuid, ref, message_id, conversation, text, attachments, locale) do
+    start = Turns.start(ref, false, conversation.uuid, text, attachments, options(locale))
+    if match?({:error, _reason}, start), do: discard(ref, attachments)
+    outcome(connection_uuid, ref, message_id, conversation, start)
+  end
+
+  # ── pictures ────────────────────────────────────────────────────────
+
+  # The leader of an album waits a moment for the rest of it.
+  defp photo(connection_uuid, ref, job, user_uuid, chat_id, locale) do
+    Bridge.react(connection_uuid, chat_id, job.message_id, "👀")
+    _ = Client.impl().typing(connection_uuid, chat_id)
+
+    with {:ok, _user_uuid} <- Conversations.authorize_session(ref, impersonated: false),
+         {:ok, conversation} <- current_conversation(user_uuid, ref) do
+      jobs = [job | siblings(connection_uuid, chat_id, job)]
+
+      with_topic(conversation, fn ->
+        picture_turn(connection_uuid, ref, job.message_id, conversation, jobs, locale)
+      end)
+    else
+      {:error, reason} ->
+        refuse_with(connection_uuid, chat_id, job.message_id, picture_text(reason))
+    end
+  end
+
+  defp siblings(connection_uuid, chat_id, %{group: group}) when is_binary(group) do
+    Process.sleep(album_settle_ms())
+    for {_ref, sibling} <- ChatQueue.take_siblings(connection_uuid, chat_id, group), do: sibling
+  end
+
+  defp siblings(_connection_uuid, _chat_id, _job), do: []
+
+  defp picture_turn(connection_uuid, ref, message_id, conversation, jobs, locale) do
+    {added, errors} = attach_all(connection_uuid, ref, conversation, jobs)
+
+    case await(ref, added) do
+      {[], failed} ->
+        discard(ref, Enum.map(added, & &1.uuid))
+
+        refuse_with(
+          connection_uuid,
+          elem(ref, 3),
+          message_id,
+          picture_text(first_error(errors ++ failed))
+        )
+
+      {ready, _failed} ->
+        discard(ref, for(a <- added, a.uuid not in ready, do: a.uuid))
+        text = caption(jobs) || default_prompt(length(ready))
+        start_turn(connection_uuid, ref, message_id, conversation, text, ready, locale)
+    end
+  end
+
+  # Every picture, one by one: the ones that could not be added are the errors.
+  defp attach_all(connection_uuid, ref, conversation, jobs) do
+    {added, errors} =
+      Enum.reduce(jobs, {[], []}, fn job, {added, errors} ->
+        case attach(connection_uuid, ref, conversation, job.photo) do
+          {:ok, attachment} -> {[attachment | added], errors}
+          {:error, reason} -> {added, [reason | errors]}
+        end
+      end)
+
+    {Enum.reverse(added), Enum.reverse(errors)}
+  end
+
+  defp attach(connection_uuid, ref, conversation, photo) do
+    max = Bridge.max_picture_bytes()
+
+    with :ok <- if(too?(photo.size, max), do: {:error, :too_large}, else: :ok),
+         {:ok, bytes} <- fetch(connection_uuid, photo.file_id, max) |> picture_error(),
+         do:
+           Attachments.add_picture_for_telegram(
+             ref,
+             conversation.uuid,
+             bytes,
+             photo.name || "photo"
+           )
+  end
+
+  defp picture_error({:error, :failed}), do: {:error, :download_failed}
+  defp picture_error(other), do: other
+
+  # Until every picture is read or has failed, or the wait is over (a picture
+  # still unread then has failed). `{ready uuids, error codes of the others}`.
+  defp await(ref, added) do
+    deadline = System.monotonic_time(:millisecond) + attachment_wait_ms()
+    settle(ref, Enum.map(added, & &1.uuid), deadline)
+  end
+
+  defp settle(ref, uuids, deadline) do
+    rows =
+      Enum.map(uuids, fn uuid ->
+        case Attachments.get_for_telegram(ref, uuid) do
+          {:ok, row} -> row
+          {:error, _gone} -> %{uuid: uuid, status: "failed", error: "unreadable"}
+        end
+      end)
+
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    cond do
+      Enum.all?(rows, &(&1.status in ["ready", "failed"])) -> split(rows)
+      remaining <= 0 -> split(Enum.map(rows, &timed_out/1))
+      true -> wait_for_reading(ref, uuids, deadline, min(remaining, 1_000))
+    end
+  end
+
+  defp wait_for_reading(ref, uuids, deadline, ms) do
+    receive do
+      {:agent_attachment_processed, _conversation_uuid, _attachment_uuid} ->
+        settle(ref, uuids, deadline)
+    after
+      ms -> settle(ref, uuids, deadline)
+    end
+  end
+
+  defp timed_out(%{status: "pending"} = row), do: %{row | status: "failed", error: "timeout"}
+  defp timed_out(row), do: row
+
+  defp split(rows) do
+    {for(%{status: "ready"} = row <- rows, do: row.uuid),
+     for(%{status: "failed"} = row <- rows, do: row.error || "unreadable")}
+  end
+
+  defp discard(ref, uuids), do: Enum.each(uuids, &Attachments.discard_for_telegram(ref, &1))
+
+  defp caption(jobs) do
+    Enum.find_value(jobs, fn job ->
+      text = job.text
+      if is_binary(text) and String.trim(text) != "", do: text
+    end)
+  end
+
+  defp default_prompt(1), do: gettext("What is in this picture?")
+  defp default_prompt(_several), do: gettext("What is in these pictures?")
+
+  defp first_error([reason | _rest]), do: reason
+  defp first_error([]), do: :file_unreadable
+
+  # An error code of a row, or the refusal of `Attachments` / `Conversations`.
+  defp picture_text(code) when is_binary(code), do: Texts.attachment_error(code)
+  defp picture_text(reason), do: Texts.picture(reason)
+
+  defp attachment_wait_ms do
+    Application.get_env(:phoenix_kit_agent, :telegram_attachment_wait_ms) ||
+      Bounds.get(:queue_wait_ms) + Bounds.get(:process_deadline_ms) + 10_000
+  end
+
+  defp album_settle_ms,
+    do: Application.get_env(:phoenix_kit_agent, :telegram_album_settle_ms, 1_000)
 
   defp options(locale) do
     [locale: locale, request_context: [language: locale, base_url: Routes.base_url()]]

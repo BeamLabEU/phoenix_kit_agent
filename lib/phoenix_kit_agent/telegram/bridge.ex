@@ -31,7 +31,10 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   button"). The age of a press is no matter: the row's own time decides.
 
   A linked person's message becomes a job for the serial queue of their chat
-  (`PhoenixKitAgent.Telegram.ChatQueue`): `:turn` for text, `:voice` for a voice
+  (`PhoenixKitAgent.Telegram.ChatQueue`): `:turn` for text, `:photo` for a
+  picture (a photo, or a document that is a jpeg, png or webp: the largest
+  size of up to ten megabytes, with its caption as the text and the album it
+  belongs to), `:voice` for a voice
   message or an audio file (written down, shown, then run as the text it
   became, in the same place of the queue), `:new` for `/new`;
   `/help` and a bare `/start` are the help; a forwarded message and anything
@@ -49,17 +52,34 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   alias PhoenixKitAgent.Telegram.{ChatQueue, Client, Format, Limiter, Press, Texts}
 
   @max_age_s 600
+  # The largest size of a photo that is taken (the smallest is, when none is under it).
+  @max_picture_bytes 10 * 1_048_576
+  @picture_types ~w(image/jpeg image/png image/webp)
 
   @forwarded ~w(forward_origin forward_date forward_from forward_from_chat forward_sender_name)
+
+  @doc "The largest picture the bot takes, in bytes."
+  @spec max_picture_bytes() :: pos_integer()
+  def max_picture_bytes, do: @max_picture_bytes
 
   @typedoc "The actor reference of core: `{:telegram_link, user_uuid, connection_uuid, chat_id}`."
   @type ref :: {:telegram_link, String.t(), String.t(), integer()}
 
-  @typedoc "What the chat's queue runs; a `:voice` job also has the `voice` file."
+  @typedoc """
+  What the chat's queue runs; a `:voice` job also has the `voice` file, and a
+  `:photo` job the `photo` (the text is its caption, or `nil`) and, for one of
+  an album, the `group`.
+  """
   @type job :: %{
           required(:kind) => :turn | :new | :voice,
           required(:message_id) => integer(),
           required(:text) => String.t() | nil,
+          optional(:group) => String.t(),
+          optional(:photo) => %{
+            file_id: String.t(),
+            size: integer() | nil,
+            name: String.t() | nil
+          },
           optional(:voice) => %{
             file_id: String.t(),
             duration: integer() | nil,
@@ -267,6 +287,7 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
     cond do
       forwarded?(message) -> :forwarded
       voice(message) -> :voice
+      picture(message) -> :photo
       true -> :text_only
     end
   end
@@ -287,6 +308,44 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
           nil
       end
     end)
+  end
+
+  # A photo (the sizes Telegram made of it), or a document that is a picture.
+  defp picture(%{"photo" => [_ | _] = sizes} = message) do
+    case for(%{"file_id" => id} = size when is_binary(id) <- sizes, do: size) do
+      [] -> nil
+      sizes -> sizes |> pick_size() |> picture_of(message, nil)
+    end
+  end
+
+  defp picture(%{"document" => %{"file_id" => id, "mime_type" => type} = doc} = message)
+       when is_binary(id) and type in @picture_types do
+    picture_of(doc, message, doc["file_name"])
+  end
+
+  defp picture(_message), do: nil
+
+  # The largest that fits; else the smallest (the job refuses it as too large).
+  defp pick_size(sizes) do
+    fitting = Enum.filter(sizes, &fits?/1)
+    if fitting == [], do: hd(sizes), else: List.last(fitting)
+  end
+
+  defp fits?(%{"file_size" => size}) when is_integer(size), do: size <= @max_picture_bytes
+  defp fits?(_size), do: true
+
+  defp picture_of(%{"file_id" => file_id} = file, message, name) do
+    picture = %{
+      file_id: file_id,
+      size: integer_or_nil(file["file_size"]),
+      name: if(is_binary(name), do: name)
+    }
+
+    %{
+      photo: picture,
+      text: if(is_binary(message["caption"]), do: message["caption"]),
+      group: if(is_binary(message["media_group_id"]), do: message["media_group_id"])
+    }
   end
 
   defp integer_or_nil(value) when is_integer(value), do: value
@@ -347,6 +406,12 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
 
   defp decide(:turn, ref, _chat_id, message_id, %{"text" => text}),
     do: {:job, ref, %{kind: :turn, message_id: message_id, text: text}}
+
+  defp decide(:photo, ref, _chat_id, message_id, message) do
+    %{photo: photo, text: caption, group: group} = picture(message)
+    job = %{kind: :photo, message_id: message_id, text: caption, photo: photo}
+    {:job, ref, if(group, do: Map.put(job, :group, group), else: job)}
+  end
 
   defp decide(:voice, ref, _chat_id, message_id, message),
     do: {:job, ref, %{kind: :voice, message_id: message_id, text: nil, voice: voice(message)}}

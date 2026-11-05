@@ -76,4 +76,59 @@ defmodule PhoenixKitAgent.Telegram.ChatQueueTest do
       assert Process.alive?(pid)
     end
   end
+
+  describe "the pictures of one album" do
+    setup do
+      Process.flag(:trap_exit, true)
+      chat = System.unique_integer([:positive])
+      {:ok, pid} = ChatQueue.start_link(key: {"bot", chat}, connection_uuid: "bot")
+      ref = {:telegram_link, "user", "bot", chat}
+
+      # A job of the album runs.
+      :sys.replace_state(pid, fn state -> %{state | task: :running, group: "g1"} end)
+      %{pid: pid, chat: chat, ref: ref}
+    end
+
+    defp photo(group, id), do: %{kind: :photo, message_id: id, text: nil, group: group}
+
+    test "the others of its group are kept as siblings, past the limit of waiting ones", ctx do
+      for id <- 1..9,
+          do: assert(:ok = GenServer.call(ctx.pid, {:enqueue, ctx.ref, photo("g1", id)}))
+
+      # The tenth does not fit among the siblings, nor among the waiting ones when those are full.
+      for id <- 1..3,
+          do:
+            assert(
+              :ok =
+                GenServer.call(
+                  ctx.pid,
+                  {:enqueue, ctx.ref, %{kind: :turn, message_id: 20 + id, text: "t"}}
+                )
+            )
+
+      assert :full = GenServer.call(ctx.pid, {:enqueue, ctx.ref, photo("g1", 10)})
+
+      siblings = ChatQueue.take_siblings("bot", ctx.chat, "g1")
+      assert Enum.map(siblings, fn {_ref, job} -> job.message_id end) == Enum.to_list(1..9)
+
+      # Taken once: a later one of the group is an ordinary waiting job (here: full).
+      assert [] = ChatQueue.take_siblings("bot", ctx.chat, "g1")
+      assert :full = GenServer.call(ctx.pid, {:enqueue, ctx.ref, photo("g1", 11)})
+    end
+
+    test "another group, or a job with none, waits as usual", ctx do
+      assert :ok = GenServer.call(ctx.pid, {:enqueue, ctx.ref, photo("g2", 1)})
+      assert :ok = GenServer.call(ctx.pid, {:enqueue, ctx.ref, photo(nil, 2)})
+
+      assert [] = ChatQueue.take_siblings("bot", ctx.chat, "g1")
+      assert %{waiting: waiting} = :sys.get_state(ctx.pid)
+      assert :queue.len(waiting) == 2
+    end
+
+    test "asking for the siblings of a chat with no queue, or of another group, gives none",
+         ctx do
+      assert [] = ChatQueue.take_siblings("bot", -1, "g1")
+      assert [] = ChatQueue.take_siblings("bot", ctx.chat, "other")
+    end
+  end
 end

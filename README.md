@@ -225,6 +225,16 @@ PDF processing needs poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and pictures
 need ImageMagick (`convert`, `identify`) on the host; without them such a file
 fails with `pdf_tools_missing` / `image_tools_missing`, nothing else breaks.
 
+## Pictures from Telegram
+
+A photo, or a jpeg, png or webp sent as a file, in the private chat of a linked
+person is added to their Telegram conversation as a picture is added in the
+panel (same limits, same storage; the model sees it, or the vision model
+describes it, or — with neither — the person is told that pictures cannot be
+read). The caption is the question; without one the bot asks "What is in this
+picture?". The pictures of one album (several photos sent together) are one
+question: one answer. PDFs and sheets are not taken from Telegram.
+
 ## Voice
 
 With a **speech recognition model** chosen on Settings → AI Agent (any

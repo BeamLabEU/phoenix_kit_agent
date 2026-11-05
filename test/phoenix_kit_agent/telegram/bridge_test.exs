@@ -111,6 +111,63 @@ defmodule PhoenixKitAgent.Telegram.BridgeTest do
                )
     end
 
+    test "a photo is a picture job: the largest size that fits, its caption and album", ctx do
+      sizes = [
+        %{"file_id" => "s", "file_size" => 900},
+        %{"file_id" => "m", "file_size" => 90_000},
+        %{"file_id" => "l", "file_size" => 9_000_000},
+        %{"file_id" => "xl", "file_size" => 11_000_000}
+      ]
+
+      extra = %{"photo" => sizes, "caption" => "Look", "media_group_id" => "album-1"}
+
+      assert {:job, ref, %{kind: :photo, message_id: 5, text: "Look", group: "album-1"} = job} =
+               decide(ctx, TelegramClient.update(@chat, nil, message_id: 5, extra: extra))
+
+      assert ref == ctx.ref
+      assert job.photo == %{file_id: "l", size: 9_000_000, name: nil}
+    end
+
+    test "a photo alone has no group and no text; only too large ones give the smallest", ctx do
+      extra = %{
+        "photo" => [
+          %{"file_id" => "a", "file_size" => 12_000_000},
+          %{"file_id" => "b", "file_size" => 15_000_000}
+        ]
+      }
+
+      assert {:job, _, %{kind: :photo, text: nil, photo: %{file_id: "a", size: 12_000_000}} = job} =
+               decide(ctx, TelegramClient.update(@chat, nil, extra: extra))
+
+      refute Map.has_key?(job, :group)
+    end
+
+    test "a document that is a jpeg, png or webp is a picture; any other is text only", ctx do
+      for type <- ~w(image/jpeg image/png image/webp) do
+        extra = %{"document" => %{"file_id" => "d", "mime_type" => type, "file_name" => "a.img"}}
+
+        assert {:job, _, %{kind: :photo, photo: %{file_id: "d", name: "a.img"}}} =
+                 decide(ctx, TelegramClient.update(@chat, nil, extra: extra))
+      end
+
+      for type <- ["application/pdf", "image/gif", "image/svg+xml"] do
+        extra = %{"document" => %{"file_id" => "d", "mime_type" => type}}
+
+        assert {:static, _, @chat, _, :text_only} =
+                 decide(ctx, TelegramClient.update(@chat, nil, extra: extra))
+      end
+    end
+
+    test "a forwarded photo is refused, and a photo of a chat nobody linked is unlinked", ctx do
+      extra = %{"photo" => [%{"file_id" => "a"}], "forward_origin" => %{"type" => "user"}}
+
+      assert {:static, _, @chat, _, :forwarded} =
+               decide(ctx, TelegramClient.update(@chat, nil, extra: extra))
+
+      extra = %{"photo" => [%{"file_id" => "a"}]}
+      assert {:unlinked, 999} = decide(ctx, TelegramClient.update(999, nil, extra: extra))
+    end
+
     test "a voice message without a file, or forwarded, is not a voice job", ctx do
       update = TelegramClient.update(@chat, nil, extra: %{"voice" => %{"duration" => 3}})
       assert {:static, _, @chat, _, :text_only} = decide(ctx, update)

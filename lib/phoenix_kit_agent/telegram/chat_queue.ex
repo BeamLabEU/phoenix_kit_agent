@@ -8,6 +8,13 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
   it serves at once (`PhoenixKitAgent.Telegram.QueueSupervisor`), a message
   from a new chat is `:busy`. A process with nothing to do for a minute ends.
 
+  The pictures of one album (`media_group_id`, the job's `group`) are one
+  question: while the first of them runs, the others of its group that come
+  are kept as its siblings (not counted among the waiting ones, at most nine),
+  and the running job takes them (`take_siblings/3`) once it has waited a
+  moment for the rest. A sibling that is not taken when the job ends goes to the
+  front of the waiting ones, so none is lost.
+
   It holds the text of a waiting message, so it keeps itself out of crash
   reports: the process is `sensitive`, and its status shows neither the state
   nor the message it was handling nor the reason it ended with (a function
@@ -24,12 +31,27 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
   @supervisor PhoenixKitAgent.Telegram.QueueSupervisor
   @tasks PhoenixKitAgent.Telegram.TaskSupervisor
   @max_waiting 3
+  @max_siblings 9
 
   @doc "Queues `job` of the chat `ref` of the bot `connection_uuid`."
   @spec submit(String.t(), PhoenixKitAgent.Telegram.Bridge.ref(), map()) :: :ok | :full | :busy
   def submit(connection_uuid, {:telegram_link, _user, _connection, chat_id} = ref, job) do
     key = {connection_uuid, chat_id}
     enqueue(key, ref, job, 2)
+  end
+
+  @doc """
+  The jobs of the same album (`group`) that came while the job of the chat was
+  running; none are taken again. `[]` when the chat has no queue any more.
+  """
+  @spec take_siblings(String.t(), integer(), String.t()) :: [{Bridge.ref(), map()}]
+  def take_siblings(connection_uuid, chat_id, group) do
+    case Registry.lookup(@registry, {connection_uuid, chat_id}) do
+      [{pid, _}] -> GenServer.call(pid, {:take_siblings, group})
+      [] -> []
+    end
+  catch
+    :exit, _ -> []
   end
 
   defp enqueue(_key, _ref, _job, 0), do: :busy
@@ -74,7 +96,16 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
   @impl GenServer
   def init(opts) do
     Process.flag(:sensitive, true)
-    {:ok, %{connection_uuid: opts[:connection_uuid], waiting: :queue.new(), task: nil, idle: nil}}
+
+    {:ok,
+     %{
+       connection_uuid: opts[:connection_uuid],
+       waiting: :queue.new(),
+       task: nil,
+       idle: nil,
+       group: nil,
+       siblings: []
+     }}
   end
 
   # Every callback runs under `guarded/2`: whatever goes wrong inside ends the
@@ -84,6 +115,12 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
   @impl GenServer
   def handle_call({:enqueue, ref, job}, _from, state) do
     guarded(state, :busy, fn -> enqueue_job(state, ref, job) end)
+  end
+
+  def handle_call({:take_siblings, group}, _from, state) do
+    if group == state.group,
+      do: {:reply, state.siblings, %{state | group: nil, siblings: []}},
+      else: {:reply, [], state}
   end
 
   def handle_call(_other, _from, state), do: {:reply, {:error, :unknown}, state}
@@ -100,6 +137,10 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
       :error -> {:reply, :busy, wait_for_idle(state)}
     end
   end
+
+  defp enqueue_job(%{group: group} = state, ref, %{group: group} = job)
+       when is_binary(group) and length(state.siblings) < @max_siblings,
+       do: {:reply, :ok, %{state | siblings: state.siblings ++ [{ref, job}]}}
 
   defp enqueue_job(state, ref, job) do
     if :queue.len(state.waiting) < @max_waiting,
@@ -156,7 +197,7 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
     connection_uuid = state.connection_uuid
 
     task = Task.Supervisor.async_nolink(@tasks, fn -> Turn.run(connection_uuid, ref, job) end)
-    {:ok, %{state | task: task, idle: nil}}
+    {:ok, %{state | task: task, idle: nil, group: group_of(job), siblings: []}}
   rescue
     exception in RuntimeError ->
       # Only the full supervisor; any other RuntimeError is a bug, not "busy".
@@ -168,8 +209,17 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
     :exit, _reason -> :error
   end
 
+  defp group_of(%{group: group}) when is_binary(group), do: group
+  defp group_of(_job), do: nil
+
+  # A sibling nobody took goes in front of the waiting ones.
   defp next(state) do
-    state = %{state | task: nil}
+    waiting =
+      state.siblings
+      |> Enum.reverse()
+      |> Enum.reduce(state.waiting, &:queue.in_r(&1, &2))
+
+    state = %{state | task: nil, group: nil, siblings: [], waiting: waiting}
 
     case :queue.out(state.waiting) do
       {{:value, {ref, job}}, rest} ->
