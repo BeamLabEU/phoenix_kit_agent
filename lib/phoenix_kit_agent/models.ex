@@ -48,7 +48,7 @@ defmodule PhoenixKitAgent.Models do
   What a call on an endpoint is: a model call of a turn, or a picture
   described by the vision model.
   """
-  @type call_kind :: :chat | :vision
+  @type call_kind :: :chat | :vision | :speech
 
   # What `reports_cost?/2` reads of an endpoint, its key left out.
   @cost_fields [:uuid, :name, :model, :provider, :base_url, :provider_settings]
@@ -166,6 +166,8 @@ defmodule PhoenixKitAgent.Models do
       `PhoenixKitAI.TaskLimits.money_counted?/2` with `:vision`, which is the
       chat rule: `phoenix_kit_ai` prices a description like a chat call (the
       provider's cost, a catalogue, a manual or a list price).
+    * `:speech` (a recording written down, `PhoenixKitAI.transcribe/3`) — the
+      same rule (`TaskLimits.money_counted?/2` with `:audio_input`).
 
   A `t:summary/0` carries the answer for `:chat`.
   """
@@ -176,6 +178,9 @@ defmodule PhoenixKitAgent.Models do
 
   def reports_cost?(%Endpoint{} = endpoint, :vision),
     do: TaskLimits.money_counted?(endpoint, [:vision])
+
+  def reports_cost?(%Endpoint{} = endpoint, :speech),
+    do: TaskLimits.money_counted?(endpoint, [:audio_input])
 
   def reports_cost?(%{reports_cost?: reports?}, :chat) when is_boolean(reports?), do: reports?
 

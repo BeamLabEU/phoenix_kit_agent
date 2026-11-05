@@ -23,15 +23,13 @@ defmodule PhoenixKitAgent.Telegram.Texts do
           | :card_not_shown
         ) :: String.t()
   def static(:help) do
-    if PhoenixKitAgent.Config.writes?(),
+    text = help_text()
+
+    if PhoenixKitAgent.Config.speech?(),
       do:
-        gettext(
-          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
-        ),
-      else:
-        gettext(
-          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only, and I cannot change anything here: for a change I will point you to the site."
-        )
+        text <>
+          " " <> gettext("Voice messages work too: I write down what you said and answer it."),
+      else: text
   end
 
   def static(:unlinked),
@@ -48,6 +46,36 @@ defmodule PhoenixKitAgent.Telegram.Texts do
 
   def static(:card_not_shown),
     do: gettext("I could not show the buttons. Confirm the change on the site.")
+
+  defp help_text do
+    if PhoenixKitAgent.Config.writes?(),
+      do:
+        gettext(
+          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
+        ),
+      else:
+        gettext(
+          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only, and I cannot change anything here: for a change I will point you to the site."
+        )
+  end
+
+  @doc """
+  The text for the error of a voice message (`PhoenixKitAgent.Speech`, or
+  the download of the file): a voice message too long or too large is the
+  speech texts' `:too_long`.
+  """
+  @spec speech(term()) :: String.t()
+  def speech(reason) when reason in [:speech_off, :voice_unavailable],
+    do: gettext("I cannot take voice messages now. Write to me in text.")
+
+  def speech(:download_failed), do: Panel.speech_error(:failed)
+  def speech(reason) when reason in [:session_gone, :mismatch], do: static(:unlinked)
+  def speech(reason) when reason in [:forbidden, :inactive], do: refusal(reason)
+  def speech(reason), do: Panel.speech_error(reason)
+
+  @doc "The line that shows what a voice message was understood as."
+  @spec recognised(String.t()) :: String.t()
+  def recognised(text), do: gettext("🎙 Recognised: %{text}", text: text)
 
   @doc "The toast that answers a press of a button the bot refuses."
   @spec toast(
