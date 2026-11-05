@@ -17,13 +17,21 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   missed; the wait is the turn's deadline plus a minute. If this process dies
   mid-turn (a deploy), the message keeps its 👀 and is not answered.
 
-  The job holds the text of the message only while it runs; nothing of it
-  is logged.
+  A voice message (`:voice` job) is written down first
+  (`PhoenixKitAgent.Speech`), before any download: the speech model must be
+  set, the chat's link and rights are checked as a text turn's are, and a
+  recording of more than two minutes or ten megabytes is refused. The words
+  are sent back as "🎙 Recognised: …", and then the turn runs on them exactly as
+  on a typed message. When it cannot be written down, the person is told why
+  (🤷) and no turn is started.
+
+  The job holds the text of the message (or the recording) only while it
+  runs; nothing of it is logged.
   """
 
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.Utils.Routes
-  alias PhoenixKitAgent.{Config, Conversations, Turns}
+  alias PhoenixKitAgent.{Config, Conversations, Speech, Turns}
   alias PhoenixKitAgent.Telegram.{Bridge, Cards, Client, Format, Texts}
 
   @typing_every_ms 4_000
@@ -37,6 +45,7 @@ defmodule PhoenixKitAgent.Telegram.Turn do
         case job.kind do
           :new -> new_conversation(connection_uuid, ref, job, user_uuid, chat_id)
           :turn -> converse(connection_uuid, ref, job, user_uuid, chat_id, locale)
+          :voice -> voice(connection_uuid, ref, job, user_uuid, chat_id, locale)
         end
       end)
     end)
@@ -51,6 +60,56 @@ defmodule PhoenixKitAgent.Telegram.Turn do
         refuse(connection_uuid, chat_id, job.message_id, :not_found)
     end
   end
+
+  # A voice message: written down, shown, and then the turn of what it said.
+  defp voice(connection_uuid, ref, job, user_uuid, chat_id, locale) do
+    Bridge.react(connection_uuid, chat_id, job.message_id, "👀")
+    _ = Client.impl().typing(connection_uuid, chat_id)
+
+    with {:ok, bytes} <- recording(connection_uuid, ref, job.voice),
+         {:ok, text} <- Speech.transcribe(ref, bytes, job.voice.format, impersonated: false) do
+      Bridge.say(connection_uuid, chat_id, Texts.recognised(text))
+      converse(connection_uuid, ref, %{job | kind: :turn, text: text}, user_uuid, chat_id, locale)
+    else
+      {:error, reason} ->
+        refuse_with(connection_uuid, chat_id, job.message_id, Texts.speech(reason))
+    end
+  end
+
+  # The recording, once the person is known to be allowed to ask for it and it
+  # is no longer or larger than a recognition takes.
+  defp recording(connection_uuid, ref, voice) do
+    with :ok <- speech_on(),
+         {:ok, _user_uuid} <- Conversations.authorize_session(ref, impersonated: false),
+         :ok <- within_bounds(voice) do
+      download(connection_uuid, voice.file_id)
+    end
+  end
+
+  defp speech_on, do: if(Config.speech?(), do: :ok, else: {:error, :speech_off})
+
+  defp within_bounds(%{duration: duration, size: size}) do
+    if too?(duration, Speech.max_seconds()) or too?(size, Speech.max_bytes()),
+      do: {:error, :too_long},
+      else: :ok
+  end
+
+  defp too?(value, max), do: is_integer(value) and value > max
+
+  defp download(connection_uuid, file_id) do
+    case Client.impl().download_file(connection_uuid, file_id,
+           max_bytes: Speech.max_bytes(),
+           deadline_ms: download_deadline_ms()
+         ) do
+      {:ok, bytes} when is_binary(bytes) -> {:ok, bytes}
+      {:error, {:file_too_large, _size, _max}} -> {:error, :too_long}
+      {:error, :unavailable} -> {:error, :voice_unavailable}
+      _failed -> {:error, :download_failed}
+    end
+  end
+
+  defp download_deadline_ms,
+    do: Application.get_env(:phoenix_kit_agent, :telegram_download_deadline_ms, 30_000)
 
   defp converse(connection_uuid, ref, job, user_uuid, chat_id, locale) do
     case current_conversation(user_uuid, ref) do

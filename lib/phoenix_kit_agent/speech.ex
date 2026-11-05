@@ -68,15 +68,16 @@ defmodule PhoenixKitAgent.Speech do
   def max_seconds, do: @max_seconds
 
   @doc """
-  Writes `bytes`, a recording in `format` (`"wav"`, `"ogg"`, …), down for the
+  Writes `bytes`, a recording in `format` (`"wav"`, `"ogg"`, …; `nil` where
+  the bytes tell it), down for the
   user of `session_ref` (a site session or a linked Telegram chat, see
   `PhoenixKitAgent.Conversations`). `opts` must hold `impersonated:`, as the
   functions of `Conversations` do.
   """
-  @spec transcribe(Conversations.session_ref(), binary(), String.t(), keyword()) ::
+  @spec transcribe(Conversations.session_ref(), binary(), String.t() | nil, keyword()) ::
           {:ok, String.t()} | {:error, error()}
   def transcribe(session_ref, bytes, format, opts)
-      when is_binary(bytes) and is_binary(format) do
+      when is_binary(bytes) and (is_binary(format) or is_nil(format)) do
     with :ok <- speech_on(),
          :ok <- ai_enabled(),
          {:ok, user_uuid} <- Conversations.authorize_session(session_ref, opts),
@@ -117,7 +118,7 @@ defmodule PhoenixKitAgent.Speech do
 
   defp ask(endpoint, user_uuid, bytes, format) do
     result =
-      Config.speech_ai().transcribe(endpoint, %{data: bytes, format: format},
+      Config.speech_ai().transcribe(endpoint, audio(bytes, format),
         user_uuid: user_uuid,
         source: "agent",
         task: "agent.speech",
@@ -141,6 +142,9 @@ defmodule PhoenixKitAgent.Speech do
       Logger.warning("[PhoenixKitAgent] speech recognition failed: #{kind}")
       {:error, :failed}
   end
+
+  defp audio(bytes, nil), do: %{data: bytes}
+  defp audio(bytes, format), do: %{data: bytes, format: format}
 
   defp outcome({:ok, %{text: text}}) when is_binary(text) do
     case text |> Message.strip_nul() |> String.trim() do

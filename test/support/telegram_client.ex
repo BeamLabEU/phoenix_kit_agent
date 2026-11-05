@@ -20,7 +20,10 @@ defmodule PhoenixKitAgent.Test.TelegramClient do
       (default: ok); comes as `{:tg, {:edit_message, uuid, chat_id, message_id,
       text, markup}}`;
     * `react` — `set(:react, fun)` with `fun.(chat_id, message_id, emoji)`
-      (default: ok).
+      (default: ok);
+    * `download_file` — `set(:download, fun)` with `fun.(file_id, opts)` answering
+      `{:ok, bytes}` or `{:error, reason}` (default: ok, `"OggS-voice-bytes"`);
+      comes as `{:tg, {:download_file, uuid, file_id, opts}}`.
   """
 
   @behaviour PhoenixKitAgent.Telegram.Client
@@ -71,6 +74,23 @@ defmodule PhoenixKitAgent.Test.TelegramClient do
         "data" => data
       }
     }
+  end
+
+  @doc "A private-chat voice message (`kind`: `\"voice\"` or `\"audio\"`; `opts`: as `update/3`, plus `:duration`, `:file_size`, `:file_id`, `:mime_type`)."
+  def voice_update(chat_id, kind \\ "voice", opts \\ []) do
+    media =
+      %{"file_id" => Keyword.get(opts, :file_id, "voice-file-1"), "file_unique_id" => "u1"}
+      |> then(&if(d = Keyword.get(opts, :duration, 5), do: Map.put(&1, "duration", d), else: &1))
+      |> then(
+        &if(z = Keyword.get(opts, :file_size, 20_000), do: Map.put(&1, "file_size", z), else: &1)
+      )
+      |> then(&if(m = Keyword.get(opts, :mime_type), do: Map.put(&1, "mime_type", m), else: &1))
+
+    update(
+      chat_id,
+      nil,
+      Keyword.update(opts, :extra, %{kind => media}, &Map.put(&1, kind, media))
+    )
   end
 
   def set(key, value), do: Agent.update(script(), &Map.put(&1, key, value))
@@ -156,6 +176,16 @@ defmodule PhoenixKitAgent.Test.TelegramClient do
   def typing(uuid, chat_id) do
     tell({:typing, uuid, chat_id})
     {:ok, true}
+  end
+
+  @impl true
+  def download_file(uuid, file_id, opts) do
+    tell({:download_file, uuid, file_id, opts})
+
+    case Agent.get(script(), &Map.get(&1, :download)) do
+      fun when is_function(fun, 2) -> fun.(file_id, opts)
+      nil -> {:ok, "OggS-voice-bytes"}
+    end
   end
 
   defp next_id, do: Agent.get_and_update(script(), &{&1.next_id, %{&1 | next_id: &1.next_id + 1}})

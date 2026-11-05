@@ -31,9 +31,14 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   button"). The age of a press is no matter: the row's own time decides.
 
   A linked person's message becomes a job for the serial queue of their chat
-  (`PhoenixKitAgent.Telegram.ChatQueue`): `:turn` for text, `:new` for `/new`;
+  (`PhoenixKitAgent.Telegram.ChatQueue`): `:turn` for text, `:voice` for a voice
+  message or an audio file (written down, shown, then run as the text it
+  became, in the same place of the queue), `:new` for `/new`;
   `/help` and a bare `/start` are the help; a forwarded message and anything
-  that is not text are answered with a short refusal. Nothing of an update is
+  else that is not text are answered with a short refusal. A voice job holds
+  the file's identifier, its length and size and its format (none of the
+  audio): the checks that come before the download are the job's
+  (`PhoenixKitAgent.Telegram.Turn`). Nothing of an update is
   kept after this module has dealt with it, and nothing of it is logged.
   """
 
@@ -50,11 +55,24 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   @typedoc "The actor reference of core: `{:telegram_link, user_uuid, connection_uuid, chat_id}`."
   @type ref :: {:telegram_link, String.t(), String.t(), integer()}
 
+  @typedoc "What the chat's queue runs; a `:voice` job also has the `voice` file."
+  @type job :: %{
+          required(:kind) => :turn | :new | :voice,
+          required(:message_id) => integer(),
+          required(:text) => String.t() | nil,
+          optional(:voice) => %{
+            file_id: String.t(),
+            duration: integer() | nil,
+            size: integer() | nil,
+            format: String.t() | nil
+          }
+        }
+
   @type decision ::
           :ignore
           | {:unlinked, integer()}
           | {:static, ref(), integer(), integer(), :help | :forwarded | :text_only}
-          | {:job, ref(), %{kind: :turn | :new, message_id: integer(), text: String.t() | nil}}
+          | {:job, ref(), job()}
           | {:press, ref(), Press.press()}
           | {:answer, String.t(), nil | :unknown_button | {:unlinked, integer()}}
 
@@ -245,7 +263,53 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
     if forwarded?(message), do: :forwarded, else: text_kind(text)
   end
 
-  defp kind(message), do: if(forwarded?(message), do: :forwarded, else: :text_only)
+  defp kind(message) do
+    cond do
+      forwarded?(message) -> :forwarded
+      voice(message) -> :voice
+      true -> :text_only
+    end
+  end
+
+  # A voice message, or an audio file: the file and what Telegram says of it.
+  defp voice(message) do
+    Enum.find_value(["voice", "audio"], fn key ->
+      case message[key] do
+        %{"file_id" => file_id} = media when is_binary(file_id) ->
+          %{
+            file_id: file_id,
+            duration: integer_or_nil(media["duration"]),
+            size: integer_or_nil(media["file_size"]),
+            format: if(key == "voice", do: "ogg", else: audio_format(media["mime_type"]))
+          }
+
+        _other ->
+          nil
+      end
+    end)
+  end
+
+  defp integer_or_nil(value) when is_integer(value), do: value
+  defp integer_or_nil(_other), do: nil
+
+  # The format of an audio file where its type says it; else the bytes tell.
+  defp audio_format(type) when is_binary(type) do
+    case String.downcase(type) do
+      "audio/mpeg" -> "mp3"
+      "audio/mp3" -> "mp3"
+      "audio/ogg" -> "ogg"
+      "audio/opus" -> "ogg"
+      "audio/wav" -> "wav"
+      "audio/x-wav" -> "wav"
+      "audio/flac" -> "flac"
+      "audio/mp4" -> "m4a"
+      "audio/x-m4a" -> "m4a"
+      "audio/aac" -> "aac"
+      _unknown -> nil
+    end
+  end
+
+  defp audio_format(_none), do: nil
 
   defp text_kind(text) do
     case Regex.run(~r/\A\/([A-Za-z0-9_]+)(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?\z/su, text) do
@@ -283,6 +347,9 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
 
   defp decide(:turn, ref, _chat_id, message_id, %{"text" => text}),
     do: {:job, ref, %{kind: :turn, message_id: message_id, text: text}}
+
+  defp decide(:voice, ref, _chat_id, message_id, message),
+    do: {:job, ref, %{kind: :voice, message_id: message_id, text: nil, voice: voice(message)}}
 
   # ── the replies that need no turn ─────────────────────────────────
 

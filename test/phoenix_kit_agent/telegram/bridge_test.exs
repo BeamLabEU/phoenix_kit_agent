@@ -69,11 +69,62 @@ defmodule PhoenixKitAgent.Telegram.BridgeTest do
       end
     end
 
-    test "a photo, a voice message, a sticker: text only", ctx do
+    test "a photo, a voice message with no file, a sticker: text only", ctx do
       for extra <- [%{"photo" => [%{}]}, %{"voice" => %{}}, %{"sticker" => %{}}] do
         update = TelegramClient.update(@chat, nil, extra: Map.put(extra, "caption", "look"))
         assert {:static, _, @chat, _, :text_only} = decide(ctx, update)
       end
+    end
+
+    test "a voice message or an audio file is a voice job with its file, length and size", ctx do
+      assert {:job, ref, %{kind: :voice, message_id: 8, voice: voice}} =
+               decide(
+                 ctx,
+                 TelegramClient.voice_update(@chat, "voice",
+                   message_id: 8,
+                   file_id: "F1",
+                   duration: 7,
+                   file_size: 900
+                 )
+               )
+
+      assert ref == ctx.ref
+      assert voice == %{file_id: "F1", duration: 7, size: 900, format: "ogg"}
+
+      assert {:job, _, %{kind: :voice, voice: %{format: "mp3", file_id: "F2"}}} =
+               decide(
+                 ctx,
+                 TelegramClient.voice_update(@chat, "audio",
+                   file_id: "F2",
+                   mime_type: "audio/mpeg"
+                 )
+               )
+
+      assert {:job, _, %{kind: :voice, voice: %{format: nil, duration: nil, size: nil}}} =
+               decide(
+                 ctx,
+                 TelegramClient.voice_update(@chat, "audio",
+                   duration: nil,
+                   file_size: nil,
+                   mime_type: "audio/x-unknown"
+                 )
+               )
+    end
+
+    test "a voice message without a file, or forwarded, is not a voice job", ctx do
+      update = TelegramClient.update(@chat, nil, extra: %{"voice" => %{"duration" => 3}})
+      assert {:static, _, @chat, _, :text_only} = decide(ctx, update)
+
+      forwarded =
+        TelegramClient.voice_update(@chat, "voice",
+          extra: %{"forward_origin" => %{"type" => "user"}}
+        )
+
+      assert {:static, _, @chat, _, :forwarded} = decide(ctx, forwarded)
+    end
+
+    test "a voice message of a chat nobody linked is the unlinked answer", ctx do
+      assert {:unlinked, 999} = decide(ctx, TelegramClient.voice_update(999))
     end
 
     test "a message older than ten minutes is not answered", ctx do
