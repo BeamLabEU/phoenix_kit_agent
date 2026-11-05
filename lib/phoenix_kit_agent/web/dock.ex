@@ -252,6 +252,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         speech?: speech?(),
         transcribing?: false,
         speech_ref: nil,
+        speech_timer: nil,
         timeout_ms: Config.turn_deadline_s() * 1_000 + Monitor.stop_grace_ms() + @wait_margin_ms
       )
       |> allow_upload(:files,
@@ -970,7 +971,10 @@ defmodule PhoenixKitAgent.Web.Dock do
   defp dictated({:exit, _reason}, socket),
     do: {:noreply, socket |> speech_done() |> assign(error: Texts.speech_error(:failed))}
 
-  defp speech_done(socket), do: assign(socket, transcribing?: false, speech_ref: nil)
+  defp speech_done(socket) do
+    if timer = socket.assigns.speech_timer, do: Process.cancel_timer(timer)
+    assign(socket, transcribing?: false, speech_ref: nil, speech_timer: nil)
+  end
 
   # Whatever goes wrong in showing the result, the microphone is free again.
   defp safe_dictated(result, socket) do
@@ -1119,13 +1123,14 @@ defmodule PhoenixKitAgent.Web.Dock do
        )
        when is_binary(data) and is_binary(format) do
     %{ref: ref} = socket.assigns
-    opts = me(socket)
+    deadline = System.monotonic_time(:millisecond) + speech_wait_ms()
+    opts = Keyword.put(me(socket), :deadline, deadline)
     wait = make_ref()
-    Process.send_after(self(), {:pk_agent_speech_timeout, wait}, speech_wait_ms())
+    timer = Process.send_after(self(), {:pk_agent_speech_timeout, wait}, speech_wait_ms())
 
     {:noreply,
      socket
-     |> assign(transcribing?: true, speech_ref: wait, error: nil)
+     |> assign(transcribing?: true, speech_ref: wait, speech_timer: timer, error: nil)
      |> start_async(:speech, fn ->
        detached(fn -> safe_transcribe(ref, data, format, opts) end)
      end)}

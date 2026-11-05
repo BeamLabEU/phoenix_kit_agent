@@ -263,8 +263,7 @@ and `Web.Markdown`).
   texts in `Web.Dock.Texts.speech_error/1`, the guard's and the provider's
   refusals worded as for a turn). Neither
   the audio nor the words are logged or kept. **Telegram:** a `voice` or `audio`
-  message (music files are taken too: they are audio, and the owner asked for
-  audio messages) of a linked, fresh, private, non-forwarded chat is a `:voice` job in
+  message (audio files are accepted as well as voice messages) of a linked, fresh, private, non-forwarded chat is a `:voice` job in
   the same `ChatQueue` (its place keeps the order); `Telegram.Turn` checks the
   speech model, the chat's link and rights (`Conversations.authorize_session/2`,
   so `agent.telegram`) the user's limits (`Speech.check/2`) and the length (120 s,

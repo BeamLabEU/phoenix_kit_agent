@@ -45,6 +45,8 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   alias PhoenixKit.Utils.Routes
   use Gettext, backend: PhoenixKitAgent.Gettext
 
+  require Logger
+
   alias PhoenixKitAgent.{Attachments, Config, Conversations, Speech, Turns, UserConfig}
   alias PhoenixKitAgent.Attachments.Bounds
   alias PhoenixKitAgent.Telegram.{Bridge, Cards, ChatQueue, Client, Format, Texts}
@@ -118,9 +120,16 @@ defmodule PhoenixKitAgent.Telegram.Turn do
         try do
           fun.()
         rescue
-          _exception -> {:error, :failed}
+          exception ->
+            Logger.warning(
+              "[PhoenixKitAgent] telegram recognition failed: #{inspect(exception.__struct__)}"
+            )
+
+            {:error, :failed}
         catch
-          _kind, _reason -> {:error, :failed}
+          kind, _reason ->
+            Logger.warning("[PhoenixKitAgent] telegram recognition failed: #{kind}")
+            {:error, :failed}
         end
       end)
 

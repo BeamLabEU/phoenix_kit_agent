@@ -184,6 +184,11 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   def speech_error(:rate_limited), do: notice("rate_limited")
   def speech_error(:endpoint_unusable), do: notice("endpoint_disabled")
 
+  def speech_error(:unsupported_format),
+    do: gettext("This kind of recording cannot be read. Record it again, or send another format.")
+
+  def speech_error(:abandoned), do: speech_error(:failed)
+
   def speech_error(:bad_answer),
     do: gettext("The model's answer could not be read as the words. Try again.")
 

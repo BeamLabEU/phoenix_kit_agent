@@ -285,6 +285,11 @@ defmodule PhoenixKitAgent.SpeechTest do
       assert {:error, :bad_answer} = refused(ref, {:error, {:output_truncated, "x"}})
     end
 
+    test "a recording format the model cannot take is :unsupported_format", %{ref: ref} do
+      assert {:error, :unsupported_format} = refused(ref, {:error, :unknown_audio_format})
+      assert {:error, :unsupported_format} = refused(ref, {:error, :invalid_audio_input})
+    end
+
     test "the size and the silence the AI module found are :too_long and :no_speech", %{ref: ref} do
       assert {:error, :too_long} = refused(ref, {:error, {:audio_too_large, 2, 1}})
       assert {:error, :no_speech} = refused(ref, {:error, :empty_input})
@@ -310,8 +315,9 @@ defmodule PhoenixKitAgent.SpeechTest do
     defmodule Slow do
       @moduledoc false
       # Says it came in, waits to be let go.
-      def transcribe(_endpoint, _audio, _opts) do
+      def transcribe(endpoint, _audio, _opts) do
         test = Agent.get(:speech_slow, & &1)
+        send(test, {:endpoint, endpoint})
         send(test, {:in, self()})
 
         receive do
@@ -378,6 +384,46 @@ defmodule PhoenixKitAgent.SpeechTest do
       assert {:ok, "words"} = Task.await(first)
       assert {:error, :session_gone} = Task.await(second)
       refute_receive {:in, _never}, 300
+    end
+
+    test "a caller that gave up while the recognition waited is not paid for", %{ref: ref} do
+      first = in_task(ref)
+      assert_receive {:in, pid1}, 2_000
+
+      deadline = System.monotonic_time(:millisecond) + 300
+
+      second =
+        Task.async(fn ->
+          Speech.transcribe(ref, "bytes", "wav", impersonated: false, deadline: deadline)
+        end)
+
+      Process.sleep(400)
+
+      send(pid1, :go)
+      assert {:ok, "words"} = Task.await(first)
+      assert {:error, :abandoned} = Task.await(second)
+      refute_receive {:in, _never}, 300
+    end
+
+    test "the call is made for the model the limits were checked for, as it is after the wait",
+         %{ref: ref, endpoint: first_endpoint} do
+      first_uuid = first_endpoint.uuid
+      first = in_task(ref)
+      assert_receive {:endpoint, ^first_uuid}, 2_000
+      assert_receive {:in, pid1}, 2_000
+
+      second = in_task(ref)
+      refute_receive {:in, _other}, 300
+
+      other = speech_endpoint()
+      send(pid1, :go)
+      assert {:ok, "words"} = Task.await(first)
+
+      assert_receive {:endpoint, endpoint}, 2_000
+      assert endpoint == other.uuid
+      assert_receive {:in, pid2}, 2_000
+      send(pid2, :go)
+      assert {:ok, "words"} = Task.await(second)
     end
 
     test "what the wait changed is seen right before the call: the user's limit", %{

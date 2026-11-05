@@ -653,7 +653,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
             </p>
             <p :if={@transcribe? and @speech_money_off?} id="agent-speech-money-off" class="text-xs text-warning">
               {gettext(
-                "The speech recognition model does not report what a call costs: its money is not counted, only the turn limit applies."
+                "The speech recognition model does not report what a call costs: what it spends is not counted, and nothing limits voice input by money."
               )}
             </p>
             <p :if={@models.loading?} class="text-xs text-base-content/60">
