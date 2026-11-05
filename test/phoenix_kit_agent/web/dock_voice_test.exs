@@ -86,6 +86,17 @@ defmodule PhoenixKitAgent.Web.DockVoiceTest do
 
   defp count(schema), do: Repo.aggregate(schema, :count)
 
+  defp eventually(fun, tries \\ 50) do
+    case fun.() do
+      falsey when falsey in [false, nil, []] and tries > 0 ->
+        Process.sleep(50)
+        eventually(fun, tries - 1)
+
+      result ->
+        result
+    end
+  end
+
   # ── the microphone ──────────────────────────────────────────────────
 
   describe "the microphone" do
@@ -101,6 +112,80 @@ defmodule PhoenixKitAgent.Web.DockVoiceTest do
       view = dock(ctx)
 
       refute has_element?(view, "#pk-agent-mic")
+    end
+  end
+
+  describe "the microphone where the platform lacks something" do
+    defmodule NoTranscribe do
+      @moduledoc false
+    end
+
+    test "is not there on a core without the recorder", ctx do
+      Application.put_env(:phoenix_kit_agent, :audio_recorder, __MODULE__.NoSuchRecorder)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :audio_recorder) end)
+
+      view = dock(ctx)
+
+      refute has_element?(view, "#pk-agent-mic")
+      assert has_element?(view, "#pk-agent-composer")
+    end
+
+    test "is not there on an AI module that cannot write speech down", ctx do
+      Application.put_env(:phoenix_kit_agent, :speech_ai, NoTranscribe)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
+
+      view = dock(ctx)
+
+      refute has_element?(view, "#pk-agent-mic")
+    end
+  end
+
+  describe "a recording being written down" do
+    defp slow_model do
+      test = self()
+
+      Req.Test.expect(@stub, fn conn ->
+        send(test, {:recognising, self()})
+
+        receive do
+          :release -> Req.Test.json(conn, heard("late words"))
+        end
+      end)
+    end
+
+    test "is journaled even when the panel is gone before the answer", ctx do
+      Process.flag(:trap_exit, true)
+      slow_model()
+      view = dock(ctx)
+      record(view)
+      assert_receive {:recognising, pid}, 5_000
+
+      ref = Process.monitor(view.pid)
+      Process.exit(view.pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, _pid, _reason}, 2_000
+
+      send(pid, :release)
+
+      assert eventually(fn ->
+               Repo.all(from(r in PhoenixKitAI.Request, where: r.endpoint_uuid == ^ctx.ears.uuid))
+             end) != []
+    end
+
+    test "is given up after the wait, the microphone is free and a late answer is let go",
+         ctx do
+      Application.put_env(:phoenix_kit_agent, :speech_wait_ms, 100)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_wait_ms) end)
+
+      slow_model()
+      view = dock(ctx)
+      record(view)
+      assert_receive {:recognising, pid}, 5_000
+
+      assert eventually(fn -> not has_element?(view, "#pk-agent-transcribing") end)
+      assert has_element?(view, "#pk-agent-dock-error")
+
+      send(pid, :release)
+      refute_push_event(view, "pk-agent:dictated", _any, 500)
     end
   end
 

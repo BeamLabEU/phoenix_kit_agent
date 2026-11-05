@@ -112,7 +112,10 @@ defmodule PhoenixKitAgent.Web.Dock do
   a microphone. A clip it delivers (`{:audio_recorded, "pk-agent-mic", clip}`)
   is written down (`PhoenixKitAgent.Speech.transcribe/4`, with the panel's
   session; it runs off this process, one at a time, and the recorder is busy
-  meanwhile) and the words are **put into the composer** (`pk-agent:dictated`,
+  meanwhile; the call runs in a task of the module's supervisor, not linked
+  to the panel, so a closed tab does not cut a paid call short before it is
+  journaled; the panel gives up waiting after `:speech_wait_ms`, default two
+  minutes) and the words are **put into the composer** (`pk-agent:dictated`,
   the `.Composer` hook adds them to what is typed): the person reads and edits
   them, and sends. Nothing is sent, and nothing kept, by the recognition. A
   refusal is shown with `PhoenixKitAgent.Web.Dock.Texts.speech_error/1`; the
@@ -179,8 +182,11 @@ defmodule PhoenixKitAgent.Web.Dock do
   alias PhoenixKitAgent.Web.Dock.{Panel, Texts}
   alias PhoenixKitWeb.Users.MultiSession
 
-  # The core's recorder, where the core has it (the module supports cores before it).
+  # The core's recorder, where the core has it (the module supports cores before
+  # it); `config :phoenix_kit_agent, :audio_recorder` stands in for it in tests.
   @recorder PhoenixKitWeb.Components.Core.AudioRecorder
+  # How long the panel waits for a recording to be written down.
+  @speech_wait_ms 120_000
 
   @accept ~w(.png .jpg .jpeg .webp .heic .heif .pdf .xlsx .csv .txt .md)
   @mb 1_048_576
@@ -245,6 +251,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         restored: 0,
         speech?: speech?(),
         transcribing?: false,
+        speech_ref: nil,
         timeout_ms: Config.turn_deadline_s() * 1_000 + Monitor.stop_grace_ms() + @wait_margin_ms
       )
       |> allow_upload(:files,
@@ -262,7 +269,12 @@ defmodule PhoenixKitAgent.Web.Dock do
     end
   end
 
-  defp speech?, do: Config.speech?() and Code.ensure_loaded?(@recorder)
+  defp speech?, do: Config.speech?() and Code.ensure_loaded?(recorder())
+
+  defp recorder, do: Application.get_env(:phoenix_kit_agent, :audio_recorder, @recorder)
+
+  defp speech_wait_ms,
+    do: Application.get_env(:phoenix_kit_agent, :speech_wait_ms, @speech_wait_ms)
 
   # The panel's own texts and core's components in it (the times of the list).
   defp put_locale(locale) do
@@ -945,20 +957,33 @@ defmodule PhoenixKitAgent.Web.Dock do
       {:error, :failed}
   end
 
+  # The words reach the composer; a result that comes after the panel gave up
+  # waiting (or for a clip it no longer waits for) is let go.
+  defp dictated(_result, %{assigns: %{transcribing?: false}} = socket), do: {:noreply, socket}
+
   defp dictated({:ok, {:ok, text}}, socket),
-    do:
-      {:noreply,
-       socket |> assign(transcribing?: false) |> push_event("pk-agent:dictated", %{text: text})}
+    do: {:noreply, socket |> speech_done() |> push_event("pk-agent:dictated", %{text: text})}
 
   defp dictated({:ok, {:error, reason}}, socket),
-    do: {:noreply, assign(socket, transcribing?: false, error: Texts.speech_error(reason))}
+    do: {:noreply, socket |> speech_done() |> assign(error: Texts.speech_error(reason))}
 
   defp dictated({:exit, _reason}, socket),
-    do: {:noreply, assign(socket, transcribing?: false, error: Texts.speech_error(:failed))}
+    do: {:noreply, socket |> speech_done() |> assign(error: Texts.speech_error(:failed))}
+
+  defp speech_done(socket), do: assign(socket, transcribing?: false, speech_ref: nil)
+
+  # Whatever goes wrong in showing the result, the microphone is free again.
+  defp safe_dictated(result, socket) do
+    dictated(result, socket)
+  rescue
+    exception ->
+      Logger.warning("[PhoenixKitAgent] the chat panel failed: #{inspect(exception.__struct__)}")
+      {:noreply, socket |> speech_done() |> assign(error: Texts.speech_error(:failed))}
+  end
 
   @impl true
   def handle_async(:speech, result, socket),
-    do: guarded(socket, fn -> dictated(result, socket) end)
+    do: guarded(socket, fn -> safe_dictated(result, socket) end)
 
   def handle_async({:card, uuid}, result, socket),
     do: guarded(socket, fn -> card_done(uuid, result, socket) end)
@@ -1095,12 +1120,22 @@ defmodule PhoenixKitAgent.Web.Dock do
        when is_binary(data) and is_binary(format) do
     %{ref: ref} = socket.assigns
     opts = me(socket)
+    wait = make_ref()
+    Process.send_after(self(), {:pk_agent_speech_timeout, wait}, speech_wait_ms())
 
     {:noreply,
      socket
-     |> assign(transcribing?: true, error: nil)
-     |> start_async(:speech, fn -> safe_transcribe(ref, data, format, opts) end)}
+     |> assign(transcribing?: true, speech_ref: wait, error: nil)
+     |> start_async(:speech, fn ->
+       detached(fn -> safe_transcribe(ref, data, format, opts) end)
+     end)}
   end
+
+  # The panel gives up waiting (the task goes on, and is journaled).
+  defp info({:pk_agent_speech_timeout, wait}, %{assigns: %{speech_ref: wait}} = socket),
+    do: {:noreply, socket |> speech_done() |> assign(error: Texts.speech_error(:failed))}
+
+  defp info({:pk_agent_speech_timeout, _stale}, socket), do: {:noreply, socket}
 
   defp info(_other, socket), do: {:noreply, socket}
 
@@ -1281,8 +1316,9 @@ defmodule PhoenixKitAgent.Web.Dock do
   defp card_action("reject_card"), do: :reject
   defp card_action("repeat_card"), do: :repeat
 
-  # The click runs in a task of the module's supervisor, not linked to the
-  # panel: a closed tab does not stop a write half-way. An exception in it is
+  # The click (or a recording being written down) runs in a task of the
+  # module's supervisor, not linked to the panel: a closed tab does not stop a
+  # write half-way, nor a paid call before it is journaled. An exception in it is
   # logged as its class only (its terms may hold the arguments).
   defp detached(fun) do
     PhoenixKitAgent.Confirmations.TaskSupervisor
