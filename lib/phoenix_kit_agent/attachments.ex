@@ -440,6 +440,57 @@ defmodule PhoenixKitAgent.Attachments do
   end
 
   @doc false
+  # What `add_picture_for_telegram/4` can refuse without the bytes — the chat,
+  # the user's size limit (`size`, where Telegram said it) and a model that
+  # could neither see nor describe a picture — so the bridge asks before it
+  # downloads. `:ok`, or the refusal. A trusted entry point of the bridge.
+  @spec precheck_picture_for_telegram(
+          Conversations.session_ref(),
+          term(),
+          non_neg_integer() | nil
+        ) :: :ok | {:error, refusal()}
+  def precheck_picture_for_telegram(
+        {:telegram_link, _user, _connection, _chat} = ref,
+        conversation_uuid,
+        size
+      ) do
+    with {:ok, conversation} <-
+           Conversations.owned_conversation(ref, conversation_uuid, impersonated: false),
+         settings = UserConfig.effective(conversation.user_uuid),
+         :ok <- if(is_integer(size), do: size_allowed(size, settings), else: :ok) do
+      can_be_shown(%{kind: "image"}, settings)
+    end
+  end
+
+  @doc false
+  # Removes the files of the Telegram chat's conversation that no message took
+  # and that are older than `older_than_ms`: what a turn killed between adding a
+  # picture and asking about it left behind (a chat has no panel to discard
+  # them in, and they would count against `max_attachments_per_message`).
+  # A trusted entry point of the bridge.
+  @spec sweep_unsent_for_telegram(Conversations.session_ref(), term(), non_neg_integer()) ::
+          :ok | {:error, refusal()}
+  def sweep_unsent_for_telegram(
+        {:telegram_link, _user, _connection, _chat} = ref,
+        conversation_uuid,
+        older_than_ms
+      ) do
+    with {:ok, conversation} <-
+           Conversations.owned_conversation(ref, conversation_uuid, impersonated: false) do
+      cutoff = DateTime.add(DateTime.utc_now(), -older_than_ms, :millisecond)
+
+      from(a in Attachment,
+        where:
+          a.conversation_uuid == ^conversation.uuid and a.user_uuid == ^conversation.user_uuid and
+            is_nil(a.message_uuid) and a.inserted_at < ^cutoff,
+        select: a.uuid
+      )
+      |> repo().all()
+      |> Enum.each(&discard_row(conversation.user_uuid, &1))
+    end
+  end
+
+  @doc false
   # `get/3` for a linked Telegram chat's reference (the bridge waits for a
   # picture to be read with it).
   @spec get_for_telegram(Conversations.session_ref(), term()) ::

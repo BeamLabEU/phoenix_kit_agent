@@ -287,29 +287,45 @@ and `Web.Markdown`).
   (2 minutes), then frees the microphone and a late answer is let go; the words reach the composer as the push event
   `pk-agent:dictated` (the textarea is `phx-update="ignore"`) and nothing is
   sent by itself.
-- **Pictures from Telegram:** a `photo` (the largest size of up to 10 MB), or a
+- **Pictures from Telegram:** a `photo` (the largest size of up to 10 MB, by
+  its `file_size`, not its place in the list), or a
   `document` whose type is image/jpeg, png or webp, of a linked, fresh,
   private, non-forwarded chat is a `:photo` job (the caption is its text; its
   `media_group_id` the job's `group`). `Telegram.Turn` checks the chat as for
-  text (`Conversations.authorize_session/2`), downloads the file
+  text (`Conversations.authorize_session/2`, before "👀") and, for each
+  picture, what can be known without the file
+  (`Attachments.precheck_picture_for_telegram/3`: the size limit, a model that
+  could neither see nor describe), then downloads it
   (`Client.download_file/3`, 10 MB), and adds it with the **only** attachment
   entry point open to a chat: `Attachments.add_picture_for_telegram/4` — the
   panel's `add/4` flow unchanged (ownership, size, `Detect` by content, only a
   picture is taken: a "picture" that is a PDF is `:unsupported_type`, quotas,
   Library, `Processor`, `Jpeg.strip_metadata`, `picture_mode/1`: pixels, a
   description, or `:no_vision_model` before anything is stored), the bytes
-  written to a `Work` scratch directory; `get_for_telegram/2` and
-  `discard_for_telegram/2` (the bridge waits, for `Bounds` queue wait + process
-  deadline + 10 s, `:telegram_attachment_wait_ms` in tests, and removes every
-  file the turn did not take — a chat has no panel to discard them in). The
-  turn runs on the caption, else "What is in this picture?" in the user's
-  language. The pictures of one album are **one turn**: the first picture's job
-  waits `:telegram_album_settle_ms` (1 s) and takes the siblings that
-  `ChatQueue` kept for it (`take_siblings/3`: same group, not counted among the
-  3 waiting ones, at most 9; one not taken goes in front of the waiting ones);
-  every one that could be added and read goes into the message, with the first
-  caption there is; the ones that could not are left out (told only if none
-  went). Other documents (PDF, sheets) stay refused as text only.
+  written to a `Work` scratch directory. The pictures are added **one at a
+  time**, each read (`get_for_telegram/2`, `Attachments.TaskSupervisor`
+  events or a poll every second, "typing" every 4 s) before the next, so the
+  places for descriptions are free in turn; the whole wait is bounded by
+  `Bounds` queue wait + process deadline + 10 s (`:telegram_attachment_wait_ms`
+  in tests). What no message took is removed by `discard_for_telegram/2` (a
+  chat has no panel to discard in) whatever ends the turn (`try … after`); a
+  turn killed outright cannot, so `sweep_unsent_for_telegram/3` removes the
+  chat's unsent files older than that wait bound before the next picture
+  (they would count against `max_attachments_per_message`). The turn runs on the
+  caption, else "What is in this picture?" in the user's language. The
+  pictures of one album are **one turn**: the album's parts are siblings of a
+  job of the same group that runs **or waits** in `ChatQueue` (not counted
+  among the 3 waiting ones, at most nine, never "wait a little"); the first
+  picture's job waits `:telegram_album_settle_ms` (1 s) and takes the siblings
+  (`take_siblings/3`; a waiting job gets its own when it starts; siblings not
+  taken run as one job in front of the waiting ones). A part that comes after
+  the siblings were taken is a job of its own with its own answer. A refused
+  album (the chat's rights) is refused once. At most
+  `max_attachments_per_message` pictures go in, the first ones; one short
+  message tells how many were left out and how many could not be read.
+  Other documents (PDF, sheets) stay refused as text only (the help and the
+  refusal say what the bot reads: text, pictures, and voice messages where they
+  are on).
 - **A linked Telegram chat** is the second kind of actor reference,
   `{:telegram_link, user_uuid, connection_uuid, chat_id}` (core's
   `Linking.actor_ref/2`, built from an update read at the bot, never from a

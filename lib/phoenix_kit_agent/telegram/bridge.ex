@@ -327,10 +327,18 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
 
   defp picture(_message), do: nil
 
-  # The largest that fits; else the smallest (the job refuses it as too large).
+  # The largest that fits (by its size in bytes, not by its place in the list);
+  # else the smallest (the job refuses it as too large).
   defp pick_size(sizes) do
-    fitting = Enum.filter(sizes, &fits?/1)
-    if fitting == [], do: hd(sizes), else: List.last(fitting)
+    case Enum.filter(sizes, &fits?/1) do
+      [] -> Enum.min_by(sizes, &weight/1)
+      fitting -> Enum.max_by(fitting, &weight/1)
+    end
+  end
+
+  defp weight(size) do
+    {integer_or_nil(size["file_size"]) || 0,
+     (integer_or_nil(size["width"]) || 0) * (integer_or_nil(size["height"]) || 0)}
   end
 
   defp fits?(%{"file_size" => size}) when is_integer(size), do: size <= @max_picture_bytes

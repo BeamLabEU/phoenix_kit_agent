@@ -9,8 +9,6 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
 
   use PhoenixKitAgent.DataCase, async: false
 
-  @moduletag :imagemagick
-
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.ModuleRegistry
@@ -203,6 +201,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
   # ── a picture is asked about ────────────────────────────────────────
 
   describe "a photo" do
+    @tag :imagemagick
     test "is shown to the model with its caption as one turn, and answered", ctx do
       model_says("A grey square.")
 
@@ -222,6 +221,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       assert message_uuid
     end
 
+    @tag :imagemagick
     test "the largest size that fits is the one downloaded, within the limit", ctx do
       model_says("Ok.")
 
@@ -236,6 +236,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       assert opts[:max_bytes] == 10 * 1_048_576
     end
 
+    @tag :imagemagick
     test "with no caption is asked about in the user's language", ctx do
       model_says("A picture.")
 
@@ -249,6 +250,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
              ]
     end
 
+    @tag :imagemagick
     test "a picture sent as a document (png) is taken too", ctx do
       model_says("Seen.")
 
@@ -261,6 +263,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       assert images_in(body) == 1
     end
 
+    @tag :imagemagick
     test "the uploader is the linked user, and the file is theirs alone", ctx do
       model_says("Ok.")
 
@@ -282,11 +285,13 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       calls = calls_until(reaction?("🤷"))
 
       assert texts(calls) == [Texts.picture(:no_vision_model)]
+      assert downloads(calls) == []
       assert attachments(ctx.user) == []
       assert user_messages(ctx.user) == []
       refute_received {:model_request, _}
     end
 
+    @tag :imagemagick
     test "a model that does not see gets a description from the vision model", ctx do
       other = chat_endpoint("no")
       {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", other.uuid)
@@ -310,6 +315,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       assert images_in(turn) == 0
     end
 
+    @tag :imagemagick
     test "a picture that cannot be read is told, with no turn and no file left", ctx do
       eyes =
         endpoint_fixture(%{
@@ -333,6 +339,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       assert user_messages(ctx.user) == []
     end
 
+    @tag :imagemagick
     test "a document that says it is a picture and is not is refused", ctx do
       TelegramClient.set(:download, fn _id, _opts -> {:ok, Files.text_pdf(["Hello"])} end)
       model_says("never")
@@ -371,6 +378,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       assert texts(calls) == [Texts.picture(:too_large)]
     end
 
+    @tag :imagemagick
     test "a turn that is refused leaves no file behind", ctx do
       Repo.insert!(%PhoenixKitAgent.Schemas.UserSettings{
         user_uuid: ctx.user.uuid,
@@ -399,6 +407,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       refute_received {:tg, {:download_file, _, _, _}}
     end
 
+    @tag :imagemagick
     test "waits for the picture to be read, but not for ever", ctx do
       Application.put_env(:phoenix_kit_agent, :telegram_attachment_wait_ms, 300)
       holder = hold_every_place(ctx.user)
@@ -414,6 +423,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       processing_ended()
     end
 
+    @tag :imagemagick
     test "nothing of the picture or its caption is logged", ctx do
       secret = "SECRET-CAPTION"
 
@@ -432,6 +442,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
   # ── an album is one question ─────────────────────────────────────────
 
   describe "an album" do
+    @tag :imagemagick
     test "is one turn: the pictures together, the first caption there is", ctx do
       model_says("Two squares.")
 
@@ -458,6 +469,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       assert Enum.all?(attachments(ctx.user), &(&1.message_uuid != nil))
     end
 
+    @tag :imagemagick
     test "pictures of another album, or none, are turns of their own", ctx do
       model_says("Answer.")
 
@@ -469,6 +481,298 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
 
       settle()
       assert length(user_messages(ctx.user)) == 2
+    end
+  end
+
+  # ── what a picture costs is asked before it is fetched ───────────────
+
+  describe "before the download" do
+    test "a picture over the user's size limit is not fetched", ctx do
+      Repo.insert!(%PhoenixKitAgent.Schemas.UserSettings{
+        user_uuid: ctx.user.uuid,
+        max_attachment_mb: 1
+      })
+
+      photo(ctx, sizes: [{"big", 2_000_000}])
+      calls = calls_until(reaction?("🤷"))
+
+      assert downloads(calls) == []
+      assert texts(calls) == [Texts.picture(:too_large)]
+    end
+
+    test "the size is taken from the biggest file, not from the order of the list", ctx do
+      model_says("Ok.")
+
+      photo(ctx, sizes: [{"l", 90_000}, {"m", 5_000}, {"s", 800}])
+      calls = calls_until(reaction?("👍"))
+
+      assert downloads(calls) == ["l"]
+    end
+
+    test "an album refused as a whole is refused once, nothing fetched", ctx do
+      other = user_with(["agent"], "no-telegram-album")
+      telegram_link_fixture(other, ctx.connection, 556)
+
+      for id <- 1..3 do
+        extra = %{
+          "photo" => [%{"file_id" => "x#{id}", "file_size" => 10}],
+          "media_group_id" => "g-refused"
+        }
+
+        Bridge.dispatch(
+          ctx.connection,
+          TelegramClient.update(556, nil, extra: extra, message_id: id)
+        )
+      end
+
+      assert_receive {:tg, {:send_message, _, 556, text}}, 5_000
+      settle()
+
+      assert text == Texts.picture(:forbidden)
+      refute_received {:tg, {:send_message, _, 556, _}}
+      refute_received {:tg, {:download_file, _, _, _}}
+    end
+  end
+
+  # ── a long album ─────────────────────────────────────────────────────
+
+  describe "an album that comes while the chat is busy" do
+    @tag :imagemagick
+    test "waits as one job, and is one turn when its place comes", ctx do
+      test = self()
+
+      Req.Test.stub(@stub, fn conn ->
+        {:ok, raw, conn} = Plug.Conn.read_body(conn)
+        body = Jason.decode!(raw)
+        send(test, {:model_request, body})
+
+        if List.last(body["messages"])["content"] == "slow question" do
+          send(test, {:slow, self()})
+
+          receive do
+            :release -> :ok
+          end
+        end
+
+        Req.Test.json(conn, %{
+          "model" => @model,
+          "choices" => [%{"message" => %{"role" => "assistant", "content" => "Seen."}}],
+          "usage" => %{"prompt_tokens" => 11, "completion_tokens" => 4, "total_tokens" => 15}
+        })
+      end)
+
+      Bridge.dispatch(ctx.connection, TelegramClient.update(@chat, "slow question"))
+      assert_receive {:slow, pid}, 8_000
+
+      for id <- 1..4 do
+        photo(ctx, media_group_id: "busy", message_id: 10 + id, sizes: [{"p#{id}", 100}])
+      end
+
+      send(pid, :release)
+      calls_until(reaction?("👍"))
+      calls = calls_until(reaction?("👍"))
+
+      refute Enum.any?(texts(calls), &(&1 == Texts.static(:wait)))
+      assert Enum.sort(downloads(calls)) == ["p1", "p2", "p3", "p4"]
+      assert_received {:model_request, %{"messages" => _} = first}
+      assert images_in(first) == 0
+      assert_received {:model_request, album}
+      assert images_in(album) == 4
+      refute_received {:model_request, _}
+      settle()
+    end
+  end
+
+  describe "an album longer than a message takes" do
+    @tag :imagemagick
+    test "takes the first ones and says how many were left out", ctx do
+      Repo.insert!(%PhoenixKitAgent.Schemas.UserSettings{
+        user_uuid: ctx.user.uuid,
+        max_attachments_per_message: 2
+      })
+
+      model_says("Two seen.")
+
+      for id <- 1..3 do
+        photo(ctx, media_group_id: "long", message_id: id, sizes: [{"q#{id}", 100}])
+      end
+
+      calls = calls_until(reaction?("👍"))
+
+      assert Enum.sort(downloads(calls)) == ["q1", "q2"]
+
+      assert Enum.any?(texts(calls), &(&1 =~ "Only 2 of 3 pictures were taken"))
+      assert_received {:model_request, body}
+      assert images_in(body) == 2
+      settle()
+    end
+
+    @tag :imagemagick
+    test "says how many could not be read when others were", ctx do
+      model_says("One seen.")
+
+      TelegramClient.set(:download, fn
+        "bad", _opts -> {:ok, Files.text_pdf(["Hello"])}
+        _id, _opts -> {:ok, Files.png(40, 30)}
+      end)
+
+      photo(ctx, media_group_id: "mixed", message_id: 1, sizes: [{"good", 100}])
+      photo(ctx, media_group_id: "mixed", message_id: 2, sizes: [{"bad", 100}])
+      calls = calls_until(reaction?("👍"))
+
+      assert Enum.any?(texts(calls), &(&1 == "Pictures that could not be read: 1."))
+      assert_received {:model_request, body}
+      assert images_in(body) == 1
+      settle()
+    end
+
+    @tag :imagemagick
+    test "describes the pictures one after the other: none is lost to the wait for a place",
+         ctx do
+      other = chat_endpoint("no")
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", other.uuid)
+
+      eyes =
+        endpoint_fixture(%{
+          model: "a/eyes",
+          provider_settings: %{"capabilities" => %{"vision" => "yes", "model" => "a/eyes"}}
+        })
+
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", eyes.uuid)
+      Application.put_env(:phoenix_kit_agent, :telegram_attachment_wait_ms, 60_000)
+      model_says("A description or an answer.")
+
+      for id <- 1..4 do
+        photo(ctx, media_group_id: "describe", message_id: id, sizes: [{"d#{id}", 100}])
+      end
+
+      calls = calls_until(reaction?("👍"), 30_000)
+
+      refute Enum.any?(texts(calls), &(&1 =~ "could not be read"))
+      assert length(downloads(calls)) == 4
+      settle()
+    end
+  end
+
+  describe "a turn that was cut off after adding a picture" do
+    @tag :imagemagick
+    test "leaves a file that the next picture of the chat sweeps away", ctx do
+      Repo.insert!(%PhoenixKitAgent.Schemas.UserSettings{
+        user_uuid: ctx.user.uuid,
+        max_attachments_per_message: 1
+      })
+
+      Application.put_env(:phoenix_kit_agent, :telegram_attachment_wait_ms, 300)
+      model_says("Fine.")
+
+      photo(ctx, message_id: 1)
+      calls_until(reaction?("👍"))
+      settle()
+
+      # What a killed turn leaves: a picture no message took, long ago.
+      conversation = PhoenixKitAgent.Conversations.latest_telegram_conversation(ctx.user.uuid)
+
+      orphan =
+        Repo.insert!(%Attachment{
+          conversation_uuid: conversation.uuid,
+          user_uuid: ctx.user.uuid,
+          filename: "photo",
+          content_type: "image/png",
+          size_bytes: 81,
+          kind: "image",
+          status: "ready"
+        })
+
+      Repo.update_all(
+        from(a in Attachment, where: a.uuid == ^orphan.uuid),
+        set: [inserted_at: DateTime.add(DateTime.utc_now(), -10, :second)]
+      )
+
+      photo(ctx, message_id: 2)
+      calls_until(reaction?("👍"))
+      settle()
+
+      assert Enum.all?(attachments(ctx.user), &(&1.message_uuid != nil))
+      assert length(attachments(ctx.user)) == 2
+    end
+  end
+
+  describe "pictures nobody took" do
+    @tag :imagemagick
+    test "siblings that were not taken run together, in front of the waiting ones", ctx do
+      alias PhoenixKitAgent.Telegram.ChatQueue
+
+      Process.flag(:trap_exit, true)
+      model_says("Both seen.")
+
+      {:ok, pid} =
+        ChatQueue.start_link(key: {ctx.connection, @chat}, connection_uuid: ctx.connection)
+
+      job = fn id ->
+        %{
+          kind: :photo,
+          message_id: id,
+          text: nil,
+          group: "orphans",
+          photo: %{file_id: "o#{id}", size: 100, name: nil}
+        }
+      end
+
+      # A job of the album has ended without taking its siblings.
+      task_ref = make_ref()
+
+      :sys.replace_state(pid, fn state ->
+        %{
+          state
+          | task: %Task{ref: task_ref, pid: self(), owner: self(), mfa: {__MODULE__, :x, 0}},
+            group: "orphans",
+            siblings: [{ctx.ref, job.(1)}, {ctx.ref, job.(2)}]
+        }
+      end)
+
+      send(pid, {task_ref, :ended})
+      calls = calls_until(reaction?("👍"))
+
+      assert Enum.sort(downloads(calls)) == ["o1", "o2"]
+      assert_received {:model_request, body}
+      assert images_in(body) == 2
+      refute_received {:model_request, _}
+      settle()
+    end
+  end
+
+  defp assert_eventually(fun, tries \\ 200) do
+    cond do
+      fun.() -> :ok
+      tries == 0 -> flunk("did not happen in time")
+      true -> Process.sleep(25) && assert_eventually(fun, tries - 1)
+    end
+  end
+
+  # How often the bot showed "typing" before a call that `done` matches.
+  defp typing_count_until(done, count \\ 0) do
+    receive do
+      {:tg, {:typing, _, _}} -> typing_count_until(done, count + 1)
+      {:tg, call} -> if done.(call), do: count, else: typing_count_until(done, count)
+    after
+      8_000 -> flunk("the bot was not called as expected")
+    end
+  end
+
+  describe "while a picture is being read" do
+    @tag :imagemagick
+    test "the bot goes on showing typing", ctx do
+      Application.put_env(:phoenix_kit_agent, :telegram_attachment_wait_ms, 1_500)
+      Application.put_env(:phoenix_kit_agent, :telegram_typing_every_ms, 100)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :telegram_typing_every_ms) end)
+      holder = hold_every_place(ctx.user)
+      model_says("never")
+
+      photo(ctx)
+
+      assert typing_count_until(reaction?("🤷")) >= 4
+      send(holder, :release)
+      processing_ended()
     end
   end
 

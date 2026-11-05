@@ -45,11 +45,14 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   alias PhoenixKit.Utils.Routes
   use Gettext, backend: PhoenixKitAgent.Gettext
 
-  alias PhoenixKitAgent.{Attachments, Config, Conversations, Speech, Turns}
+  alias PhoenixKitAgent.{Attachments, Config, Conversations, Speech, Turns, UserConfig}
   alias PhoenixKitAgent.Attachments.Bounds
   alias PhoenixKitAgent.Telegram.{Bridge, Cards, ChatQueue, Client, Format, Texts}
 
   @typing_every_ms 4_000
+  # Keys of the turn's process: the pictures added so far, the last "typing".
+  @added :pk_agent_tg_added
+  @typed :pk_agent_tg_typed
   @grace_ms 60_000
 
   @doc "Runs `job` (see `PhoenixKitAgent.Telegram.Bridge`) for the chat `ref` of the bot."
@@ -214,13 +217,13 @@ defmodule PhoenixKitAgent.Telegram.Turn do
 
   # ── pictures ────────────────────────────────────────────────────────
 
-  # The leader of an album waits a moment for the rest of it.
+  # The leader of an album waits a moment for the rest of it. The chat is
+  # checked first (before "👀"); a refusal is told once for the whole album.
   defp photo(connection_uuid, ref, job, user_uuid, chat_id, locale) do
-    Bridge.react(connection_uuid, chat_id, job.message_id, "👀")
-    _ = Client.impl().typing(connection_uuid, chat_id)
-
     with {:ok, _user_uuid} <- Conversations.authorize_session(ref, impersonated: false),
          {:ok, conversation} <- current_conversation(user_uuid, ref) do
+      Bridge.react(connection_uuid, chat_id, job.message_id, "👀")
+      _ = Client.impl().typing(connection_uuid, chat_id)
       jobs = [job | siblings(connection_uuid, chat_id, job)]
 
       with_topic(conversation, fn ->
@@ -228,6 +231,7 @@ defmodule PhoenixKitAgent.Telegram.Turn do
       end)
     else
       {:error, reason} ->
+        _ = siblings(connection_uuid, chat_id, job)
         refuse_with(connection_uuid, chat_id, job.message_id, picture_text(reason))
     end
   end
@@ -239,44 +243,113 @@ defmodule PhoenixKitAgent.Telegram.Turn do
 
   defp siblings(_connection_uuid, _chat_id, _job), do: []
 
+  # The pictures, one at a time (each read before the next is added, so the
+  # places for describing them are free in turn), up to what a message takes;
+  # what is left out is told once. Whatever was added and no message took is
+  # removed, whatever ends the turn (a turn that is killed outright is swept by
+  # the next picture of the chat).
   defp picture_turn(connection_uuid, ref, message_id, conversation, jobs, locale) do
-    {added, errors} = attach_all(connection_uuid, ref, conversation, jobs)
+    chat_id = elem(ref, 3)
+    {taken, over} = Enum.split(jobs, max_pictures(ref))
 
-    case await(ref, added) do
-      {[], failed} ->
-        discard(ref, Enum.map(added, & &1.uuid))
+    _ =
+      Attachments.sweep_unsent_for_telegram(ref, conversation.uuid, attachment_wait_ms())
 
-        refuse_with(
-          connection_uuid,
-          elem(ref, 3),
-          message_id,
-          picture_text(first_error(errors ++ failed))
-        )
+    Process.put(@added, [])
 
-      {ready, _failed} ->
-        discard(ref, for(a <- added, a.uuid not in ready, do: a.uuid))
-        text = caption(jobs) || default_prompt(length(ready))
-        start_turn(connection_uuid, ref, message_id, conversation, text, ready, locale)
+    try do
+      {ready, errors} = attach_all(connection_uuid, ref, conversation, taken)
+
+      case ready do
+        [] ->
+          refuse_with(connection_uuid, chat_id, message_id, picture_text(first_error(errors)))
+
+        ready ->
+          unless over == [] and errors == [] do
+            Bridge.say(
+              connection_uuid,
+              chat_id,
+              left_out(length(jobs), length(ready), over, taken)
+            )
+          end
+
+          text = caption(taken) || default_prompt(length(ready))
+          start_turn(connection_uuid, ref, message_id, conversation, text, ready, locale)
+      end
+    after
+      discard(ref, Process.delete(@added) || [])
     end
   end
 
-  # Every picture, one by one: the ones that could not be added are the errors.
+  defp max_pictures(ref) do
+    {:telegram_link, user_uuid, _connection, _chat} = ref
+    UserConfig.effective(user_uuid).max_attachments_per_message
+  end
+
+  # One short message: how many pictures were taken, and how many could not be.
+  defp left_out(total, taken_count, over, taken) do
+    unread = length(taken) - taken_count
+
+    [
+      if(over != [],
+        do:
+          gettext(
+            "Only %{taken} of %{total} pictures were taken: at most %{max} go in one message.",
+            taken: length(taken),
+            total: total,
+            max: length(taken)
+          )
+      ),
+      if(unread > 0, do: gettext("Pictures that could not be read: %{count}.", count: unread))
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" ")
+  end
+
+  # Every picture, one by one, added and read before the next: `{uuids of the
+  # ones ready, error codes of the others}`. The wait for all of them together
+  # is bounded; the ones the bound cuts off are errors.
   defp attach_all(connection_uuid, ref, conversation, jobs) do
-    {added, errors} =
-      Enum.reduce(jobs, {[], []}, fn job, {added, errors} ->
-        case attach(connection_uuid, ref, conversation, job.photo) do
-          {:ok, attachment} -> {[attachment | added], errors}
-          {:error, reason} -> {added, [reason | errors]}
+    deadline = System.monotonic_time(:millisecond) + attachment_wait_ms()
+
+    {ready, errors} =
+      Enum.reduce(jobs, {[], []}, fn job, {ready, errors} ->
+        case one_picture(connection_uuid, ref, conversation, job.photo, deadline) do
+          {:ok, uuid} -> {[uuid | ready], errors}
+          {:error, reason} -> {ready, [reason | errors]}
         end
       end)
 
-    {Enum.reverse(added), Enum.reverse(errors)}
+    {Enum.reverse(ready), Enum.reverse(errors)}
   end
 
+  defp one_picture(connection_uuid, ref, conversation, photo, deadline) do
+    keep_typing(connection_uuid, elem(ref, 3))
+
+    if System.monotonic_time(:millisecond) >= deadline do
+      {:error, "timeout"}
+    else
+      with {:ok, attachment} <- attach(connection_uuid, ref, conversation, photo) do
+        Process.put(@added, [attachment.uuid | Process.get(@added, [])])
+
+        case settle(connection_uuid, ref, [attachment.uuid], deadline) do
+          {[uuid], _errors} ->
+            {:ok, uuid}
+
+          {[], [error | _]} ->
+            discard(ref, [attachment.uuid])
+            {:error, error}
+        end
+      end
+    end
+  end
+
+  # What can be known without the file is asked before it is downloaded.
   defp attach(connection_uuid, ref, conversation, photo) do
     max = Bridge.max_picture_bytes()
 
     with :ok <- if(too?(photo.size, max), do: {:error, :too_large}, else: :ok),
+         :ok <- Attachments.precheck_picture_for_telegram(ref, conversation.uuid, photo.size),
          {:ok, bytes} <- fetch(connection_uuid, photo.file_id, max) |> picture_error(),
          do:
            Attachments.add_picture_for_telegram(
@@ -290,14 +363,9 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   defp picture_error({:error, :failed}), do: {:error, :download_failed}
   defp picture_error(other), do: other
 
-  # Until every picture is read or has failed, or the wait is over (a picture
+  # Until the pictures are read or have failed, or the deadline is past (one
   # still unread then has failed). `{ready uuids, error codes of the others}`.
-  defp await(ref, added) do
-    deadline = System.monotonic_time(:millisecond) + attachment_wait_ms()
-    settle(ref, Enum.map(added, & &1.uuid), deadline)
-  end
-
-  defp settle(ref, uuids, deadline) do
+  defp settle(connection_uuid, ref, uuids, deadline) do
     rows =
       Enum.map(uuids, fn uuid ->
         case Attachments.get_for_telegram(ref, uuid) do
@@ -311,17 +379,34 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     cond do
       Enum.all?(rows, &(&1.status in ["ready", "failed"])) -> split(rows)
       remaining <= 0 -> split(Enum.map(rows, &timed_out/1))
-      true -> wait_for_reading(ref, uuids, deadline, min(remaining, 1_000))
+      true -> wait_for_reading(connection_uuid, ref, uuids, deadline, min(remaining, tick_ms()))
     end
   end
 
-  defp wait_for_reading(ref, uuids, deadline, ms) do
+  defp wait_for_reading(connection_uuid, ref, uuids, deadline, ms) do
+    keep_typing(connection_uuid, elem(ref, 3))
+
     receive do
       {:agent_attachment_processed, _conversation_uuid, _attachment_uuid} ->
-        settle(ref, uuids, deadline)
+        settle(connection_uuid, ref, uuids, deadline)
     after
-      ms -> settle(ref, uuids, deadline)
+      ms -> settle(connection_uuid, ref, uuids, deadline)
     end
+  end
+
+  # How often a picture still being read is looked at.
+  defp tick_ms, do: min(1_000, typing_every_ms())
+
+  # "Typing…" again once the last one is old enough.
+  defp keep_typing(connection_uuid, chat_id) do
+    now = System.monotonic_time(:millisecond)
+
+    if now - Process.get(@typed, now - typing_every_ms()) >= typing_every_ms() do
+      Process.put(@typed, now)
+      _ = Client.impl().typing(connection_uuid, chat_id)
+    end
+
+    :ok
   end
 
   defp timed_out(%{status: "pending"} = row), do: %{row | status: "failed", error: "timeout"}
