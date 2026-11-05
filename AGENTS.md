@@ -238,6 +238,24 @@ and `Web.Markdown`).
   a new choice; the lift of a block goes through `Web.Access` and then
   `Guard.unblock/3` with the session's scope (the guard decides own and
   Owner blocks).
+- **A linked Telegram chat** is the second kind of actor reference,
+  `{:telegram_link, user_uuid, connection_uuid, chat_id}` (core's
+  `Linking.actor_ref/2`, built from an update read at the bot, never from a
+  text). `Conversations` checks it on every call instead of the session: the
+  link now (`Linking.linked_user/2`; gone is `:session_gone`), the session's
+  account gate (`SessionRef.scope_for_user/2`, the default role) and the
+  sub-permission `agent.telegram` (declared `opt_in: true`; `:forbidden`
+  without it). A chat reads only: `Turns.Runner` passes no `allow: :all` and no
+  `via:` for it (core's own, "telegram"), `Prompt` gets `channel: :telegram`
+  (plain text, absolute links, changes on the site) instead of the write rule,
+  and `Confirmations` / `Attachments` refuse it with `:not_in_telegram`
+  (`settle_lapsed_in_turn` does nothing for it). Limits, locks and the user's
+  own model, instructions and spending are the user's, as for the panel. The
+  trusted entry points of a bridge, which take no session and are never for a
+  client's event: `Conversations.create_conversation_for/2`,
+  `latest_telegram_conversation/1` and `turn_result/2` (a notice with an error
+  code of the turn outranks any text it said). The panel marks a chat whose
+  `metadata.source` is `"telegram"`.
 - **Boundaries:** nothing about orders, customers or other host domain data
   lives here — the module only knows "tools from the registry". Model calls,
   budget and the request journal stay in `phoenix_kit_ai`.
