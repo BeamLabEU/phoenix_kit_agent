@@ -264,6 +264,35 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert settings_entries("agent_speech_endpoint_uuid") == []
     end
 
+    test "on an AI module that cannot write speech down there is no speech select", ctx do
+      Application.put_env(:phoenix_kit_agent, :speech_ai, __MODULE__)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      refute has_element?(view, "#agent-speech-endpoint")
+      refute has_element?(view, "#agent-speech-hint")
+      assert has_element?(view, "#agent-speech-unavailable", "newer version of the AI module")
+
+      # A forged field is refused, even for a model that would be fine.
+      render_hook(view, "save_models", %{"models" => %{"speech_endpoint_uuid" => ctx.hears.uuid}})
+
+      assert Config.speech_endpoint_uuid() == nil
+      assert settings_entries("agent_speech_endpoint_uuid") == []
+    end
+
+    test "a speech model that reports no cost is warned about", ctx do
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", ctx.direct.uuid)
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-speech-money-off")
+
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", "")
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      refute has_element?(view, "#agent-speech-money-off")
+    end
+
     test "a model the page did not offer is refused", ctx do
       embedder = endpoint_fixture(%{name: "Embed", model: "openai/text-embedding-3-small"})
       {:ok, view, _html} = live(ctx.conn, @path)

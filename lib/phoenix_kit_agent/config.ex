@@ -142,11 +142,17 @@ defmodule PhoenixKitAgent.Config do
   `transcribe/3` in tests.
   """
   @spec speech?() :: boolean()
-  def speech? do
-    ai = speech_ai()
+  def speech?, do: speech_endpoint_uuid() != nil and transcribe?()
 
-    speech_endpoint_uuid() != nil and Code.ensure_loaded?(ai) and
-      function_exported?(ai, :transcribe, 3)
+  @doc """
+  Whether the AI module at hand can write speech down at all
+  (`PhoenixKitAI.transcribe/3`, in the releases of `phoenix_kit_ai` after
+  0.27.0): the Settings page offers no speech model without it.
+  """
+  @spec transcribe?() :: boolean()
+  def transcribe? do
+    ai = speech_ai()
+    Code.ensure_loaded?(ai) and function_exported?(ai, :transcribe, 3)
   end
 
   @doc false

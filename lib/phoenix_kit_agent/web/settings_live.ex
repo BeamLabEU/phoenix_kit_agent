@@ -41,6 +41,12 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   (`PhoenixKitAgent.Models.reports_cost?/2`), the limits say that money is not
   counted for it and only the turn limit applies.
 
+  The speech model is offered only where the AI module can write speech down
+  (`PhoenixKitAgent.Config.transcribe?/0`); on an older one the page says that
+  voice needs a newer AI module, and a forged `speech_endpoint_uuid` is
+  refused. A speech model that does not report what a call costs gets the same
+  warning as the default one.
+
   The Telegram section switches `agent_telegram_enabled` (the assistant
   answering the linked chats of the website bot, `PhoenixKitAgent.Telegram`) and
   shows what the reader is doing (`PhoenixKitAgent.Telegram.Status`). It needs
@@ -88,7 +94,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
          page_section: gettext("Settings"),
          page_section_path: Routes.path("/admin/settings")
        )
-       |> assign(money_off?: money_off?())
+       |> assign(
+         money_off?: money_off?(),
+         speech_money_off?: speech_money_off?(),
+         transcribe?: Config.transcribe?()
+       )
        |> assign_capture()
        |> assign_telegram()
        |> assign_form(Config.defaults_changeset(%{}) |> Map.put(:action, nil))
@@ -240,14 +250,25 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     models = socket.assigns.models
     offered = MapSet.new(models.endpoints, & &1.uuid)
     current = current_models()
+    transcribe? = Config.transcribe?()
 
     {chosen, errors} =
       Enum.reduce(@model_fields, {%{}, %{}}, fn field, {chosen, errors} ->
         case Map.fetch(params, field) do
-          :error -> {chosen, errors}
-          {:ok, ""} -> {Map.put(chosen, field, nil), errors}
-          {:ok, uuid} when is_binary(uuid) -> offered_model(field, uuid, offered, chosen, errors)
-          {:ok, _not_text} -> {chosen, Map.put(errors, field, [gettext("is not available")])}
+          :error ->
+            {chosen, errors}
+
+          {:ok, _any} when field == "speech_endpoint_uuid" and not transcribe? ->
+            {chosen, Map.put(errors, field, [gettext("is not available")])}
+
+          {:ok, ""} ->
+            {Map.put(chosen, field, nil), errors}
+
+          {:ok, uuid} when is_binary(uuid) ->
+            offered_model(field, uuid, offered, chosen, errors)
+
+          {:ok, _not_text} ->
+            {chosen, Map.put(errors, field, [gettext("is not available")])}
         end
       end)
 
@@ -324,7 +345,14 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
         match?({:ok, _}, write_model(field, uuid, opts))
       end)
 
-    socket = socket |> assign(money_off?: money_off?()) |> assign_models()
+    socket =
+      socket
+      |> assign(
+        money_off?: money_off?(),
+        speech_money_off?: speech_money_off?(),
+        transcribe?: Config.transcribe?()
+      )
+      |> assign_models()
 
     if failed == [],
       do: put_flash(socket, :info, gettext("AI assistant models saved.")),
@@ -560,6 +588,16 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     end
   end
 
+  # Whether the speech model leaves money uncounted (none chosen: nothing to say).
+  defp speech_money_off? do
+    with uuid when is_binary(uuid) <- Config.speech_endpoint_uuid(),
+         %{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
+      not Models.reports_cost?(endpoint, :speech)
+    else
+      _none -> false
+    end
+  end
+
   defp assign_form(socket, changeset),
     do: assign(socket, :form, to_form(changeset, as: :settings))
 
@@ -594,6 +632,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
                 errors={Map.get(@models.errors, "vision_endpoint_uuid", [])}
               />
               <.select
+                :if={@transcribe?}
                 id="agent-speech-endpoint"
                 name="models[speech_endpoint_uuid]"
                 label={gettext("Speech recognition model")}
@@ -602,9 +641,19 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
                 errors={Map.get(@models.errors, "speech_endpoint_uuid", [])}
               />
             </div>
-            <p id="agent-speech-hint" class="text-xs text-base-content/60">
+            <p :if={not @transcribe?} id="agent-speech-unavailable" class="text-xs text-warning">
+              {gettext(
+                "Voice input needs a newer version of the AI module: it cannot write speech down yet."
+              )}
+            </p>
+            <p :if={@transcribe?} id="agent-speech-hint" class="text-xs text-base-content/60">
               {gettext(
                 "The speech recognition model writes down the voice messages of the Telegram bot and the recordings of the chat panel's microphone. Choose a model that takes audio, for example Gemini Flash. Without it, voice input is off."
+              )}
+            </p>
+            <p :if={@transcribe? and @speech_money_off?} id="agent-speech-money-off" class="text-xs text-warning">
+              {gettext(
+                "The speech recognition model does not report what a call costs: its money is not counted, only the turn limit applies."
               )}
             </p>
             <p :if={@models.loading?} class="text-xs text-base-content/60">

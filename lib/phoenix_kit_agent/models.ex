@@ -162,15 +162,21 @@ defmodule PhoenixKitAgent.Models do
   defp capability(endpoints, flag),
     do: Map.new(endpoints, &{&1.uuid, &1 |> Capabilities.for_endpoint() |> support(flag)})
 
-  defp support(%Capabilities{} = caps, flag) do
-    case Map.fetch!(caps, flag) do
+  defp support(%Capabilities{} = caps, flag), do: flag_support(caps, flag)
+  defp support(:unknown, _flag), do: :unknown
+
+  @doc false
+  # What one flag of the capabilities says. A flag the `phoenix_kit_ai` at hand
+  # does not know (`audio_input` before its first release with it) is `:unknown`,
+  # never a crash that would take the other flags with it.
+  @spec flag_support(map(), atom()) :: support()
+  def flag_support(caps, flag) do
+    case Map.get(caps, flag) do
       :yes -> :supported
       :no -> :unsupported
-      :unknown -> :unknown
+      _unknown_or_absent -> :unknown
     end
   end
-
-  defp support(:unknown, _flag), do: :unknown
 
   @doc """
   Whether a call on the endpoint gets what it cost in the AI journal, as
