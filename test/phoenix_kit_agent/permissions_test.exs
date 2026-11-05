@@ -30,6 +30,18 @@ defmodule PhoenixKitAgent.PermissionsTest do
     assert Permissions.role_has_permission?(admin_uuid, "agent.manage")
   end
 
+  test "the Admin role is not given agent.telegram at boot: it is opt-in; the Owner holds it" do
+    %{uuid: admin_uuid} = Roles.get_role_by_name("Admin")
+
+    :ok = Permissions.auto_grant_new_keys_to_admin()
+
+    refute Permissions.role_has_permission?(admin_uuid, "agent.telegram")
+
+    {:ok, _} = PhoenixKitAgent.enable_system()
+    assert Scope.can?(scope_of(owner_fixture()), "agent.telegram")
+    refute Scope.can?(scope_of(user_with(["agent", "agent.manage"])), "agent.telegram")
+  end
+
   describe "Scope.can?/2" do
     setup do
       {:ok, _} = PhoenixKitAgent.enable_system()

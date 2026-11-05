@@ -235,6 +235,24 @@ defmodule PhoenixKitAgent.TelegramTest do
       assert Scope.user_uuid(scope) == ctx.user.uuid
     end
 
+    test "agent.telegram on a role other than the default one does not reach the chat" do
+      {:ok, _} = Settings.update_setting("role_switcher_enabled", "true")
+      user = user_with(["agent"], "two_roles")
+      {:ok, extra} = Roles.create_role(%{name: "AgentTg#{System.unique_integer([:positive])}"})
+      {:ok, _} = Permissions.grant_permission(extra.uuid, "agent")
+      {:ok, _} = Permissions.grant_permission(extra.uuid, "agent.telegram")
+      {:ok, _} = Roles.assign_role(user, extra.name)
+      ref = linked!(user, UUIDv7.generate())
+
+      # The union of the roles would allow it; the default role alone does not.
+      assert user.uuid
+             |> then(&Repo.get!(User, &1))
+             |> Scope.for_user(narrow: false)
+             |> Scope.can?("agent.telegram")
+
+      assert {:error, :forbidden} = Conversations.authorize_session(ref, @me)
+    end
+
     test "only the owner's chats are reachable through a chat reference", ctx do
       mine = trusted_chat!(ctx)
       other = user_with(["agent"], "stranger")
@@ -246,6 +264,46 @@ defmodule PhoenixKitAgent.TelegramTest do
   end
 
   # ── the trusted functions of the bridge ─────────────────────────────
+
+  describe "what a chat reference cannot write" do
+    test "no chat is made, renamed, archived or deleted through it, nor a message added", ctx do
+      chat = trusted_chat!(ctx)
+
+      assert {:error, :not_in_telegram} = Conversations.create_conversation(ctx.ref, %{}, @me)
+
+      assert {:error, :not_in_telegram} =
+               Conversations.rename_conversation(ctx.ref, chat.uuid, "New", @me)
+
+      assert {:error, :not_in_telegram} =
+               Conversations.archive_conversation(ctx.ref, chat.uuid, @me)
+
+      assert {:error, :not_in_telegram} =
+               Conversations.delete_conversation(ctx.ref, chat.uuid, @me)
+
+      assert {:error, :not_in_telegram} =
+               Conversations.add_message(ctx.ref, chat.uuid, %{content: "Hi"}, @me)
+
+      reloaded = Repo.get!(Conversation, chat.uuid)
+      assert reloaded.status == "active"
+      assert reloaded.title == chat.title
+      assert reloaded.message_count == 0
+    end
+
+    test "nor the personal instructions", ctx do
+      assert {:error, :not_in_telegram} =
+               UserConfig.put_personal_instructions(ctx.ref, "OBEY", @me)
+
+      assert Repo.get(UserSettings, ctx.user.uuid) == nil
+    end
+
+    test "it still reads the user's chats and instructions", ctx do
+      chat = trusted_chat!(ctx)
+
+      assert {:ok, _} = Conversations.get_conversation(ctx.ref, chat.uuid, @me)
+      assert {:ok, []} = Conversations.list_messages(ctx.ref, chat.uuid, @me)
+      assert {:ok, nil} = UserConfig.get_personal_instructions(ctx.ref, @me)
+    end
+  end
 
   describe "create_conversation_for/2 and latest_telegram_conversation/1" do
     test "create a chat of the user with the source in its metadata", ctx do
@@ -288,7 +346,8 @@ defmodule PhoenixKitAgent.TelegramTest do
       first = trusted_chat!(ctx)
       _second = trusted_chat!(ctx)
 
-      {:ok, _} = Conversations.add_message(ctx.ref, first.uuid, %{content: "Hi"}, @me)
+      {:ok, _} =
+        Conversations.add_turn_message(ctx.user.uuid, first.uuid, %{role: "user", content: "Hi"})
 
       assert Conversations.latest_telegram_conversation(ctx.user.uuid).uuid == first.uuid
     end
@@ -296,8 +355,9 @@ defmodule PhoenixKitAgent.TelegramTest do
     test "archived, deleted, other-source and other users' chats do not count", ctx do
       archived = trusted_chat!(ctx)
       deleted = trusted_chat!(ctx)
-      {:ok, _} = Conversations.archive_conversation(ctx.ref, archived.uuid, @me)
-      {:ok, _} = Conversations.delete_conversation(ctx.ref, deleted.uuid, @me)
+      {site, _token} = session_fixture(ctx.user)
+      {:ok, _} = Conversations.archive_conversation(site, archived.uuid, @me)
+      {:ok, _} = Conversations.delete_conversation(site, deleted.uuid, @me)
 
       _web = conversation_fixture(ctx.user)
       {:ok, _} = Conversations.create_conversation_for(ctx.user, metadata: %{"source" => "email"})
@@ -306,6 +366,12 @@ defmodule PhoenixKitAgent.TelegramTest do
       {:ok, _} = Conversations.create_conversation_for(other, metadata: %{"source" => "telegram"})
 
       assert Conversations.latest_telegram_conversation(ctx.user.uuid) == nil
+    end
+
+    test "a user that is not a uuid is an error, not a raise", _ctx do
+      assert {:error, :not_found} = Conversations.create_conversation_for("not-a-uuid")
+      assert {:error, :not_found} = Conversations.create_conversation_for(%{name: "no uuid"})
+      assert {:error, :not_found} = Conversations.create_conversation_for(nil)
     end
 
     test "a malformed user uuid finds nothing", _ctx do
@@ -462,6 +528,24 @@ defmodule PhoenixKitAgent.TelegramTest do
       assert {:notice, "session_gone"} = Conversations.turn_result(chat.uuid, turn_ref)
     end
 
+    test "a turn ends with a notice when agent.telegram is taken away between rounds", ctx do
+      chat = trusted_chat!(ctx)
+      answer_next(tool_answer([call("r1", "agenttest_list_items", %{})]))
+
+      Application.put_env(:phoenix_kit_agent, :test_tool_hook, fn _name, _input ->
+        [name] = ctx.user |> Roles.get_user_roles() |> Enum.reject(&(&1 == "User"))
+        role = Roles.get_role_by_name(name)
+        :ok = Permissions.revoke_permission(role.uuid, "agent.telegram")
+      end)
+
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :test_tool_hook) end)
+
+      {:ok, turn_ref} = Turns.start(ctx.ref, false, chat.uuid, "List")
+      await_end(chat, turn_ref)
+
+      assert {:notice, "forbidden"} = Conversations.turn_result(chat.uuid, turn_ref)
+    end
+
     test "the user's own model is used and the spending is theirs", ctx do
       own = endpoint_fixture(%{model: "mistralai/own-model"})
       Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: own.uuid})
@@ -489,7 +573,8 @@ defmodule PhoenixKitAgent.TelegramTest do
 
     test "the user's personal instructions are in the prompt", ctx do
       chat = trusted_chat!(ctx)
-      {:ok, _} = UserConfig.put_personal_instructions(ctx.ref, "ALWAYS-BRIEF", @me)
+      {site, _token} = session_fixture(ctx.user)
+      {:ok, _} = UserConfig.put_personal_instructions(site, "ALWAYS-BRIEF", @me)
       answer_next(text_answer("ok"))
 
       {:ok, turn_ref} = Turns.start(ctx.ref, false, chat.uuid, "Hi")

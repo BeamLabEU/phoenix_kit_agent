@@ -54,6 +54,12 @@ defmodule PhoenixKitAgent.Conversations do
   (`PhoenixKitAgent.Turns.Runner`) and neither confirms nor attaches
   (`PhoenixKitAgent.Confirmations`, `PhoenixKitAgent.Attachments`).
 
+  A chat reference may read the user's chats (`get_*`, `list_*`, `subscribe/3`),
+  start and stop a turn and settle an interrupted one (`PhoenixKitAgent.Turns`:
+  that writes the turn's own notice, never the user's text); it may not
+  create, rename, archive or delete a chat, add a message, or write the
+  personal instructions (`{:error, :not_in_telegram}`).
+
   `create_conversation_for/2`, `latest_telegram_conversation/1` and
   `turn_result/2` are the bridge's own, trusted: they take no session and are
   never to be called from a client's event.
@@ -149,10 +155,12 @@ defmodule PhoenixKitAgent.Conversations do
   def create_conversation(session_ref, attrs, opts) when is_map(attrs) do
     title = Map.get(attrs, :title, Map.get(attrs, "title"))
 
-    with_user(session_ref, opts, fn user_uuid ->
-      %Conversation{user_uuid: user_uuid, last_message_at: DateTime.utc_now()}
-      |> Conversation.changeset(%{title: trim(title)})
-      |> repo().insert(log: false)
+    on_the_site(session_ref, fn ->
+      with_user(session_ref, opts, fn user_uuid ->
+        %Conversation{user_uuid: user_uuid, last_message_at: DateTime.utc_now()}
+        |> Conversation.changeset(%{title: trim(title)})
+        |> repo().insert(log: false)
+      end)
     end)
   end
 
@@ -160,19 +168,27 @@ defmodule PhoenixKitAgent.Conversations do
   # A chat for a user without a session: the bridge of a linked Telegram chat
   # (see the moduledoc). `metadata` tells the source (`"source" => "telegram"`).
   # The module's switches are checked when a turn starts, not here.
+  # A user that is not a UUID (or a map without one) is `{:error, :not_found}`,
+  # as `latest_telegram_conversation/1` finds nothing for it.
   @spec create_conversation_for(User.t() | map() | String.t(), keyword()) ::
-          {:ok, Conversation.t()} | {:error, Ecto.Changeset.t()}
+          {:ok, Conversation.t()} | {:error, :not_found | Ecto.Changeset.t()}
   def create_conversation_for(user, opts \\ [])
 
   def create_conversation_for(%{uuid: user_uuid}, opts),
     do: create_conversation_for(user_uuid, opts)
 
-  def create_conversation_for(user_uuid, opts) when is_binary(user_uuid) do
-    metadata = Keyword.get(opts, :metadata, %{})
+  def create_conversation_for(user_uuid, opts) do
+    case Ecto.UUID.cast(user_uuid) do
+      {:ok, uuid} ->
+        metadata = Keyword.get(opts, :metadata, %{})
 
-    %Conversation{user_uuid: user_uuid, last_message_at: DateTime.utc_now()}
-    |> Conversation.changeset(%{metadata: metadata})
-    |> repo().insert(log: false)
+        %Conversation{user_uuid: uuid, last_message_at: DateTime.utc_now()}
+        |> Conversation.changeset(%{metadata: metadata})
+        |> repo().insert(log: false)
+
+      :error ->
+        {:error, :not_found}
+    end
   end
 
   @doc false
@@ -357,15 +373,17 @@ defmodule PhoenixKitAgent.Conversations do
   @spec rename_conversation(session_ref(), term(), term(), keyword()) ::
           {:ok, Conversation.t()} | {:error, refusal() | Ecto.Changeset.t()}
   def rename_conversation(session_ref, conversation_uuid, title, opts) do
-    with_owned(session_ref, conversation_uuid, opts, fn conversation ->
-      changeset =
-        conversation
-        |> Conversation.changeset(%{title: trim(title)})
-        |> Ecto.Changeset.validate_required([:title])
+    on_the_site(session_ref, fn ->
+      with_owned(session_ref, conversation_uuid, opts, fn conversation ->
+        changeset =
+          conversation
+          |> Conversation.changeset(%{title: trim(title)})
+          |> Ecto.Changeset.validate_required([:title])
 
-      if changeset.valid?,
-        do: update_owned(conversation, title: Ecto.Changeset.get_field(changeset, :title)),
-        else: {:error, %{changeset | action: :update}}
+        if changeset.valid?,
+          do: update_owned(conversation, title: Ecto.Changeset.get_field(changeset, :title)),
+          else: {:error, %{changeset | action: :update}}
+      end)
     end)
   end
 
@@ -399,16 +417,18 @@ defmodule PhoenixKitAgent.Conversations do
   def add_message(session_ref, conversation_uuid, attrs, opts) when is_map(attrs) do
     content = Map.get(attrs, :content, Map.get(attrs, "content"))
 
-    with_user(session_ref, opts, fn user_uuid ->
-      store(
-        user_uuid,
-        conversation_uuid,
-        &(&1
-          |> Message.user_changeset(%{content: content})
-          |> Ecto.Changeset.validate_length(:content, max: Config.history_chars())),
-        [],
-        []
-      )
+    on_the_site(session_ref, fn ->
+      with_user(session_ref, opts, fn user_uuid ->
+        store(
+          user_uuid,
+          conversation_uuid,
+          &(&1
+            |> Message.user_changeset(%{content: content})
+            |> Ecto.Changeset.validate_length(:content, max: Config.history_chars())),
+          [],
+          []
+        )
+      end)
     end)
   end
 
@@ -656,10 +676,24 @@ defmodule PhoenixKitAgent.Conversations do
   # ── helpers ─────────────────────────────────────────────────────
 
   defp set_status(session_ref, conversation_uuid, status, opts) do
-    with_owned(session_ref, conversation_uuid, opts, fn conversation ->
-      update_owned(conversation, status: status)
+    on_the_site(session_ref, fn ->
+      with_owned(session_ref, conversation_uuid, opts, fn conversation ->
+        update_owned(conversation, status: status)
+      end)
     end)
   end
+
+  @doc false
+  # The writers a person's client uses (create, rename, archive, delete, add a
+  # message, the personal instructions) are for a site session only: a linked
+  # Telegram chat reads and asks, and the bridge makes its chats with
+  # `create_conversation_for/2` and its turns with `PhoenixKitAgent.Turns`.
+  @spec on_the_site(session_ref(), (-> result)) :: result | {:error, :not_in_telegram}
+        when result: term()
+  def on_the_site({:telegram_link, _user, _connection, _chat}, _fun),
+    do: {:error, :not_in_telegram}
+
+  def on_the_site(_session_ref, fun), do: fun.()
 
   # One statement that changes the chat only while it is the owner's and not
   # deleted: a chat deleted after `with_owned/4` read it stays deleted.
