@@ -31,6 +31,7 @@ defmodule PhoenixKitAgent.Telegram.Client do
   @callback typing(uuid(), chat_id()) :: {:ok, term()} | {:error, term()}
   @callback download_file(uuid(), String.t(), keyword()) ::
               {:ok, binary()} | {:error, term()}
+  @callback can_download?() :: boolean()
 
   @doc "The module that does the calls: the configured one, else this."
   @spec impl() :: module()
@@ -77,12 +78,18 @@ defmodule PhoenixKitAgent.Telegram.Client do
   def typing(uuid, chat_id),
     do: Telegram.send_chat_action(uuid, chat_id, "typing", owner: :system)
 
-  # The file by its `file_id` (`max_bytes:`, `deadline_ms:`). A core without
-  # the download (it came after the first releases this module supports) is
-  # `{:error, :unavailable}`.
+  # Whether the core can give a file by its id (the download came after the
+  # first releases this module supports): voice messages and pictures are
+  # taken only where it can.
+  @impl true
+  def can_download?,
+    do: Code.ensure_loaded?(Telegram) and function_exported?(Telegram, :download_file, 3)
+
+  # The file by its `file_id` (`max_bytes:`, `deadline_ms:`); a core that cannot
+  # is `{:error, :unavailable}`.
   @impl true
   def download_file(uuid, file_id, opts) do
-    if Code.ensure_loaded?(Telegram) and function_exported?(Telegram, :download_file, 3),
+    if can_download?(),
       do: Telegram.download_file(uuid, file_id, [owner: :system] ++ opts),
       else: {:error, :unavailable}
   end

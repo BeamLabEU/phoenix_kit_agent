@@ -9,6 +9,8 @@ defmodule PhoenixKitAgent.Telegram.Texts do
 
   use Gettext, backend: PhoenixKitAgent.Gettext
 
+  alias PhoenixKitAgent.Config
+  alias PhoenixKitAgent.Telegram.Client
   alias PhoenixKitAgent.Web.Dock.Texts, as: Panel
 
   @doc "The text of a reply that needs no turn."
@@ -25,7 +27,7 @@ defmodule PhoenixKitAgent.Telegram.Texts do
   def static(:help) do
     text = help_text()
 
-    if PhoenixKitAgent.Config.speech?(),
+    if Config.speech?() and Client.impl().can_download?(),
       do:
         text <>
           " " <> gettext("Voice messages work too: I write down what you said and answer it."),

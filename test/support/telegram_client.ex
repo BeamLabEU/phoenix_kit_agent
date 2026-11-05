@@ -21,6 +21,7 @@ defmodule PhoenixKitAgent.Test.TelegramClient do
       text, markup}}`;
     * `react` — `set(:react, fun)` with `fun.(chat_id, message_id, emoji)`
       (default: ok);
+    * `can_download?` — `set(:can_download, boolean)` (default: true);
     * `download_file` — `set(:download, fun)` with `fun.(file_id, opts)` answering
       `{:ok, bytes}` or `{:error, reason}` (default: ok, `"OggS-voice-bytes"`);
       comes as `{:tg, {:download_file, uuid, file_id, opts}}`.
@@ -180,6 +181,9 @@ defmodule PhoenixKitAgent.Test.TelegramClient do
     tell({:typing, uuid, chat_id})
     {:ok, true}
   end
+
+  @impl true
+  def can_download?, do: Agent.get(script(), &Map.get(&1, :can_download, true))
 
   @impl true
   def download_file(uuid, file_id, opts) do

@@ -78,31 +78,72 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   end
 
   # A voice message: written down, shown, and then the turn of what it said.
+  # "Typing…" goes on every few seconds while the file is fetched and written
+  # down, which may take a minute.
   defp voice(connection_uuid, ref, job, user_uuid, chat_id, locale) do
     Bridge.react(connection_uuid, chat_id, job.message_id, "👀")
-    _ = Client.impl().typing(connection_uuid, chat_id)
 
-    with {:ok, bytes} <- recording(connection_uuid, ref, job.voice),
-         {:ok, text} <- Speech.transcribe(ref, bytes, job.voice.format, impersonated: false) do
-      Bridge.say(connection_uuid, chat_id, Texts.recognised(text))
-      converse(connection_uuid, ref, %{job | kind: :turn, text: text}, user_uuid, chat_id, locale)
-    else
+    recognised =
+      while_typing(connection_uuid, chat_id, fn ->
+        with {:ok, bytes} <- recording(connection_uuid, ref, job.voice),
+             do: Speech.transcribe(ref, bytes, job.voice.format, impersonated: false)
+      end)
+
+    case recognised do
+      {:ok, text} ->
+        Bridge.say(connection_uuid, chat_id, Texts.recognised(text))
+
+        converse(
+          connection_uuid,
+          ref,
+          %{job | kind: :turn, text: text},
+          user_uuid,
+          chat_id,
+          locale
+        )
+
       {:error, reason} ->
         refuse_with(connection_uuid, chat_id, job.message_id, Texts.speech(reason))
     end
   end
 
-  # The recording, once the person is known to be allowed to ask for it and it
-  # is no longer or larger than a recognition takes.
+  # Runs `fun` in a task of its own and sends "typing…" every few seconds until
+  # it answers. An exception in it is an error of the recognition.
+  defp while_typing(connection_uuid, chat_id, fun) do
+    task =
+      Task.async(fn ->
+        try do
+          fun.()
+        rescue
+          _exception -> {:error, :failed}
+        catch
+          _kind, _reason -> {:error, :failed}
+        end
+      end)
+
+    await_typing(task, connection_uuid, chat_id)
+  end
+
+  defp await_typing(task, connection_uuid, chat_id) do
+    _ = Client.impl().typing(connection_uuid, chat_id)
+
+    case Task.yield(task, typing_every_ms()) do
+      {:ok, result} -> result
+      {:exit, _reason} -> {:error, :failed}
+      nil -> await_typing(task, connection_uuid, chat_id)
+    end
+  end
+
+  # The recording, once the person is known to be allowed to ask for it, to be
+  # within their limits, and it is no longer or larger than a recognition takes:
+  # the download is the expensive step. A voice message that names no length is
+  # held to the size alone (`Speech.max_bytes/0`).
   defp recording(connection_uuid, ref, voice) do
-    with :ok <- speech_on(),
-         {:ok, _user_uuid} <- Conversations.authorize_session(ref, impersonated: false),
+    with {:ok, _user_uuid} <- Speech.check(ref, impersonated: false),
          :ok <- within_bounds(voice) do
       download(connection_uuid, voice.file_id)
     end
   end
-
-  defp speech_on, do: if(Config.speech?(), do: :ok, else: {:error, :speech_off})
 
   defp within_bounds(%{duration: duration, size: size}) do
     if too?(duration, Speech.max_seconds()) or too?(size, Speech.max_bytes()),

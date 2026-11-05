@@ -283,9 +283,11 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
     if forwarded?(message), do: :forwarded, else: text_kind(text)
   end
 
+  # Voice and pictures are taken only where the core can give the bot a file.
   defp kind(message) do
     cond do
       forwarded?(message) -> :forwarded
+      not Client.impl().can_download?() -> :text_only
       voice(message) -> :voice
       picture(message) -> :photo
       true -> :text_only

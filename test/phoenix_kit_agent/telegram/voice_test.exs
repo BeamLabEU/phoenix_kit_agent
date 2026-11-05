@@ -112,6 +112,19 @@ defmodule PhoenixKitAgent.Telegram.VoiceTest do
     end
   end
 
+  # How many times the bot showed "typing" before a call that `done` matches.
+  defp typing_count_until(done, count \\ 0) do
+    receive do
+      {:tg, {:typing, _, _}} ->
+        typing_count_until(done, count + 1)
+
+      {:tg, call} ->
+        if done.(call), do: count, else: typing_count_until(done, count)
+    after
+      5_000 -> flunk("the bot was not called as expected")
+    end
+  end
+
   defp reaction?(emoji), do: &match?({:react, _, _, _, ^emoji}, &1)
   defp texts(calls), do: for({:send_message, _, _, text} <- calls, do: text)
   defp emojis(calls), do: for({:react, _, _, _, emoji} <- calls, do: emoji)
@@ -403,6 +416,52 @@ defmodule PhoenixKitAgent.Telegram.VoiceTest do
       calls = calls_until(reaction?("🤷"))
 
       assert texts(calls) == [Texts.speech({:limit_reached, :daily_cost})]
+      assert downloaded(calls) == nil
+      refute_received :model_called
+    end
+  end
+
+  describe "while it is being written down" do
+    test "the bot shows typing again and again", ctx do
+      Application.put_env(:phoenix_kit_agent, :telegram_typing_every_ms, 40)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :telegram_typing_every_ms) end)
+
+      Req.Test.expect(@stub, fn conn ->
+        Process.sleep(400)
+
+        Req.Test.json(conn, %{
+          "model" => @ears,
+          "choices" => [
+            %{
+              "message" => %{
+                "role" => "assistant",
+                "content" => Jason.encode!(%{"text" => "slowly", "language" => "en"})
+              }
+            }
+          ],
+          "usage" => %{"prompt_tokens" => 30, "completion_tokens" => 8, "total_tokens" => 38}
+        })
+      end)
+
+      model_says("Done.")
+      voice(ctx)
+
+      assert typing_count_until(&match?({:send_message, _, _, "🎙" <> _}, &1)) >= 4
+    end
+  end
+
+  describe "a core that cannot download a file" do
+    test "takes no voice message, and the help does not promise one", ctx do
+      TelegramClient.set(:can_download, false)
+      model_must_not_be_called()
+
+      refute Texts.static(:help) =~ "Voice messages"
+
+      voice(ctx)
+      calls = calls_until(&match?({:send_message, _, _, _}, &1))
+
+      assert texts(calls) == [Texts.static(:text_only)]
+      assert downloaded(calls) == nil
       refute_received :model_called
     end
   end
