@@ -57,9 +57,10 @@ defmodule PhoenixKitAgent.Conversations do
   A chat reference may read the user's chats (`get_*`, `list_*`, `subscribe/3`),
   start and stop a turn and settle an interrupted one (`PhoenixKitAgent.Turns`:
   a turn stores its own messages in the chat it is given, the user's text of
-  that turn included, and a settled turn its notice, but never the chat's
-  title, status or metadata); it may not create, rename, archive or delete a
-  chat, add a message through `add_message/4`, or write the personal
+  that turn included, and a settled turn its notice; the first user message
+  also gives an untitled chat its title, as everywhere, but a turn never
+  changes the status or the metadata); it may not create, rename, archive or
+  delete a chat, add a message through `add_message/4`, or write the personal
   instructions (`{:error, :not_in_telegram}`).
 
   `create_conversation_for/2`, `latest_telegram_conversation/1` and
