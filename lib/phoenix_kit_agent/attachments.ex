@@ -83,7 +83,7 @@ defmodule PhoenixKitAgent.Attachments do
   `:no_vision_model`, `:too_many`, `:storage_unavailable`, `:already_sent`.
   A linked Telegram chat (the `{:telegram_link, …}` reference) attaches nothing
   through these functions: each is `{:error, :not_in_telegram}` for it. The
-  bridge has its own entry points (`add_picture_for_telegram/4`,
+  bridge has its own entry points (`add_picture_for_telegram/3`,
   `get_for_telegram/2`, `discard_for_telegram/2`, below), which are for a
   picture the bot downloaded, never for a client's event.
 
@@ -107,6 +107,11 @@ defmodule PhoenixKitAgent.Attachments do
 
   @mb 1_048_576
   @name_chars 200
+  # The name every picture of a Telegram chat is stored under (the name Telegram
+  # gives is the sender's, and a document's would be shown to the model): it marks
+  # the files the bridge added, which `sweep_unsent_for_telegram/3` may remove
+  # and a panel upload in the same conversation is never taken for.
+  @telegram_picture "telegram-picture"
   # A `pending` row older than the processing deadline by this much is lost.
   @stale_margin_ms 60_000
 
@@ -410,16 +415,16 @@ defmodule PhoenixKitAgent.Attachments do
   # same storage and processing, the same limits; the uploader is the linked
   # user). Only a picture is taken: the content decides, so a document that
   # says it is an image and is not is `:unsupported_type`. `bytes` are written
-  # to a private scratch file here. A trusted entry point of the bridge.
-  @spec add_picture_for_telegram(Conversations.session_ref(), term(), binary(), String.t()) ::
+  # to a private scratch file here, and it is stored under a name of its own.
+  # A trusted entry point of the bridge.
+  @spec add_picture_for_telegram(Conversations.session_ref(), term(), binary()) ::
           {:ok, Attachment.t()} | {:error, refusal()}
   def add_picture_for_telegram(
         {:telegram_link, _user, _connection, _chat} = ref,
         conversation_uuid,
-        bytes,
-        filename
+        bytes
       )
-      when is_binary(bytes) and is_binary(filename) do
+      when is_binary(bytes) do
     Work.with_dir(fn dir ->
       path = Path.join(dir, "upload")
 
@@ -428,7 +433,7 @@ defmodule PhoenixKitAgent.Attachments do
           add_checked(
             ref,
             conversation_uuid,
-            %{path: path, filename: filename},
+            %{path: path, filename: @telegram_picture},
             [impersonated: false],
             "image"
           )
@@ -440,7 +445,7 @@ defmodule PhoenixKitAgent.Attachments do
   end
 
   @doc false
-  # What `add_picture_for_telegram/4` can refuse without the bytes — the chat,
+  # What `add_picture_for_telegram/3` can refuse without the bytes — the chat,
   # the user's size limit (`size`, where Telegram said it) and a model that
   # could neither see nor describe a picture — so the bridge asks before it
   # downloads. `:ok`, or the refusal. A trusted entry point of the bridge.
@@ -457,17 +462,22 @@ defmodule PhoenixKitAgent.Attachments do
     with {:ok, conversation} <-
            Conversations.owned_conversation(ref, conversation_uuid, impersonated: false),
          settings = UserConfig.effective(conversation.user_uuid),
+         :ok <- room_for_one(settings),
          :ok <- if(is_integer(size), do: size_allowed(size, settings), else: :ok) do
       can_be_shown(%{kind: "image"}, settings)
     end
   end
 
+  defp room_for_one(settings),
+    do: if(settings.max_attachments_per_message < 1, do: {:error, :too_many}, else: :ok)
+
   @doc false
-  # Removes the files of the Telegram chat's conversation that no message took
-  # and that are older than `older_than_ms`: what a turn killed between adding a
-  # picture and asking about it left behind (a chat has no panel to discard
-  # them in, and they would count against `max_attachments_per_message`).
-  # A trusted entry point of the bridge.
+  # Removes the pictures the bridge added (`add_picture_for_telegram/3`) to the
+  # Telegram chat's conversation that no message took and that are older than
+  # `older_than_ms`: what a turn killed between adding a picture and asking
+  # about it left behind (they would count against
+  # `max_attachments_per_message`). A file the user attached in the panel to the
+  # same conversation is never touched. A trusted entry point of the bridge.
   @spec sweep_unsent_for_telegram(Conversations.session_ref(), term(), non_neg_integer()) ::
           :ok | {:error, refusal()}
   def sweep_unsent_for_telegram(
@@ -482,7 +492,8 @@ defmodule PhoenixKitAgent.Attachments do
       from(a in Attachment,
         where:
           a.conversation_uuid == ^conversation.uuid and a.user_uuid == ^conversation.user_uuid and
-            is_nil(a.message_uuid) and a.inserted_at < ^cutoff,
+            is_nil(a.message_uuid) and a.filename == ^@telegram_picture and
+            a.inserted_at < ^cutoff,
         select: a.uuid
       )
       |> repo().all()

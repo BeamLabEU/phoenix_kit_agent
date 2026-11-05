@@ -500,6 +500,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       assert texts(calls) == [Texts.picture(:too_large)]
     end
 
+    @tag :imagemagick
     test "the size is taken from the biggest file, not from the order of the list", ctx do
       model_says("Ok.")
 
@@ -601,7 +602,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
 
       assert Enum.sort(downloads(calls)) == ["q1", "q2"]
 
-      assert Enum.any?(texts(calls), &(&1 =~ "Only 2 of 3 pictures were taken"))
+      assert Enum.any?(texts(calls), &(&1 =~ "Pictures taken: 2 of 3"))
       assert_received {:model_request, body}
       assert images_in(body) == 2
       settle()
@@ -676,7 +677,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
         Repo.insert!(%Attachment{
           conversation_uuid: conversation.uuid,
           user_uuid: ctx.user.uuid,
-          filename: "photo",
+          filename: "telegram-picture",
           content_type: "image/png",
           size_bytes: 81,
           kind: "image",
@@ -685,7 +686,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
 
       Repo.update_all(
         from(a in Attachment, where: a.uuid == ^orphan.uuid),
-        set: [inserted_at: DateTime.add(DateTime.utc_now(), -10, :second)]
+        set: [inserted_at: DateTime.add(DateTime.utc_now(), -60, :second)]
       )
 
       photo(ctx, message_id: 2)
@@ -694,6 +695,141 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
 
       assert Enum.all?(attachments(ctx.user), &(&1.message_uuid != nil))
       assert length(attachments(ctx.user)) == 2
+    end
+  end
+
+  describe "the sweep of pictures nobody took" do
+    alias PhoenixKit.Modules.Storage
+    alias PhoenixKitAgent.{Attachments, Conversations}
+    alias PhoenixKitAgent.Schemas.{Conversation, Message}
+
+    @bound 5_000
+
+    defp telegram_conversation(user) do
+      {:ok, conversation} =
+        Conversations.create_conversation_for(user,
+          metadata: %{"source" => "telegram", "chat_id" => @chat}
+        )
+
+      conversation
+    end
+
+    defp row(conversation, user, attrs) do
+      attachment =
+        Repo.insert!(
+          struct(
+            %Attachment{
+              conversation_uuid: conversation.uuid,
+              user_uuid: user.uuid,
+              filename: "telegram-picture",
+              content_type: "image/png",
+              size_bytes: 81,
+              kind: "image",
+              status: "ready"
+            },
+            Map.delete(attrs, :age_s)
+          )
+        )
+
+      Repo.update_all(
+        from(a in Attachment, where: a.uuid == ^attachment.uuid),
+        set: [inserted_at: DateTime.add(DateTime.utc_now(), -Map.get(attrs, :age_s, 60), :second)]
+      )
+
+      attachment.uuid
+    end
+
+    defp remaining(uuids),
+      do: Repo.all(from(a in Attachment, where: a.uuid in ^uuids, select: a.uuid))
+
+    test "removes only the old, unsent pictures of the chat that the bridge added", ctx do
+      conversation = telegram_conversation(ctx.user)
+      other_conversation = telegram_conversation(ctx.user)
+      stranger = user_with(["agent", "agent.telegram"], "stranger")
+      strangers_conversation = telegram_conversation(stranger)
+
+      sent_message =
+        Repo.insert!(
+          Message.changeset(%Message{conversation_uuid: conversation.uuid}, %{
+            role: "user",
+            content: "asked"
+          })
+        )
+
+      old = row(conversation, ctx.user, %{})
+      young = row(conversation, ctx.user, %{age_s: 1})
+      sent = row(conversation, ctx.user, %{message_uuid: sent_message.uuid})
+      panel_upload = row(conversation, ctx.user, %{filename: "report.png"})
+      elsewhere = row(other_conversation, ctx.user, %{})
+      strangers = row(strangers_conversation, stranger, %{})
+
+      assert :ok = Attachments.sweep_unsent_for_telegram(ctx.ref, conversation.uuid, @bound)
+
+      left = remaining([old, young, sent, panel_upload, elsewhere, strangers])
+
+      refute old in left
+      assert young in left, "too young"
+      assert sent in left, "sent"
+      assert panel_upload in left, "panel upload"
+      assert elsewhere in left, "other conversation"
+      assert strangers in left, "other user"
+    end
+
+    test "does not reach into the conversation of another user", ctx do
+      stranger = user_with(["agent", "agent.telegram"], "stranger-2")
+      strangers_conversation = telegram_conversation(stranger)
+      strangers = row(strangers_conversation, stranger, %{})
+
+      assert {:error, _refusal} =
+               Attachments.sweep_unsent_for_telegram(
+                 ctx.ref,
+                 strangers_conversation.uuid,
+                 @bound
+               )
+
+      assert remaining([strangers]) == [strangers]
+      assert %Conversation{} = Repo.get(Conversation, strangers_conversation.uuid)
+    end
+
+    test "a user who may hold no picture at all is told there is no room", ctx do
+      Repo.insert!(%PhoenixKitAgent.Schemas.UserSettings{
+        user_uuid: ctx.user.uuid,
+        max_attachments_per_message: 0
+      })
+
+      photo(ctx)
+      calls = calls_until(reaction?("🤷"))
+
+      assert downloads(calls) == []
+      assert texts(calls) == [Texts.picture(:too_many)]
+    end
+
+    @tag :imagemagick
+    test "a row discarded while it is being processed is let go without a crash or a file",
+         ctx do
+      Application.put_env(:phoenix_kit_agent, :telegram_attachment_wait_ms, 1_500)
+      holder = hold_every_place(ctx.user)
+      model_says("never")
+
+      {_result, events} =
+        LogProbe.capture(fn ->
+          photo(ctx)
+          assert_eventually(fn -> Enum.any?(attachments(ctx.user), & &1.file_uuid) end)
+          [%Attachment{file_uuid: file_uuid, status: "pending"}] = attachments(ctx.user)
+
+          # The wait runs out, the row is discarded under the processing.
+          calls = calls_until(reaction?("🤷"))
+          assert texts(calls) == [Texts.attachment_error("timeout")]
+          assert attachments(ctx.user) == []
+
+          send(holder, :release)
+          processing_ended()
+          settle()
+          assert attachments(ctx.user) == []
+          refute Repo.get(Storage.File, file_uuid)
+        end)
+
+      refute Enum.any?(events, &(&1 =~ "could not be settled" or &1 =~ "crashed"))
     end
   end
 
@@ -714,7 +850,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
           message_id: id,
           text: nil,
           group: "orphans",
-          photo: %{file_id: "o#{id}", size: 100, name: nil}
+          photo: %{file_id: "o#{id}", size: 100}
         }
       end
 

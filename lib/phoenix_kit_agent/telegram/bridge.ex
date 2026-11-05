@@ -75,11 +75,7 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
           required(:message_id) => integer(),
           required(:text) => String.t() | nil,
           optional(:group) => String.t(),
-          optional(:photo) => %{
-            file_id: String.t(),
-            size: integer() | nil,
-            name: String.t() | nil
-          },
+          optional(:photo) => %{file_id: String.t(), size: integer() | nil},
           optional(:voice) => %{
             file_id: String.t(),
             duration: integer() | nil,
@@ -316,13 +312,13 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   defp picture(%{"photo" => [_ | _] = sizes} = message) do
     case for(%{"file_id" => id} = size when is_binary(id) <- sizes, do: size) do
       [] -> nil
-      sizes -> sizes |> pick_size() |> picture_of(message, nil)
+      sizes -> sizes |> pick_size() |> picture_of(message)
     end
   end
 
   defp picture(%{"document" => %{"file_id" => id, "mime_type" => type} = doc} = message)
        when is_binary(id) and type in @picture_types do
-    picture_of(doc, message, doc["file_name"])
+    picture_of(doc, message)
   end
 
   defp picture(_message), do: nil
@@ -336,19 +332,19 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
     end
   end
 
+  # The area first (Telegram always tells it), then the bytes.
   defp weight(size) do
-    {integer_or_nil(size["file_size"]) || 0,
-     (integer_or_nil(size["width"]) || 0) * (integer_or_nil(size["height"]) || 0)}
+    {(integer_or_nil(size["width"]) || 0) * (integer_or_nil(size["height"]) || 0),
+     integer_or_nil(size["file_size"]) || 0}
   end
 
   defp fits?(%{"file_size" => size}) when is_integer(size), do: size <= @max_picture_bytes
   defp fits?(_size), do: true
 
-  defp picture_of(%{"file_id" => file_id} = file, message, name) do
+  defp picture_of(%{"file_id" => file_id} = file, message) do
     picture = %{
       file_id: file_id,
-      size: integer_or_nil(file["file_size"]),
-      name: if(is_binary(name), do: name)
+      size: integer_or_nil(file["file_size"])
     }
 
     %{

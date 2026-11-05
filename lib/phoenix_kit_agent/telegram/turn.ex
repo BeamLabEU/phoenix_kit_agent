@@ -27,7 +27,7 @@ defmodule PhoenixKitAgent.Telegram.Turn do
 
   A picture (`:photo` job: a photo, or a document that is a jpeg, png or webp)
   is added to the person's Telegram conversation as the chat panel's upload is
-  (`PhoenixKitAgent.Attachments.add_picture_for_telegram/4`: the same checks,
+  (`PhoenixKitAgent.Attachments.add_picture_for_telegram/3`: the same checks,
   storage, processing and limits; the model sees pixels or a description as
   `Processor.picture_mode/1` says, and a person whose model cannot see and who
   has no vision model is told so). The turn waits, for a bounded time, for the
@@ -52,6 +52,8 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   alias PhoenixKitAgent.Telegram.{Bridge, Cards, ChatQueue, Client, Format, Texts}
 
   @typing_every_ms 4_000
+  # A file this much older than the longest wait for one is nobody's turn any more.
+  @sweep_margin_ms 5_000
   # Keys of the turn's process: the pictures added so far, the last "typing".
   @added :pk_agent_tg_added
   @typed :pk_agent_tg_typed
@@ -262,7 +264,11 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     {taken, over} = Enum.split(jobs, max_pictures(ref))
 
     _ =
-      Attachments.sweep_unsent_for_telegram(ref, conversation.uuid, attachment_wait_ms())
+      Attachments.sweep_unsent_for_telegram(
+        ref,
+        conversation.uuid,
+        attachment_wait_ms() + @sweep_margin_ms
+      )
 
     Process.put(@added, [])
 
@@ -271,7 +277,8 @@ defmodule PhoenixKitAgent.Telegram.Turn do
 
       case ready do
         [] ->
-          refuse_with(connection_uuid, chat_id, message_id, picture_text(first_error(errors)))
+          reason = if taken == [], do: :too_many, else: first_error(errors)
+          refuse_with(connection_uuid, chat_id, message_id, picture_text(reason))
 
         ready ->
           unless over == [] and errors == [] do
@@ -303,8 +310,8 @@ defmodule PhoenixKitAgent.Telegram.Turn do
       if(over != [],
         do:
           gettext(
-            "Only %{taken} of %{total} pictures were taken: at most %{max} go in one message.",
-            taken: length(taken),
+            "Pictures taken: %{taken} of %{total} (a message takes at most %{max}).",
+            taken: taken_count,
             total: total,
             max: length(taken)
           )
@@ -360,13 +367,7 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     with :ok <- if(too?(photo.size, max), do: {:error, :too_large}, else: :ok),
          :ok <- Attachments.precheck_picture_for_telegram(ref, conversation.uuid, photo.size),
          {:ok, bytes} <- fetch(connection_uuid, photo.file_id, max) |> picture_error(),
-         do:
-           Attachments.add_picture_for_telegram(
-             ref,
-             conversation.uuid,
-             bytes,
-             photo.name || "photo"
-           )
+         do: Attachments.add_picture_for_telegram(ref, conversation.uuid, bytes)
   end
 
   defp picture_error({:error, :failed}), do: {:error, :download_failed}

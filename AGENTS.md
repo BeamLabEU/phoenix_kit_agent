@@ -296,7 +296,7 @@ and `Web.Markdown`).
   (`Attachments.precheck_picture_for_telegram/3`: the size limit, a model that
   could neither see nor describe), then downloads it
   (`Client.download_file/3`, 10 MB), and adds it with the **only** attachment
-  entry point open to a chat: `Attachments.add_picture_for_telegram/4` — the
+  entry point open to a chat: `Attachments.add_picture_for_telegram/3` — the
   panel's `add/4` flow unchanged (ownership, size, `Detect` by content, only a
   picture is taken: a "picture" that is a PDF is `:unsupported_type`, quotas,
   Library, `Processor`, `Jpeg.strip_metadata`, `picture_mode/1`: pixels, a
@@ -309,12 +309,15 @@ and `Web.Markdown`).
   in tests). What no message took is removed by `discard_for_telegram/2` (a
   chat has no panel to discard in) whatever ends the turn (`try … after`); a
   turn killed outright cannot, so `sweep_unsent_for_telegram/3` removes the
-  chat's unsent files older than that wait bound before the next picture
-  (they would count against `max_attachments_per_message`). The turn runs on the
+  chat's unsent pictures older than that wait bound + 5 s before the next
+  picture (they would count against `max_attachments_per_message`); only the
+  files the bridge added, which are all stored under the name
+  `telegram-picture` (the sender's file name is not kept), never a panel upload
+  to the same conversation. The turn runs on the
   caption, else "What is in this picture?" in the user's language. The
   pictures of one album are **one turn**: the album's parts are siblings of a
   job of the same group that runs **or waits** in `ChatQueue` (not counted
-  among the 3 waiting ones, at most nine, never "wait a little"); the first
+  among the 3 waiting ones, at most nine; so a part of an album that comes while a job of its album runs or waits is not told "wait a little"); the first
   picture's job waits `:telegram_album_settle_ms` (1 s) and takes the siblings
   (`take_siblings/3`; a waiting job gets its own when it starts; siblings not
   taken run as one job in front of the waiting ones). A part that comes after

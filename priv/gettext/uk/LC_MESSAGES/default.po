@@ -1860,12 +1860,12 @@ msgstr "Не вдалося отримати зображення з Telegram. �
 msgid "That is too many pictures at once. Send fewer of them."
 msgstr "Забагато зображень одразу. Надішліть менше."
 
-#: lib/phoenix_kit_agent/telegram/turn.ex:439
+#: lib/phoenix_kit_agent/telegram/turn.ex:440
 #, elixir-autogen, elixir-format
 msgid "What is in these pictures?"
 msgstr "Що на цих зображеннях?"
 
-#: lib/phoenix_kit_agent/telegram/turn.ex:438
+#: lib/phoenix_kit_agent/telegram/turn.ex:439
 #, elixir-autogen, elixir-format
 msgid "What is in this picture?"
 msgstr "Що на цьому зображенні?"
@@ -1895,12 +1895,7 @@ msgstr "Поки що я розумію текст і зображення."
 msgid "I understand text, voice messages and pictures for now."
 msgstr "Поки що я розумію текст, голосові повідомлення та зображення."
 
-#: lib/phoenix_kit_agent/telegram/turn.ex:305
-#, elixir-autogen, elixir-format
-msgid "Only %{taken} of %{total} pictures were taken: at most %{max} go in one message."
-msgstr "Прийнято лише %{taken} із %{total} зображень: в одному повідомленні не більше %{max}."
-
-#: lib/phoenix_kit_agent/telegram/turn.ex:312
+#: lib/phoenix_kit_agent/telegram/turn.ex:319
 #, elixir-autogen, elixir-format
 msgid "Pictures that could not be read: %{count}."
 msgstr "Зображень, які не вдалося прочитати: %{count}."
@@ -1935,3 +1930,8 @@ msgstr "Модель розпізнавання мовлення не повід
 #, elixir-autogen, elixir-format
 msgid "This kind of recording cannot be read. Record it again, or send another format."
 msgstr "Запис такого виду прочитати неможливо. Запишіть ще раз або надішліть в іншому форматі."
+
+#: lib/phoenix_kit_agent/telegram/turn.ex:312
+#, elixir-autogen, elixir-format
+msgid "Pictures taken: %{taken} of %{total} (a message takes at most %{max})."
+msgstr "Прийнято зображень: %{taken} із %{total} (в одному повідомленні не більше %{max})."

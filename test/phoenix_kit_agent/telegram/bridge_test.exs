@@ -125,7 +125,19 @@ defmodule PhoenixKitAgent.Telegram.BridgeTest do
                decide(ctx, TelegramClient.update(@chat, nil, message_id: 5, extra: extra))
 
       assert ref == ctx.ref
-      assert job.photo == %{file_id: "l", size: 9_000_000, name: nil}
+      assert job.photo == %{file_id: "l", size: 9_000_000}
+    end
+
+    test "the largest size is the one with the most pixels, whatever the order or a missing size",
+         ctx do
+      sizes = [
+        %{"file_id" => "big", "width" => 1280, "height" => 960},
+        %{"file_id" => "small", "width" => 320, "height" => 240, "file_size" => 20_000},
+        %{"file_id" => "mid", "width" => 800, "height" => 600, "file_size" => 90_000}
+      ]
+
+      assert {:job, _, %{photo: %{file_id: "big"}}} =
+               decide(ctx, TelegramClient.update(@chat, nil, extra: %{"photo" => sizes}))
     end
 
     test "a photo alone has no group and no text; only too large ones give the smallest", ctx do
@@ -146,7 +158,7 @@ defmodule PhoenixKitAgent.Telegram.BridgeTest do
       for type <- ~w(image/jpeg image/png image/webp) do
         extra = %{"document" => %{"file_id" => "d", "mime_type" => type, "file_name" => "a.img"}}
 
-        assert {:job, _, %{kind: :photo, photo: %{file_id: "d", name: "a.img"}}} =
+        assert {:job, _, %{kind: :photo, photo: %{file_id: "d"}}} =
                  decide(ctx, TelegramClient.update(@chat, nil, extra: extra))
       end
 

@@ -11,11 +11,12 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
   The pictures of one album (`media_group_id`, the job's `group`) are one
   question: the others of the group of a job that runs **or waits** are kept as
   its siblings (not counted among the waiting ones, at most nine), whatever the
-  chat was doing when the album came, and a sibling is never told "wait a
-  little". The running job takes them (`take_siblings/3`) once it has waited a
+  chat was doing when the album came, so a sibling is not told "wait a little"
+  (the first part of an album is a job like any other: with the three places
+  taken it is). The running job takes them (`take_siblings/3`) once it has waited a
   moment for the rest; a waiting one gets them when it starts. Siblings that
-  are not taken when the job ends run as one job in front of the waiting ones,
-  so none is lost. A part that comes after the running job took its siblings is
+  are not taken when the job ends run as one job in front of the waiting ones
+  (if no turn can be started for it, the album is answered "busy" once). A part that comes after the running job took its siblings is
   a job of its own, with its own answer.
 
   It holds the text of a waiting message, so it keeps itself out of crash

@@ -1856,12 +1856,12 @@ msgstr "Je n'ai pas pu récupérer l'image depuis Telegram. Envoyez-la de nouvea
 msgid "That is too many pictures at once. Send fewer of them."
 msgstr "Trop d'images à la fois. Envoyez-en moins."
 
-#: lib/phoenix_kit_agent/telegram/turn.ex:439
+#: lib/phoenix_kit_agent/telegram/turn.ex:440
 #, elixir-autogen, elixir-format
 msgid "What is in these pictures?"
 msgstr "Qu'y a-t-il sur ces images ?"
 
-#: lib/phoenix_kit_agent/telegram/turn.ex:438
+#: lib/phoenix_kit_agent/telegram/turn.ex:439
 #, elixir-autogen, elixir-format
 msgid "What is in this picture?"
 msgstr "Qu'y a-t-il sur cette image ?"
@@ -1891,12 +1891,7 @@ msgstr "Pour l'instant, je comprends le texte et les images."
 msgid "I understand text, voice messages and pictures for now."
 msgstr "Pour l'instant, je comprends le texte, les messages vocaux et les images."
 
-#: lib/phoenix_kit_agent/telegram/turn.ex:305
-#, elixir-autogen, elixir-format
-msgid "Only %{taken} of %{total} pictures were taken: at most %{max} go in one message."
-msgstr "Seules %{taken} images sur %{total} ont été prises : un message en accepte au plus %{max}."
-
-#: lib/phoenix_kit_agent/telegram/turn.ex:312
+#: lib/phoenix_kit_agent/telegram/turn.ex:319
 #, elixir-autogen, elixir-format
 msgid "Pictures that could not be read: %{count}."
 msgstr "Images qui n'ont pas pu être lues : %{count}."
@@ -1931,3 +1926,8 @@ msgstr "Le modèle de reconnaissance vocale ne signale pas le coût d'un appel :
 #, elixir-autogen, elixir-format
 msgid "This kind of recording cannot be read. Record it again, or send another format."
 msgstr "Ce type d'enregistrement ne peut pas être lu. Enregistrez-le de nouveau ou envoyez un autre format."
+
+#: lib/phoenix_kit_agent/telegram/turn.ex:312
+#, elixir-autogen, elixir-format
+msgid "Pictures taken: %{taken} of %{total} (a message takes at most %{max})."
+msgstr "Images prises en compte : %{taken} sur %{total} (un message en accepte au plus %{max})."

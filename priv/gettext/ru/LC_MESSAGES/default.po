@@ -1853,22 +1853,22 @@ msgstr "Записываю, что вы сказали…"
 #: lib/phoenix_kit_agent/telegram/texts.ex:100
 #, elixir-autogen, elixir-format
 msgid "I could not get the picture from Telegram. Send it again."
-msgstr "Не удалось получить картинку из Telegram. Отправьте её ещё раз."
+msgstr "Не удалось получить изображение из Telegram. Отправьте его ещё раз."
 
 #: lib/phoenix_kit_agent/telegram/texts.ex:109
 #, elixir-autogen, elixir-format
 msgid "That is too many pictures at once. Send fewer of them."
-msgstr "Слишком много картинок сразу. Отправьте меньше."
+msgstr "Слишком много изображений сразу. Отправьте меньше."
+
+#: lib/phoenix_kit_agent/telegram/turn.ex:440
+#, elixir-autogen, elixir-format
+msgid "What is in these pictures?"
+msgstr "Что на этих изображениях?"
 
 #: lib/phoenix_kit_agent/telegram/turn.ex:439
 #, elixir-autogen, elixir-format
-msgid "What is in these pictures?"
-msgstr "Что на этих картинках?"
-
-#: lib/phoenix_kit_agent/telegram/turn.ex:438
-#, elixir-autogen, elixir-format
 msgid "What is in this picture?"
-msgstr "Что на этой картинке?"
+msgstr "Что на этом изображении?"
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:193
 #, elixir-autogen, elixir-format
@@ -1888,33 +1888,28 @@ msgstr "Я читаю только текст."
 #: lib/phoenix_kit_agent/telegram/texts.ex:39
 #, elixir-autogen, elixir-format
 msgid "I understand text and pictures for now."
-msgstr "Пока я понимаю текст и картинки."
+msgstr "Пока я понимаю текст и изображения."
 
 #: lib/phoenix_kit_agent/telegram/texts.ex:38
 #, elixir-autogen, elixir-format
 msgid "I understand text, voice messages and pictures for now."
-msgstr "Пока я понимаю текст, голосовые сообщения и картинки."
+msgstr "Пока я понимаю текст, голосовые сообщения и изображения."
 
-#: lib/phoenix_kit_agent/telegram/turn.ex:305
-#, elixir-autogen, elixir-format
-msgid "Only %{taken} of %{total} pictures were taken: at most %{max} go in one message."
-msgstr "Принято только %{taken} из %{total} картинок: в одном сообщении не больше %{max}."
-
-#: lib/phoenix_kit_agent/telegram/turn.ex:312
+#: lib/phoenix_kit_agent/telegram/turn.ex:319
 #, elixir-autogen, elixir-format
 msgid "Pictures that could not be read: %{count}."
-msgstr "Картинок, которые не удалось прочитать: %{count}."
+msgstr "Изображений, которые не удалось прочитать: %{count}."
 
 #: lib/phoenix_kit_agent/telegram/texts.ex:70
 #: lib/phoenix_kit_agent/telegram/texts.ex:75
 #, elixir-autogen, elixir-format
 msgid "Pictures work too: send one, with a question if you like."
-msgstr "Картинки тоже подойдут: отправьте одну, при желании с вопросом."
+msgstr "Изображения тоже подойдут: отправьте одно, при желании с вопросом."
 
 #: lib/phoenix_kit_agent/telegram/texts.ex:104
 #, elixir-autogen, elixir-format
 msgid "That file is not a picture I can read. Send a photo, or a png, jpeg or webp image."
-msgstr "Этот файл не картинка, которую я могу прочитать. Отправьте фото или изображение png, jpeg или webp."
+msgstr "Этот файл не является изображением, которое я могу прочитать. Отправьте фото или изображение png, jpeg или webp."
 
 #: lib/phoenix_kit_agent/telegram/texts.ex:58
 #, elixir-autogen, elixir-format
@@ -1935,3 +1930,8 @@ msgstr "Модель распознавания речи не сообщает �
 #, elixir-autogen, elixir-format
 msgid "This kind of recording cannot be read. Record it again, or send another format."
 msgstr "Запись такого вида прочитать нельзя. Запишите ещё раз или отправьте в другом формате."
+
+#: lib/phoenix_kit_agent/telegram/turn.ex:312
+#, elixir-autogen, elixir-format
+msgid "Pictures taken: %{taken} of %{total} (a message takes at most %{max})."
+msgstr "Принято изображений: %{taken} из %{total} (в одном сообщении не больше %{max})."
