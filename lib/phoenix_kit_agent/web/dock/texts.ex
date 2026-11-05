@@ -178,6 +178,15 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
       )
 
   def speech_error(:failed), do: gettext("The recording could not be written down. Try again.")
+  def speech_error(:unverified), do: notice("model_unverified")
+  def speech_error(:no_provider), do: notice("no_provider_for_params")
+  def speech_error(:insufficient_credits), do: notice("insufficient_credits")
+  def speech_error(:rate_limited), do: notice("rate_limited")
+  def speech_error(:endpoint_unusable), do: notice("endpoint_disabled")
+
+  def speech_error(:bad_answer),
+    do: gettext("The model's answer could not be read as the words. Try again.")
+
   def speech_error(:budget_exceeded), do: notice("budget_exceeded")
   def speech_error(reason), do: refusal(reason)
 

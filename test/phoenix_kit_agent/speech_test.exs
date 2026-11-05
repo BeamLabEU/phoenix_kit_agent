@@ -227,6 +227,178 @@ defmodule PhoenixKitAgent.SpeechTest do
     end
   end
 
+  describe "the AI module is off" do
+    test "is :ai_disabled and the model is not asked", %{ref: ref} do
+      {:ok, _} = PhoenixKitAI.disable_system()
+      model_not_called()
+
+      assert {:error, :ai_disabled} = transcribe(ref)
+      refute_received :model_called
+    end
+  end
+
+  describe "what the AI module refuses is told as a code" do
+    defmodule Refusing do
+      @moduledoc false
+      def transcribe(_endpoint, _audio, _opts) do
+        case Agent.get(:speech_refusal, & &1) do
+          :raise -> raise "boom with SECRET-AUDIO"
+          :throw -> throw(:SECRET_WORDS)
+          answer -> answer
+        end
+      end
+    end
+
+    setup do
+      {:ok, _} = Agent.start_link(fn -> nil end, name: :speech_refusal)
+      Application.put_env(:phoenix_kit_agent, :speech_ai, Refusing)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
+      :ok
+    end
+
+    defp refused(ref, answer) do
+      Agent.update(:speech_refusal, fn _ -> answer end)
+      transcribe(ref)
+    end
+
+    test "the guard's and the budget's refusals keep their own codes", %{ref: ref} do
+      assert {:error, :budget_exceeded} = refused(ref, {:error, {:budget_exceeded, :global}})
+      assert {:error, :task_blocked} = refused(ref, {:error, :task_blocked})
+      assert {:error, :task_blocked} = refused(ref, {:error, {:task_blocked, %{}}})
+
+      assert {:error, :task_limit_exceeded} =
+               refused(ref, {:error, {:task_limit_exceeded, :user, :requests, :day}})
+    end
+
+    test "the provider's refusals keep their own codes", %{ref: ref} do
+      assert {:error, :insufficient_credits} = refused(ref, {:error, :insufficient_credits})
+      assert {:error, :rate_limited} = refused(ref, {:error, :rate_limited})
+      assert {:error, :endpoint_unusable} = refused(ref, {:error, :invalid_api_key})
+      assert {:error, :endpoint_unusable} = refused(ref, {:error, :endpoint_not_found})
+      assert {:error, :no_provider} = refused(ref, {:error, {:no_provider_for_params, [:a]}})
+      assert {:error, :unverified} = refused(ref, {:error, {:model_unverified, [:audio_input]}})
+      assert {:error, :unfit} = refused(ref, {:error, {:model_unfit, [:audio_input]}})
+    end
+
+    test "the answer that is not the words asked for is :bad_answer", %{ref: ref} do
+      assert {:error, :bad_answer} = refused(ref, {:error, {:no_json_in_response, "x"}})
+      assert {:error, :bad_answer} = refused(ref, {:error, {:output_truncated, "x"}})
+    end
+
+    test "the size and the silence the AI module found are :too_long and :no_speech", %{ref: ref} do
+      assert {:error, :too_long} = refused(ref, {:error, {:audio_too_large, 2, 1}})
+      assert {:error, :no_speech} = refused(ref, {:error, :empty_input})
+    end
+
+    test "anything else is :failed", %{ref: ref} do
+      assert {:error, :failed} = refused(ref, {:error, :nxdomain})
+      assert {:error, :failed} = refused(ref, :nonsense)
+    end
+
+    test "an exception or a throw is :failed and nothing of it is logged", %{ref: ref} do
+      {raised, events} = LogProbe.capture(fn -> refused(ref, :raise) end)
+      assert {:error, :failed} = raised
+      refute Enum.any?(events, &(&1 =~ "SECRET"))
+
+      {thrown, events} = LogProbe.capture(fn -> refused(ref, :throw) end)
+      assert {:error, :failed} = thrown
+      refute Enum.any?(events, &(&1 =~ "SECRET"))
+    end
+  end
+
+  describe "one recognition of a user at a time" do
+    defmodule Slow do
+      @moduledoc false
+      # Says it came in, waits to be let go.
+      def transcribe(_endpoint, _audio, _opts) do
+        test = Agent.get(:speech_slow, & &1)
+        send(test, {:in, self()})
+
+        receive do
+          :go -> {:ok, %{text: "words", language: "en"}}
+        end
+      end
+    end
+
+    setup do
+      test = self()
+      {:ok, _} = Agent.start_link(fn -> test end, name: :speech_slow)
+      Application.put_env(:phoenix_kit_agent, :speech_ai, Slow)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
+      :ok
+    end
+
+    defp in_task(ref), do: Task.async(fn -> transcribe(ref) end)
+
+    test "the second waits until the first is done", %{ref: ref} do
+      first = in_task(ref)
+      assert_receive {:in, pid1}, 2_000
+
+      second = in_task(ref)
+      refute_receive {:in, _other}, 300
+
+      send(pid1, :go)
+      assert {:ok, "words"} = Task.await(first)
+
+      assert_receive {:in, pid2}, 2_000
+      send(pid2, :go)
+      assert {:ok, "words"} = Task.await(second)
+    end
+
+    test "another user is not kept waiting", %{ref: ref} do
+      other = user_with(["agent"], "other-speaker")
+      {other_ref, _token} = session_fixture(other)
+
+      first = in_task(ref)
+      assert_receive {:in, pid1}, 2_000
+      second = in_task(other_ref)
+      assert_receive {:in, pid2}, 2_000
+
+      send(pid1, :go)
+      send(pid2, :go)
+      assert {:ok, "words"} = Task.await(first)
+      assert {:ok, "words"} = Task.await(second)
+    end
+
+    test "what the wait changed is seen right before the call: the session ended", %{
+      ref: ref,
+      user: user
+    } do
+      {late_ref, late_token} = session_fixture(user)
+
+      first = in_task(ref)
+      assert_receive {:in, pid1}, 2_000
+
+      second = in_task(late_ref)
+      refute_receive {:in, _other}, 300
+
+      Auth.delete_user_session_token(late_token)
+      send(pid1, :go)
+
+      assert {:ok, "words"} = Task.await(first)
+      assert {:error, :session_gone} = Task.await(second)
+      refute_receive {:in, _never}, 300
+    end
+
+    test "what the wait changed is seen right before the call: the user's limit", %{
+      ref: ref,
+      user: user
+    } do
+      first = in_task(ref)
+      assert_receive {:in, pid1}, 2_000
+
+      second = in_task(ref)
+      refute_receive {:in, _other}, 300
+
+      Repo.insert!(%UserSettings{user_uuid: user.uuid, daily_cost_limit_micro_usd: 0})
+      send(pid1, :go)
+
+      assert {:ok, "words"} = Task.await(first)
+      assert {:error, {:limit_reached, :daily_cost}} = Task.await(second)
+      refute_receive {:in, _never}, 300
+    end
+  end
+
   describe "the AI module without transcribe/3" do
     defmodule NoSpeech do
     end

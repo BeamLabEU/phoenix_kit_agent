@@ -20,6 +20,14 @@ defmodule PhoenixKitAgent.Speech do
        endpoint as `Models.reports_cost?/2` counts it), under a lock of the
        user's recognitions, so each one sees what the last one cost.
 
+  The session, the AI module and the limits are asked again under the lock,
+  right before the call (`check/2`), as the wait for it may have been long.
+
+  The length of a recording is not known here but for its size: ten megabytes
+  are the bound (a few minutes of speech in a compressed format, much more in
+  an hour of Opus), and the callers that know a length (Telegram's `duration`)
+  refuse a long one before they download it.
+
   The call is `PhoenixKitAI.transcribe/3` with the user's `user_uuid:`,
   `source: "agent"` and `task: "agent.speech"`, so the journal row is the
   user's and `PhoenixKitAgent.Spend` counts it. The words are not kept in the
@@ -27,8 +35,11 @@ defmodule PhoenixKitAgent.Speech do
   text is logged.
 
   The answer is `{:ok, text}` or `{:error, code}`: `:speech_off`, `:no_speech`
-  (the recording holds none), `:too_long`, `:unfit` (the chosen model cannot
-  take audio), `:failed`, `:ai_disabled`, `:budget_exceeded`, `:task_blocked`,
+  (the recording holds none), `:too_long`, `:unfit` / `:unverified` (the chosen
+  model cannot take audio, or nobody knows), `:no_provider`,
+  `:insufficient_credits`, `:rate_limited`, `:endpoint_unusable` (only an
+  administrator can end it), `:bad_answer` (billed, but not the shape asked
+  for), `:failed`, `:ai_disabled`, `:budget_exceeded`, `:task_blocked`,
   `:task_limit_exceeded`, `{:limit_reached, kind}`, or the refusal of
   `Conversations` (`:forbidden`, `:session_gone`, `:impersonated`, …). The
   texts are `PhoenixKitAgent.Web.Dock.Texts.speech_error/1`.
@@ -45,12 +56,23 @@ defmodule PhoenixKitAgent.Speech do
 
   @guard_refusals ~w(task_blocked task_limit_exceeded)a
 
+  # The errors only an administrator can end (as the chat's turn knows them).
+  @endpoint_unusable ~w(invalid_api_key api_key_forbidden endpoint_not_found endpoint_disabled
+                        endpoint_no_model integration_not_configured integration_deleted
+                        not_configured)a
+
   @typedoc "Why a recording was not written down."
   @type error ::
           :speech_off
           | :no_speech
           | :too_long
           | :unfit
+          | :unverified
+          | :no_provider
+          | :insufficient_credits
+          | :rate_limited
+          | :endpoint_unusable
+          | :bad_answer
           | :failed
           | :ai_disabled
           | :budget_exceeded
@@ -78,11 +100,27 @@ defmodule PhoenixKitAgent.Speech do
           {:ok, String.t()} | {:error, error()}
   def transcribe(session_ref, bytes, format, opts)
       when is_binary(bytes) and (is_binary(format) or is_nil(format)) do
+    with {:ok, user_uuid} <- check(session_ref, opts),
+         :ok <- size_ok(bytes) do
+      one_at_a_time(user_uuid, fn -> paid(session_ref, opts, user_uuid, bytes, format) end)
+    end
+  end
+
+  @doc """
+  Everything `transcribe/4` checks before it pays, without paying: voice is on,
+  the AI module is on, the session may use the assistant now and the user is
+  within their limits. `{:ok, user_uuid}`, or the refusal. A caller that has
+  something expensive to do first (the download of a file) asks this before
+  it; `transcribe/4` asks it again, and once more under the user's lock.
+  """
+  @spec check(Conversations.session_ref(), keyword()) :: {:ok, String.t()} | {:error, error()}
+  def check(session_ref, opts) do
     with :ok <- speech_on(),
          :ok <- ai_enabled(),
          {:ok, user_uuid} <- Conversations.authorize_session(session_ref, opts),
-         :ok <- size_ok(bytes) do
-      one_at_a_time(user_uuid, fn -> paid(user_uuid, bytes, format) end)
+         {:ok, endpoint} <- chosen(Config.speech_endpoint_uuid()),
+         :ok <- within_limits(user_uuid, endpoint) do
+      {:ok, user_uuid}
     end
   end
 
@@ -97,11 +135,12 @@ defmodule PhoenixKitAgent.Speech do
   defp one_at_a_time(user_uuid, fun),
     do: :global.trans({{__MODULE__, :transcribe, user_uuid}, self()}, fun)
 
-  defp paid(user_uuid, bytes, format) do
-    endpoint = Config.speech_endpoint_uuid()
-
-    with {:ok, endpoint} <- chosen(endpoint),
-         :ok <- within_limits(user_uuid, endpoint) do
+  # Right before the call, with the lock held: the wait for it may have been
+  # long (another recognition of the user ran), and the session, the limits
+  # and the model are what they are now.
+  defp paid(session_ref, opts, user_uuid, bytes, format) do
+    with {:ok, ^user_uuid} <- check(session_ref, opts),
+         {:ok, endpoint} <- chosen(Config.speech_endpoint_uuid()) do
       ask(endpoint, user_uuid, bytes, format)
     end
   end
@@ -156,13 +195,23 @@ defmodule PhoenixKitAgent.Speech do
   defp outcome({:error, :empty_input}), do: {:error, :no_speech}
   defp outcome({:error, {:audio_too_large, _bytes, _max}}), do: {:error, :too_long}
   defp outcome({:error, {:model_unfit, _needs}}), do: {:error, :unfit}
-  defp outcome({:error, {:model_unverified, _needs}}), do: {:error, :unfit}
+  defp outcome({:error, {:model_unverified, _needs}}), do: {:error, :unverified}
+  defp outcome({:error, {:no_provider_for_params, _params}}), do: {:error, :no_provider}
   defp outcome({:error, {:budget_exceeded, _scope}}), do: {:error, :budget_exceeded}
 
   defp outcome({:error, reason}) when is_tuple(reason) and elem(reason, 0) in @guard_refusals,
     do: {:error, elem(reason, 0)}
 
   defp outcome({:error, reason}) when reason in @guard_refusals, do: {:error, reason}
+  defp outcome({:error, :insufficient_credits}), do: {:error, :insufficient_credits}
+  defp outcome({:error, :rate_limited}), do: {:error, :rate_limited}
+
+  defp outcome({:error, reason}) when reason in @endpoint_unusable,
+    do: {:error, :endpoint_unusable}
+
+  # The provider answered (and billed) but not in the shape asked for.
+  defp outcome({:error, {tag, _text}}) when tag in [:no_json_in_response, :output_truncated],
+    do: {:error, :bad_answer}
 
   defp outcome(_failed), do: {:error, :failed}
 end
