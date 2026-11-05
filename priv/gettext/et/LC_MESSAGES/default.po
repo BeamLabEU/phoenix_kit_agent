@@ -1536,12 +1536,12 @@ msgstr "Assistent Telegramis"
 msgid "Conflict: the bot is read by someone else (another reader or a webhook). The reader waits and tries again."
 msgstr "Konflikt: boti loeb keegi teine (teine lugeja või webhook). Lugeja ootab ja proovib uuesti."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:43
+#: lib/phoenix_kit_agent/telegram/texts.ex:44
 #, elixir-autogen, elixir-format
 msgid "I do not read forwarded messages. Put it in your own words."
 msgstr "Edastatud sõnumeid ma ei loe. Kirjuta oma sõnadega."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:40
+#: lib/phoenix_kit_agent/telegram/texts.ex:37
 #, elixir-autogen, elixir-format
 msgid "I understand text only for now."
 msgstr "Praegu saan aru ainult tekstist."
@@ -1566,7 +1566,7 @@ msgstr "Väljas: assistent ei vasta Telegramis."
 msgid "Reading the bot's messages."
 msgstr "Boti sõnumeid loetakse."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:45
+#: lib/phoenix_kit_agent/telegram/texts.ex:46
 #, elixir-autogen, elixir-format
 msgid "Started a new conversation."
 msgstr "Alustasin uut vestlust."
@@ -1591,17 +1591,17 @@ msgstr "Telegrami säte salvestatud."
 msgid "The bot has a webhook set, so its messages cannot be read. Remove the webhook."
 msgstr "Botil on webhook, seega selle sõnumeid ei saa lugeda. Eemalda webhook."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:38
+#: lib/phoenix_kit_agent/telegram/texts.ex:32
 #, elixir-autogen, elixir-format
 msgid "The bot is busy right now. Write again in a minute."
 msgstr "Bot on praegu hõivatud. Kirjuta minuti pärast uuesti."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:36
+#: lib/phoenix_kit_agent/telegram/texts.ex:30
 #, elixir-autogen, elixir-format
 msgid "This chat is not linked to an account. Link it on the site: Profile → Telegram"
 msgstr "See vestlus pole kontoga seotud. Seo see saidil: Profiil → Telegram"
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:39
+#: lib/phoenix_kit_agent/telegram/texts.ex:33
 #, elixir-autogen, elixir-format
 msgid "Wait a little: I am still answering your previous message."
 msgstr "Oota hetk: vastan veel su eelmisele sõnumile."
@@ -1611,23 +1611,18 @@ msgstr "Oota hetk: vastan veel su eelmisele sõnumile."
 msgid "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. It only reads: a change is made on the site."
 msgstr "Kui sees, võib inimene, kes on oma Telegrami vestluse veebisaidi botiga sidunud (Profiil → Telegram) ja kelle rollil on õigus „Agent Telegramis“, botile kirjutada ning assistent vastab seal selle inimese enda õiguste, mudeli ja piirangutega. See ainult loeb: muudatus tehakse saidil."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:57
-#, elixir-autogen, elixir-format
-msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only, and I cannot change anything here: for a change I will point you to the site."
-msgstr "Kirjuta mulle lihtsa tekstina ja vastan sinu andmete põhjal saidil. /new alustab uut vestlust. Loen ainult teksti ega saa siin midagi muuta: muudatuse jaoks juhatan sind saidile."
-
-#: lib/phoenix_kit_agent/telegram/texts.ex:142
-#: lib/phoenix_kit_agent/telegram/texts.ex:159
+#: lib/phoenix_kit_agent/telegram/texts.ex:165
+#: lib/phoenix_kit_agent/telegram/texts.ex:182
 #, elixir-autogen, elixir-format
 msgid "You may not use the assistant in Telegram."
 msgstr "Sul pole luba assistenti Telegramis kasutada."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:150
+#: lib/phoenix_kit_agent/telegram/texts.ex:173
 #, elixir-autogen, elixir-format
 msgid "A change is being confirmed on the site. Write again in a moment."
 msgstr "Muudatust kinnitatakse praegu saidil. Kirjuta hetke pärast uuesti."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:147
+#: lib/phoenix_kit_agent/telegram/texts.ex:170
 #, elixir-autogen, elixir-format
 msgid "That message is too long for me. Write a shorter one."
 msgstr "See sõnum on minu jaoks liiga pikk. Kirjuta lühemalt."
@@ -1635,7 +1630,7 @@ msgstr "See sõnum on minu jaoks liiga pikk. Kirjuta lühemalt."
 #: lib/phoenix_kit_agent/telegram/card.ex:72
 #: lib/phoenix_kit_agent/telegram/card.ex:105
 #: lib/phoenix_kit_agent/telegram/card.ex:127
-#: lib/phoenix_kit_agent/telegram/texts.ex:110
+#: lib/phoenix_kit_agent/telegram/texts.ex:133
 #, elixir-autogen, elixir-format
 msgid "Already handled."
 msgstr "See on juba tehtud."
@@ -1645,23 +1640,23 @@ msgstr "See on juba tehtud."
 msgid "Confirm this change:"
 msgstr "Kinnitage see muudatus:"
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:48
+#: lib/phoenix_kit_agent/telegram/texts.ex:49
 #, elixir-autogen, elixir-format
 msgid "I could not show the buttons. Confirm the change on the site."
 msgstr "Nuppe ei õnnestunud kuvada. Kinnitage muudatus saidil."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:135
+#: lib/phoenix_kit_agent/telegram/texts.ex:158
 #, elixir-autogen, elixir-format
 msgid "Not allowed: %{reason}"
 msgstr "Ei ole lubatud: %{reason}"
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:129
+#: lib/phoenix_kit_agent/telegram/texts.ex:152
 #, elixir-autogen, elixir-format
 msgid "Not allowed: too many requests. Try again in a minute."
 msgstr "Ei ole lubatud: liiga palju päringuid. Proovige minuti pärast uuesti."
 
 #: lib/phoenix_kit_agent/telegram/card.ex:131
-#: lib/phoenix_kit_agent/telegram/texts.ex:126
+#: lib/phoenix_kit_agent/telegram/texts.ex:149
 #, elixir-autogen, elixir-format
 msgid "Not allowed: you have no right to make this change."
 msgstr "Ei ole lubatud: teil pole õigust seda muudatust teha."
@@ -1683,24 +1678,24 @@ msgstr "Muudatust ei õnnestunud teha."
 msgid "The data changed under the preview."
 msgstr "Andmed muutusid eelvaate all."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:111
+#: lib/phoenix_kit_agent/telegram/texts.ex:134
 #, elixir-autogen, elixir-format
 msgid "The time to confirm ran out. Ask again."
 msgstr "Kinnitamise aeg sai läbi. Paluge uuesti."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:113
+#: lib/phoenix_kit_agent/telegram/texts.ex:136
 #, elixir-autogen, elixir-format
 msgid "This button does not work any more."
 msgstr "See nupp ei tööta enam."
 
 #: lib/phoenix_kit_agent/telegram/card.ex:137
-#: lib/phoenix_kit_agent/telegram/texts.ex:112
+#: lib/phoenix_kit_agent/telegram/texts.ex:135
 #, elixir-autogen, elixir-format
 msgid "This change cannot be confirmed here. Open the site."
 msgstr "Seda muudatust ei saa siin kinnitada. Avage sait."
 
 #: lib/phoenix_kit_agent/telegram/card.ex:75
-#: lib/phoenix_kit_agent/telegram/texts.ex:109
+#: lib/phoenix_kit_agent/telegram/texts.ex:132
 #, elixir-autogen, elixir-format
 msgid "This change is no longer available."
 msgstr "See muudatus pole enam saadaval."
@@ -1710,15 +1705,10 @@ msgstr "See muudatus pole enam saadaval."
 msgid "This change is too large to confirm here. Confirm it on the site."
 msgstr "See muudatus on siin kinnitamiseks liiga suur. Kinnitage see saidil."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:114
+#: lib/phoenix_kit_agent/telegram/texts.ex:137
 #, elixir-autogen, elixir-format
 msgid "This chat is not linked to an account."
 msgstr "See vestlus ei ole kontoga seotud."
-
-#: lib/phoenix_kit_agent/telegram/texts.ex:53
-#, elixir-autogen, elixir-format
-msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
-msgstr "Kirjutage mulle lihttekstina ja vastan teie andmete põhjal saidil. /new alustab uut vestlust. Ma loen ainult teksti. Kui palute muudatust, näitan kaarti selle üksikasjadega ja kahe nupuga: kinnitage või tühistage see."
 
 #: lib/phoenix_kit_agent/telegram/card.ex:190
 #, elixir-autogen, elixir-format
@@ -1730,7 +1720,7 @@ msgstr "…ja veel %{count}"
 msgid "⌛ The time to confirm ran out. Ask again."
 msgstr "⌛ Kinnitamise aeg sai läbi. Paluge uuesti."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:123
+#: lib/phoenix_kit_agent/telegram/texts.ex:146
 #, elixir-autogen, elixir-format
 msgid "⏳ The agent is answering. Press again in a moment."
 msgstr "⏳ Agent vastab praegu. Vajutage hetke pärast uuesti."
@@ -1756,12 +1746,12 @@ msgstr "❌ Tühista"
 msgid "❌ Cancelled"
 msgstr "❌ Tühistatud"
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:133
+#: lib/phoenix_kit_agent/telegram/texts.ex:156
 #, elixir-autogen, elixir-format
 msgid "Not allowed right now."
 msgstr "Praegu ei ole lubatud."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:115
+#: lib/phoenix_kit_agent/telegram/texts.ex:138
 #, elixir-autogen, elixir-format
 msgid "The bot is busy right now. Press again in a minute."
 msgstr "Bot on praegu hõivatud. Vajutage minuti pärast uuesti."
@@ -1771,7 +1761,7 @@ msgstr "Bot on praegu hõivatud. Vajutage minuti pärast uuesti."
 msgid "AI assistant speech"
 msgstr "AI-assistendi kõne"
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:69
+#: lib/phoenix_kit_agent/telegram/texts.ex:86
 #, elixir-autogen, elixir-format
 msgid "I cannot take voice messages now. Write to me in text."
 msgstr "Praegu ma häälsõnumeid vastu ei võta. Kirjuta mulle tekstina."
@@ -1801,7 +1791,7 @@ msgstr "Salvestus on liiga pikk. Hoia see alla kahe minuti."
 msgid "Voice input is not set up."
 msgstr "Häälsisend pole seadistatud."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:31
+#: lib/phoenix_kit_agent/telegram/texts.ex:72
 #, elixir-autogen, elixir-format
 msgid "Voice messages work too: I write down what you said and answer it."
 msgstr "Häälsõnumid sobivad samuti: kirjutan üles, mida ütlesid, ja vastan."
@@ -1811,7 +1801,7 @@ msgstr "Häälsõnumid sobivad samuti: kirjutan üles, mida ütlesid, ja vastan.
 msgid "Write down a voice message or a recording that a user made for the AI assistant."
 msgstr "Kirjutada tekstiks häälsõnum või salvestus, mille kasutaja tegi AI-assistendile."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:97
+#: lib/phoenix_kit_agent/telegram/texts.ex:120
 #, elixir-autogen, elixir-format
 msgid "🎙 Recognised: %{text}"
 msgstr "🎙 Tuvastatud: %{text}"
@@ -1856,22 +1846,22 @@ msgstr "Dikteeri"
 msgid "Writing down what you said…"
 msgstr "Kirjutan üles, mida ütlesid…"
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:83
+#: lib/phoenix_kit_agent/telegram/texts.ex:100
 #, elixir-autogen, elixir-format
 msgid "I could not get the picture from Telegram. Send it again."
 msgstr "Ma ei saanud pilti Telegramist kätte. Saada see uuesti."
 
-#: lib/phoenix_kit_agent/telegram/texts.ex:86
+#: lib/phoenix_kit_agent/telegram/texts.ex:109
 #, elixir-autogen, elixir-format
 msgid "That is too many pictures at once. Send fewer of them."
 msgstr "Piltide arv korraga on liiga suur. Saada vähem."
 
-#: lib/phoenix_kit_agent/telegram/turn.ex:345
+#: lib/phoenix_kit_agent/telegram/turn.ex:430
 #, elixir-autogen, elixir-format
 msgid "What is in these pictures?"
 msgstr "Mis on nendel piltidel?"
 
-#: lib/phoenix_kit_agent/telegram/turn.ex:344
+#: lib/phoenix_kit_agent/telegram/turn.ex:429
 #, elixir-autogen, elixir-format
 msgid "What is in this picture?"
 msgstr "Mis on sellel pildil?"
@@ -1890,3 +1880,49 @@ msgstr "Kõnetuvastusmudel ei teata, mis üks kõne maksab: selle raha ei arvest
 #, elixir-autogen, elixir-format
 msgid "Voice input needs a newer version of the AI module: it cannot write speech down yet."
 msgstr "Häälsisend vajab AI-mooduli uuemat versiooni: see ei oska kõnet veel kirja panna."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:67
+#, elixir-autogen, elixir-format
+msgid "I read text only."
+msgstr "Loen ainult teksti."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:39
+#, elixir-autogen, elixir-format
+msgid "I understand text and pictures for now."
+msgstr "Praegu saan aru tekstist ja piltidest."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:38
+#, elixir-autogen, elixir-format
+msgid "I understand text, voice messages and pictures for now."
+msgstr "Praegu saan aru tekstist, häälsõnumitest ja piltidest."
+
+#: lib/phoenix_kit_agent/telegram/turn.ex:296
+#, elixir-autogen, elixir-format
+msgid "Only %{taken} of %{total} pictures were taken: at most %{max} go in one message."
+msgstr "Võtsin vastu ainult %{taken} pilti %{total}-st: ühes sõnumis võib olla kuni %{max}."
+
+#: lib/phoenix_kit_agent/telegram/turn.ex:303
+#, elixir-autogen, elixir-format
+msgid "Pictures that could not be read: %{count}."
+msgstr "Lugemata jäänud pilte: %{count}."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:70
+#: lib/phoenix_kit_agent/telegram/texts.ex:75
+#, elixir-autogen, elixir-format
+msgid "Pictures work too: send one, with a question if you like."
+msgstr "Pildid sobivad samuti: saada üks, soovi korral küsimusega."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:104
+#, elixir-autogen, elixir-format
+msgid "That file is not a picture I can read. Send a photo, or a png, jpeg or webp image."
+msgstr "See fail ei ole pilt, mida ma lugeda saan. Saada foto või png-, jpeg- või webp-pilt."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:58
+#, elixir-autogen, elixir-format
+msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I cannot change anything here: for a change I will point you to the site."
+msgstr "Kirjutage mulle lihttekstina ja vastan teie andmete põhjal saidil. /new alustab uut vestlust. Siin ma midagi muuta ei saa: muudatuse jaoks juhatan teid saidile."
+
+#: lib/phoenix_kit_agent/telegram/texts.ex:54
+#, elixir-autogen, elixir-format
+msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
+msgstr "Kirjutage mulle lihttekstina ja vastan teie andmete põhjal saidil. /new alustab uut vestlust. Kui palute muudatust, näitan kaarti selle üksikasjadega ja kahe nupuga: kinnitage või tühistage see."

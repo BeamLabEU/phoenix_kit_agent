@@ -474,5 +474,22 @@ defmodule PhoenixKitAgent.Telegram.VoiceTest do
       refute Texts.static(:help) =~ "Voice messages"
       _ = ctx
     end
+
+    test "tells what the bot reads: pictures always, voice when it is on, text only without files",
+         ctx do
+      assert Texts.static(:help) =~ "Pictures work too"
+      assert Texts.static(:text_only) =~ "text, voice messages and pictures"
+
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", "")
+      assert Texts.static(:help) =~ "Pictures work too"
+      refute Texts.static(:text_only) =~ "voice"
+      assert Texts.static(:text_only) =~ "text and pictures"
+
+      TelegramClient.set(:can_download, false)
+      assert Texts.static(:help) =~ "I read text only."
+      refute Texts.static(:help) =~ "Pictures"
+      assert Texts.static(:text_only) == "I understand text only for now."
+      _ = ctx
+    end
   end
 end

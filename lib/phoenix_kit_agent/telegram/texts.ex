@@ -24,22 +24,21 @@ defmodule PhoenixKitAgent.Telegram.Texts do
           | :new_started
           | :card_not_shown
         ) :: String.t()
-  def static(:help) do
-    text = help_text()
-
-    if Config.speech?() and Client.impl().can_download?(),
-      do:
-        text <>
-          " " <> gettext("Voice messages work too: I write down what you said and answer it."),
-      else: text
-  end
+  def static(:help), do: help_text() <> " " <> reads()
 
   def static(:unlinked),
     do: gettext("This chat is not linked to an account. Link it on the site: Profile → Telegram")
 
   def static(:bot_busy), do: gettext("The bot is busy right now. Write again in a minute.")
   def static(:wait), do: gettext("Wait a little: I am still answering your previous message.")
-  def static(:text_only), do: gettext("I understand text only for now.")
+
+  def static(:text_only) do
+    cond do
+      not Client.impl().can_download?() -> gettext("I understand text only for now.")
+      Config.speech?() -> gettext("I understand text, voice messages and pictures for now.")
+      true -> gettext("I understand text and pictures for now.")
+    end
+  end
 
   def static(:forwarded),
     do: gettext("I do not read forwarded messages. Put it in your own words.")
@@ -50,15 +49,31 @@ defmodule PhoenixKitAgent.Telegram.Texts do
     do: gettext("I could not show the buttons. Confirm the change on the site.")
 
   defp help_text do
-    if PhoenixKitAgent.Config.writes?(),
+    if Config.writes?(),
       do:
         gettext(
-          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
+          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
         ),
       else:
         gettext(
-          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I read text only, and I cannot change anything here: for a change I will point you to the site."
+          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I cannot change anything here: for a change I will point you to the site."
         )
+  end
+
+  # What the bot reads besides text, as far as the core and the settings allow.
+  defp reads do
+    cond do
+      not Client.impl().can_download?() ->
+        gettext("I read text only.")
+
+      Config.speech?() ->
+        gettext("Pictures work too: send one, with a question if you like.") <>
+          " " <>
+          gettext("Voice messages work too: I write down what you said and answer it.")
+
+      true ->
+        gettext("Pictures work too: send one, with a question if you like.")
+    end
   end
 
   @doc """
@@ -83,6 +98,12 @@ defmodule PhoenixKitAgent.Telegram.Texts do
   @spec picture(term()) :: String.t()
   def picture(reason) when reason in [:download_failed, :unavailable],
     do: gettext("I could not get the picture from Telegram. Send it again.")
+
+  def picture(:unsupported_type),
+    do:
+      gettext(
+        "That file is not a picture I can read. Send a photo, or a png, jpeg or webp image."
+      )
 
   def picture(:too_many),
     do: gettext("That is too many pictures at once. Send fewer of them.")
