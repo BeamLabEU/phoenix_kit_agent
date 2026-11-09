@@ -400,7 +400,9 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           <.icon name="hero-paper-clip" class="w-4 h-4" />
         </label>
         <.live_file_input upload={@upload} class="hidden" />
-        <%!-- The core's recorder, a module that older cores lack: named as an atom, so this compiles without it --%>
+        <%!-- The core's recorder, a module that older cores lack: named as an atom, so this compiles without it.
+             A direct live_component gets none of its function component's defaults, and a newer
+             core's recorder reads start_button and upload when it renders: every attr is passed --%>
         <.live_component
           :if={@speech?}
           module={PhoenixKitWeb.Components.Core.AudioRecorder}
