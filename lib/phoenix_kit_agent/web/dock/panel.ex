@@ -16,7 +16,8 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       width in `localStorage`, and tells the LiveView on mount and when it
       joins again after a lost connection (`restore`): a re-join mounts the
       LiveView afresh, while the hook's element stays and gets no `mounted`;
-    * `.Feed` — keeps the feed scrolled to its end while the user is there;
+    * `.Feed` — keeps the feed scrolled to its end while the user is there,
+      also after a live navigation moves the view (it is hidden until pinned);
     * `.Composer` — Enter sends, the page's path goes with the form, the text
       is cleared once the turn started (`pk-agent:sent`). The textarea is
       `phx-update="ignore"`: the browser owns the draft, so a re-render (a
@@ -31,6 +32,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
 
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
   import PhoenixKitWeb.Components.Core.Input, only: [input: 1]
+  import PhoenixKitWeb.Components.Core.UploadManager, only: [upload_manager: 1]
   import PhoenixKitWeb.Components.Core.Textarea, only: [textarea: 1]
   import PhoenixKitAgent.Web.Dock.Components
 
@@ -163,20 +165,30 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           </button>
         </div>
 
-        <div class="flex-1 min-h-0 overflow-y-auto px-3 py-3" id="pk-agent-feed-scroll" phx-hook=".Feed">
-          <div :if={@earlier?} class="pb-3 text-center">
-            <button id="pk-agent-earlier" type="button" phx-click="load_earlier" class="btn btn-ghost btn-xs">
-              {gettext("Earlier messages")}
-            </button>
-          </div>
-          <div :if={@pinned != []} id="pk-agent-pinned" class="space-y-3 pb-3">
-            <.feed_message :for={message <- @pinned} id={"pk-agent-pinned-" <> message.uuid} message={message} />
-          </div>
-          <div id="pk-agent-feed" phx-update="stream" class="space-y-3">
-            <div id="pk-agent-feed-empty" class="hidden only:block py-8 text-center text-xs opacity-60">
-              {gettext("Ask about anything you can see in the system.")}
+        <%!-- `style` belongs to `.Feed` (it hides the feed while it is being pinned to the end) --%>
+        <div
+          class="flex-1 min-h-0 overflow-y-auto px-3 py-3"
+          id="pk-agent-feed-scroll"
+          phx-hook=".Feed"
+          phx-mounted={JS.ignore_attributes(["style"])}
+          data-conversation={@conversation && @conversation.uuid}
+          data-restored={@restored}
+        >
+          <div id="pk-agent-feed-content">
+            <div :if={@earlier?} class="pb-3 text-center">
+              <button id="pk-agent-earlier" type="button" phx-click="load_earlier" class="btn btn-ghost btn-xs">
+                {gettext("Earlier messages")}
+              </button>
             </div>
-            <.feed_message :for={{dom_id, message} <- @messages} id={dom_id} message={message} />
+            <div :if={@pinned != []} id="pk-agent-pinned" class="space-y-3 pb-3">
+              <.feed_message :for={message <- @pinned} id={"pk-agent-pinned-" <> message.uuid} message={message} />
+            </div>
+            <div id="pk-agent-feed" phx-update="stream" class="space-y-3">
+              <div id="pk-agent-feed-empty" class="hidden only:block py-8 text-center text-xs opacity-60">
+                {gettext("Ask about anything you can see in the system.")}
+              </div>
+              <.feed_message :for={{dom_id, message} <- @messages} id={dom_id} message={message} />
+            </div>
           </div>
         </div>
 
@@ -197,7 +209,13 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           </span>
         </div>
 
-        <.composer upload={@upload} unsent={@unsent} turn_ref={@turn_ref} activity={@activity} />
+        <.composer
+          upload={@upload}
+          user_uuid={@user_uuid}
+          unsent={@unsent}
+          turn_ref={@turn_ref}
+          activity={@activity}
+        />
       </section>
     </div>
     """
@@ -316,6 +334,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
   end
 
   attr(:upload, :any, required: true)
+  attr(:user_uuid, :string, required: true)
   attr(:unsent, :list, required: true)
   attr(:turn_ref, :string, default: nil)
   attr(:activity, :any, required: true)
@@ -328,37 +347,15 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       phx-change="composer_change"
       class="border-t border-base-300 p-3 space-y-2"
     >
-      <ul :if={@unsent != [] or @upload.entries != []} id="pk-agent-attachments" class="flex flex-wrap gap-1.5">
+      <ul :if={@unsent != []} id="pk-agent-attachments" class="flex flex-wrap gap-1.5">
         <.attachment_chip :for={attachment <- @unsent} attachment={attachment} />
-        <li
-          :for={entry <- @upload.entries}
-          id={"pk-agent-upload-#{entry.ref}"}
-          class="flex items-center gap-2 rounded-box border border-base-300 px-2 py-1 text-xs"
-        >
-          <span class="truncate max-w-[10rem]">{entry.client_name}</span>
-          <progress :if={entry.valid? and not entry.done?} class="progress progress-primary w-12" value={entry.progress} max="100"></progress>
-          <span :if={entry.done?} class="loading loading-spinner loading-xs"></span>
-          <span :for={err <- upload_errors(@upload, entry)} class="text-error">
-            {Texts.upload_error(err)}
-          </span>
-          <%!-- A finished upload is with `Attachments.add/4` already: it is no longer the browser's to cancel --%>
-          <button
-            :if={not entry.done?}
-            type="button"
-            phx-click="cancel_upload"
-            phx-value-ref={entry.ref}
-            class="btn btn-ghost btn-xs btn-circle"
-            aria-label={gettext("Cancel")}
-          >
-            <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
-          </button>
-        </li>
       </ul>
       <p :for={err <- upload_errors(@upload)} class="text-xs text-error">
         {Texts.upload_error(err)}
       </p>
 
       <input type="hidden" name="message[page]" value="" data-pk-agent-page />
+      <input type="hidden" name="message[uploads_waiting]" value="" data-pk-agent-uploads-waiting />
       <%!-- A raw textarea: its hook owns its value (phx-update="ignore") --%>
       <textarea
         id="pk-agent-input"
@@ -371,30 +368,46 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         aria-label={gettext("Message")}
         class="textarea textarea-sm w-full resize-none text-sm"
       ></textarea>
-      <div class="flex items-center gap-2">
-        <label
-          for={@upload.ref}
-          class="btn btn-ghost btn-sm btn-circle"
-          aria-label={gettext("Attach a file")}
-          title={gettext("Attach a file")}
-        >
-          <.icon name="hero-paper-clip" class="w-4 h-4" />
-        </label>
-        <.live_file_input upload={@upload} class="hidden" />
-        <span class="flex-1"></span>
-        <button
-          :if={@turn_ref}
-          id="pk-agent-stop"
-          type="button"
-          phx-click="stop"
-          class="btn btn-sm btn-outline btn-error"
-          disabled={@activity == :stopping}
-        >
-          <.icon name="hero-stop" class="w-4 h-4" /> {gettext("Stop")}
-        </button>
-        <button id="pk-agent-send" type="submit" class="btn btn-sm btn-primary" disabled={!!@turn_ref}>
-          <.icon name="hero-paper-airplane" class="w-4 h-4" /> {gettext("Send")}
-        </button>
+      <%!-- The manager listens on the element it is placed in, where the file input is --%>
+      <div id="pk-agent-files">
+        <.upload_manager
+          id="pk-agent-uploads"
+          upload={@upload}
+          layout={:inline}
+          dropzone={false}
+          max_concurrent={3}
+          remember_scope={@user_uuid}
+        />
+        <div class="flex items-center gap-2">
+          <label
+            for={@upload.ref}
+            class="btn btn-ghost btn-sm btn-circle"
+            aria-label={gettext("Attach a file")}
+            title={gettext("Attach a file")}
+          >
+            <.icon name="hero-paper-clip" class="w-4 h-4" />
+          </label>
+          <.live_file_input upload={@upload} class="hidden" />
+          <span class="flex-1"></span>
+          <button
+            :if={@turn_ref}
+            id="pk-agent-stop"
+            type="button"
+            phx-click="stop"
+            class="btn btn-sm btn-outline btn-error"
+            disabled={@activity == :stopping}
+          >
+            <.icon name="hero-stop" class="w-4 h-4" /> {gettext("Stop")}
+          </button>
+          <button
+            id="pk-agent-send"
+            type="submit"
+            class="btn btn-sm btn-primary"
+            disabled={!!@turn_ref}
+          >
+            <.icon name="hero-paper-airplane" class="w-4 h-4" /> {gettext("Send")}
+          </button>
+        </div>
       </div>
     </form>
     """
@@ -407,18 +420,36 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         mounted() {
           this.key = this.el.dataset.storageKey
           const state = this.read()
-          if (typeof state.width === "number") {
-            document.body.style.setProperty("--pk-dock-width", this.clamp(state.width) + "px")
-          }
-          if (state.open === true) document.body.classList.add("pk-dock-open")
+          // What the user chose, kept here: the class is on <body>, outside the
+          // LiveView, and nothing else puts it back after a navigation.
+          this.open = state.open === true
+          this.width = typeof state.width === "number" ? this.clamp(state.width) : null
+          this.apply()
           this.handleEvent("pk-agent:store", (patch) => this.write(patch))
           this.el.addEventListener("pointerdown", (event) => {
             const handle = event.target.closest("[data-pk-agent-resize]")
             if (handle) this.resize(event, handle)
           })
+          this.el.addEventListener("click", (event) => {
+            if (event.target.closest("#pk-agent-close")) this.open = false
+          })
+          this.onStop = () => this.apply()
+          window.addEventListener("phx:page-loading-stop", this.onStop)
           this.restore()
         },
-        reconnected() { this.restore() },
+        updated() { this.apply() },
+        reconnected() {
+          this.apply()
+          this.restore()
+        },
+        destroyed() {
+          window.removeEventListener("phx:page-loading-stop", this.onStop)
+        },
+        apply() {
+          if (this.width) document.body.style.setProperty("--pk-dock-width", this.width + "px")
+          // Only ever adds: closing is the user's own act (the close button).
+          if (this.open === true) document.body.classList.add("pk-dock-open")
+        },
         restore() {
           const state = this.read()
           this.pushEvent("restore", {
@@ -438,6 +469,8 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           try {
             window.localStorage.setItem(this.key, JSON.stringify(Object.assign(this.read(), patch)))
           } catch (_error) {}
+          if (typeof patch.open === "boolean") this.open = patch.open
+          if (typeof patch.width === "number") this.width = patch.width
         },
         clamp(width) {
           const most = Math.max(320, Math.min(900, window.innerWidth - 360))
@@ -465,17 +498,174 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       {
         mounted() {
           this.stick = true
-          this.el.scrollTop = this.el.scrollHeight
+          this.navigating = false
+          this.conversation = this.el.dataset.conversation || ""
+          this.restored = this.el.dataset.restored || ""
+          this.restoredOnce = false
+          this.fromBottom = 0
+          this.away = null
+          this.held = null
+          // How long the chat may be gone and still count as a re-join.
+          this.rejoinMs = 10000
+          this.pin = () => { this.el.scrollTop = this.el.scrollHeight }
+          // The feed is hidden (not removed) until it stands at its end, so
+          // that no frame shows it at the top.
+          this.hide()
+          this.settle()
           this.el.addEventListener("scroll", () => {
-            this.stick = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 48
+            // A hidden panel (display: none) reports 0, and a sticky view that
+            // is moved by a navigation is reset to 0: neither is the user.
+            // Nor is the feed while its chat is gone (a re-join): it is empty.
+            // Nor is the feed while a remembered place waits for its content.
+            if (this.navigating || this.away || this.held !== null || this.el.clientHeight === 0) return
+            this.fromBottom = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight
+            this.stick = this.fromBottom < 48
           })
           this.observer = new MutationObserver(() => {
-            if (this.stick) this.el.scrollTop = this.el.scrollHeight
+            if (this.held !== null) this.apply()
+            else if (this.stick) this.pin()
           })
           this.observer.observe(this.el, {childList: true, subtree: true})
+          // The content, not only the scroller: a picture or a rendered card
+          // that grows late must keep the end in view while the user is there.
+          this.resizer = new ResizeObserver(() => {
+            if (this.stick) this.pin()
+          })
+          this.resizer.observe(this.el)
+          if (this.el.firstElementChild) this.resizer.observe(this.el.firstElementChild)
+          this.onStart = (event) => {
+            // Only a live navigation moves this view, and it resets the scroll.
+            if (event.detail && event.detail.kind === "redirect") {
+              this.navigating = true
+              this.navStick = this.stick
+              // If the stop never comes, the user's scrolling counts again.
+              clearTimeout(this.navFailsafe)
+              this.navFailsafe = setTimeout(() => { this.navigating = false }, 3000)
+            }
+          }
+          this.onStop = () => {
+            clearTimeout(this.navFailsafe)
+            if (this.navigating && this.navStick) this.stick = true
+            this.navigating = false
+            if (this.stick) this.settle()
+            else this.show()
+          }
+          window.addEventListener("phx:page-loading-start", this.onStart)
+          window.addEventListener("phx:page-loading-stop", this.onStop)
+        },
+        updated() {
+          // Another chat, or the first restore after the mount: start at the end.
+          // Later restores (a re-join) leave a user who reads older messages be.
+          const conversation = this.el.dataset.conversation || ""
+          const restored = this.el.dataset.restored || ""
+          const first = !this.restoredOnce && restored !== this.restored
+          if (restored !== this.restored) this.restoredOnce = true
+          const previous = this.conversation
+          this.conversation = conversation
+          this.restored = restored
+          if (conversation !== previous) this.release()
+          if (conversation === "") {
+            // A re-join mounts the panel afresh: no chat for a moment, then the
+            // restore brings it back. Where the reader was is kept for that.
+            if (previous !== "") {
+              this.away = {
+                conversation: previous,
+                stick: this.stick,
+                fromBottom: this.fromBottom,
+                restored: restored,
+                at: Date.now()
+              }
+            }
+            return
+          }
+          const away = this.away
+          this.away = null
+          // Only a re-join: the restore changes `restored`, and follows at once.
+          // The reader's own switch (a new chat, then this chat) does neither.
+          if (away && away.conversation === conversation && restored !== away.restored &&
+              Date.now() - away.at < this.rejoinMs) {
+            // The same chat again: the end for a reader who was at the end,
+            // else the place they were at (the distance from the end).
+            this.stick = away.stick
+            if (away.stick) {
+              this.hide()
+              this.settle()
+            } else {
+              this.hold(away.fromBottom)
+            }
+          } else if (conversation !== previous || first) {
+            this.stick = true
+            this.hide()
+            this.settle()
+          } else if (this.held !== null) {
+            this.apply()
+          } else if (this.stick) {
+            this.pin()
+          }
+        },
+        reconnected() {
+          if (this.stick) this.pin()
         },
         destroyed() {
+          window.removeEventListener("phx:page-loading-start", this.onStart)
+          window.removeEventListener("phx:page-loading-stop", this.onStop)
           if (this.observer) this.observer.disconnect()
+          if (this.resizer) this.resizer.disconnect()
+          clearTimeout(this.failsafe)
+          clearTimeout(this.navFailsafe)
+          clearTimeout(this.heldFailsafe)
+        },
+        hide() {
+          this.el.style.visibility = "hidden"
+          clearTimeout(this.failsafe)
+          this.failsafe = setTimeout(() => this.show(), 1500)
+        },
+        show() {
+          clearTimeout(this.failsafe)
+          this.el.style.visibility = ""
+        },
+        // The place to go back to waits until the content is tall enough for it
+        // (the messages may come in a later patch than the chat): the browser
+        // would clamp it to the top, and the scroll that follows would be taken
+        // for the reader's.
+        hold(fromBottom) {
+          this.held = fromBottom
+          // If the content never comes, the reader's own scrolling counts again.
+          clearTimeout(this.heldFailsafe)
+          this.heldFailsafe = setTimeout(() => { this.held = null }, 3000)
+          this.apply()
+        },
+        apply() {
+          if (this.held === null) return
+          if (this.el.scrollHeight - this.el.clientHeight < this.held) return
+          const fromBottom = this.held
+          this.release()
+          this.keep(fromBottom)
+        },
+        release() {
+          this.held = null
+          clearTimeout(this.heldFailsafe)
+        },
+        keep(fromBottom) {
+          const put = () => {
+            this.el.scrollTop = this.el.scrollHeight - this.el.clientHeight - fromBottom
+            this.fromBottom = fromBottom
+          }
+          put()
+          requestAnimationFrame(() => {
+            put()
+            requestAnimationFrame(put)
+          })
+        },
+        settle() {
+          this.pin()
+          requestAnimationFrame(() => {
+            this.pin()
+            requestAnimationFrame(() => {
+              this.pin()
+              this.show()
+            })
+          })
         }
       }
     </script>
@@ -492,6 +682,15 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             this.el.form.addEventListener("submit", () => {
               const page = this.el.form.querySelector("[data-pk-agent-page]")
               if (page) page.value = window.location.pathname
+              // Files the upload manager still holds in the browser are no entry
+              // of the server's yet: it is told, and refuses the send.
+              const waiting = this.el.form.querySelector("[data-pk-agent-uploads-waiting]")
+              if (waiting) {
+                const busy = this.el.form.querySelector(
+                  '#pk-agent-uploads li[data-state="queued"], #pk-agent-uploads li[data-state="uploading"]'
+                )
+                waiting.value = busy ? "1" : ""
+              }
             }, true)
           }
           this.handleEvent("pk-agent:sent", () => { this.el.value = "" })

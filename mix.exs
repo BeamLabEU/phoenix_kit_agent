@@ -92,7 +92,14 @@ defmodule PhoenixKitAgent.MixProject do
       # allow: :all, redeem_as/6, tool_availability/1), API.Confirm, the
       # OperationPreview component, SessionRef and hidden Storage libraries.
       # 2.64 is the first release with the AI journal's cost in dollars (V223).
-      pk_dep(:phoenix_kit, ">= 2.64.0 and < 4.0.0"),
+      #
+      # Core's UploadManager is on main, not in a release yet; back to a Hex
+      # requirement once one ships.
+      pk_dep(:phoenix_kit,
+        git: "https://github.com/BeamLabEU/phoenix_kit.git",
+        ref: "2adb71b107a5094029e29990c82e8795e505b1cb",
+        override: true
+      ),
 
       # Model calls, endpoints, credentials, budget and the request journal
       # come from phoenix_kit_ai; this module only adds the chat layer: the AI
