@@ -50,11 +50,11 @@ and `Web.Markdown`).
   `API.Confirm`, the `OperationPreview` component,
   `Executor.tool_availability/1`; the AI journal's cost in dollars, V223 —
   `~> 2.64` for those — and the chat's file input, core's `UploadManager` and
-  `ResumableUpload`, which no release carries yet: `mix.exs` pins core to a git
-  ref until one ships, and goes back to a Hex requirement whose floor is that
-  release; a module with a git dependency cannot be published to Hex),
+  `ResumableUpload`, and the linked Telegram chat as an actor: `>= 3.4.0` in
+  `mix.exs`, the first release with all of them),
   `phoenix_kit_ai` `~> 0.26` (the AI task guard, tool calling, a call's
-  cost from one place, `Request.cost` in dollars), `phoenix_live_view`, and
+  cost from one place, `Request.cost` in dollars; `transcribe/3`, optional,
+  for voice), `phoenix_live_view`, and
   `mdex` (already phoenix_kit's) for the markdown of the chat panel.
 - **Module key** `"agent"`; settings prefix `agent_`; tables
   `phoenix_kit_agent_*` (marker `pk_agent_schema:<N>` on
@@ -271,6 +271,205 @@ and `Web.Markdown`).
   a new choice; the lift of a block goes through `Web.Access` and then
   `Guard.unblock/3` with the session's scope (the guard decides own and
   Owner blocks).
+- **Voice** (`PhoenixKitAgent.Speech`): a recording is written down by the
+  speech model (`agent_speech_endpoint_uuid`, `Config.put_speech_endpoint/2`,
+  the AI task `agent.speech`, needs `[:audio_input]`; validated like the vision
+  model on Settings → AI Agent). `Config.speech?/0` is the one question —
+  `Config.transcribe?/0` (`PhoenixKitAI.transcribe/3` exists: feature-detected,
+  since the requirement of `phoenix_kit_ai` is below the first release with it;
+  `config :phoenix_kit_agent, :speech_ai` stands in for the module in tests)
+  and a model is chosen; empty = voice off everywhere. On an AI module without
+  it Settings does not offer the speech select (it says voice needs a newer AI
+  module) and refuses a forged field; a capabilities map without the
+  `audio_input` key is `:unknown` for the model (`Models.flag_support/2`, never
+  `Map.fetch!`). `Speech.transcribe/4` takes a
+  session reference (a site session or a Telegram chat, `impersonated:` in the
+  options), never a uuid: it checks the AI module, the session as
+  `Conversations.authorize_session/2` does, the size (10 MB) and the user's
+  limits (`use: :speech`) — `Speech.check/2` — and asks them **again** under a
+  `:global` lock per user, right before paying, so each sees what the last cost
+  and a session, a link or a limit that went while it waited is seen. It calls with `user_uuid:`, `source: "agent"`, `task:
+  "agent.speech"`, `capture_request_content: false`, `cache: false`; the result
+  is `{:ok, text}` or a code (`:speech_off`, `:no_speech`, `:too_long`,
+  `:unfit`, `:budget_exceeded`, `:task_blocked`, `:rate_limited`, `:failed`, …,
+  texts in `Web.Dock.Texts.speech_error/1`, the guard's and the provider's
+  refusals worded as for a turn). Neither
+  the audio nor the words are logged or kept. **Telegram:** a `voice` or `audio`
+  message (audio files are accepted as well as voice messages) of a linked, fresh, private, non-forwarded chat is a `:voice` job in
+  the same `ChatQueue` (its place keeps the order); `Telegram.Turn` checks the
+  speech model, the chat's link and rights (`Conversations.authorize_session/2`,
+  so `agent.telegram`) the user's limits (`Speech.check/2`) and the length (120 s,
+  Telegram's `duration`; a message with none relies on the 10 MB bound) and
+  size (10 MB) **before** the
+  download (`Client.download_file/3` → core's `Telegram.download_file/3`,
+  `{:error, :unavailable}` on a core without it; `Client.can_download?/0` says
+  so up front: such a core's voice and pictures are `text_only` and the help
+  text has no voice line), then sends "🎙 Recognised: …"
+  (`typing` is sent every 4 s while it recognises, as in a turn)
+  and runs the normal `:turn` with the text; any error is a `Texts.speech/1`
+  text and 🤷, no turn. **Panel:** the microphone is core's
+  `PhoenixKitWeb.Components.Core.AudioRecorder` (named as an atom in the
+  template and `Code.ensure_loaded?`-checked, since older cores lack it), id
+  `pk-agent-mic`; `{:audio_recorded, "pk-agent-mic", clip}` goes through
+  `info/2` (so `guarded/2`) into `start_async(:speech, …)`, whose function runs the call with `detached/1`
+  (a task of `Confirmations.TaskSupervisor`, not linked to the panel: a closed
+  tab does not cut a paid call short before it is journaled) under
+  `safe_transcribe/4` (logs the class only); the panel waits `:speech_wait_ms`
+  (2 minutes), then frees the microphone and a late answer is let go; the words reach the composer as the push event
+  `pk-agent:dictated` (the textarea is `phx-update="ignore"`) and nothing is
+  sent by itself.
+- **Pictures from Telegram:** a `photo` (the largest size of up to 10 MB, by
+  its `file_size`, not its place in the list), or a
+  `document` whose type is image/jpeg, png or webp, of a linked, fresh,
+  private, non-forwarded chat is a `:photo` job (the caption is its text; its
+  `media_group_id` the job's `group`). `Telegram.Turn` checks the chat as for
+  text (`Conversations.authorize_session/2`, before "👀") and, for each
+  picture, what can be known without the file
+  (`Attachments.precheck_picture_for_telegram/3`: the size limit, a model that
+  could neither see nor describe), then downloads it
+  (`Client.download_file/3`, 10 MB), and adds it with the **only** attachment
+  entry point open to a chat: `Attachments.add_picture_for_telegram/3` — the
+  panel's `add/4` flow unchanged (ownership, size, `Detect` by content, only a
+  picture is taken: a "picture" that is a PDF is `:unsupported_type`, quotas,
+  Library, `Processor`, `Jpeg.strip_metadata`, `picture_mode/1`: pixels, a
+  description, or `:no_vision_model` before anything is stored), the bytes
+  written to a `Work` scratch directory. The pictures are added **one at a
+  time**, each read (`get_for_telegram/2`, `Attachments.TaskSupervisor`
+  events or a poll every second, "typing" every 4 s) before the next, so the
+  places for descriptions are free in turn; the whole wait is bounded by
+  `Bounds` queue wait + process deadline + 10 s (`:telegram_attachment_wait_ms`
+  in tests). What no message took is removed by `discard_for_telegram/2` (a
+  chat has no panel to discard in) whatever ends the turn (`try … after`); a
+  turn killed outright cannot, so `sweep_unsent_for_telegram/3` removes the
+  chat's unsent pictures older than that wait bound + 5 s before the next
+  picture (they would count against `max_attachments_per_message`); only the
+  files the bridge added, which are all stored under the name
+  `telegram-picture` (the sender's file name is not kept), never a panel upload
+  to the same conversation. The turn runs on the
+  caption, else "What is in this picture?" in the user's language. The
+  pictures of one album are **one turn**: the album's parts are siblings of a
+  job of the same group that runs **or waits** in `ChatQueue` (not counted
+  among the 3 waiting ones, at most nine; so a part of an album that comes while a job of its album runs or waits is not told "wait a little"); the first
+  picture's job waits `:telegram_album_settle_ms` (1 s) and takes the siblings
+  (`take_siblings/3`; a waiting job gets its own when it starts; siblings not
+  taken run as one job in front of the waiting ones). A part that comes after
+  the siblings were taken is a job of its own with its own answer. A refused
+  album (the chat's rights) is refused once. At most
+  `max_attachments_per_message` pictures go in, the first ones; one short
+  message tells how many were left out and how many could not be read.
+  Other documents (PDF, sheets) stay refused as text only (the help and the
+  refusal say what the bot reads: text, pictures, and voice messages where they
+  are on).
+- **A linked Telegram chat** is the second kind of actor reference,
+  `{:telegram_link, user_uuid, connection_uuid, chat_id}` (core's
+  `Linking.actor_ref/2`, built from an update read at the bot, never from a
+  text). `Conversations` checks it on every call instead of the session: the
+  link now (`Linking.linked_user/2`; gone is `:session_gone`), the session's
+  account gate (`SessionRef.scope_for_user/2`, the default role) and the
+  sub-permission `agent.telegram` (declared `opt_in: true`; `:forbidden`
+  without it). What a chat may do depends on the core: where it has
+  `PhoenixKit.API.Executor.link_writes?/0` — asked in **one place only**,
+  `Config.writes?/0` (it feature-detects, since the core requirement of the
+  module is below the first release with it; `config :phoenix_kit_agent,
+  :telegram_link_writes` stands in for it in tests, and `:api_modules`
+  (`executor:`, `confirm:`) for the core's modules, see
+  `test/support/fake_core.ex`) — a chat proposes changes as the site does
+  (below) and everything that follows (`Turns.Runner`'s `allow: :all, via:
+  "telegram"`, the prompt rule, the help text, the button presses of the
+  bridge, `allowed_updates` of the reader, `settle_lapsed_in_turn`, the edits of
+  the cards) follows that one answer; without it a chat reads only (no `allow:
+  :all`, no `via:`, core's own "telegram"). `Prompt` gets `channel: :telegram`
+  (plain text, absolute links, and the chat's rule on changes instead of the
+  site's write rule). `Attachments` refuses a chat with `:not_in_telegram` (but for the
+  bridge's pictures, below), and so does `Confirmations` for everything but the presses below.
+  Limits, locks and the user's
+  own model, instructions and spending are the user's, as for the panel. The
+  trusted entry points of a bridge, which take no session and are never for a
+  client's event: `Conversations.create_conversation_for/2`,
+  `latest_telegram_conversation/1`, `turn_result/2` (a notice with an error
+  code of the turn outranks any text it said; a turn that ended with a change
+  held is `{:needs_confirmation, text, card}`, and `turn_error/2` is the error
+  that followed the hold), `turn_denied?/2` (the turn asked for a write tool
+  and was refused), `put_telegram_card/6` and `telegram_card/2` (where a card
+  was sent). The panel marks a chat whose
+  `metadata.source` is `"telegram"`.
+- **The Telegram reader and bridge** (`PhoenixKitAgent.Telegram.*`, started
+  by `children/0`; off by default, the switch is `agent_telegram_enabled` on
+  Settings → AI Agent, `agent.manage`). `Reader` is the one reader of the site
+  bot (`getUpdates`); the host declares `config :phoenix_kit,
+  :telegram_updates_reader, {PhoenixKitAgent.Telegram.Reader, :holds?, []}`.
+  `holds?/1` is only `:global.whereis_name/1` (it never calls the process, which
+  may be in a long poll), and the name is registered only while the reader
+  really polls (switch on, a bot, no webhook). A reader that lost the name
+  (`{:global_name_conflict, name}` after a netsplit, or a check before each
+  poll) stops reading and is `standby`. The offset
+  (`agent_telegram_offset`, `"<connection uuid>:<update id>"`, written with
+  `history: false`) is stored **before** the batch goes on — also from the
+  `confirm:` of `Linking.handle_updates/3` — so an update is answered at most
+  once; `:busy` leaves it alone and the batch is read again in 2 s. A 409
+  "Conflict" pauses 60 s (status, one warning per 10 minutes); other errors
+  back off 5 → 60 s. `Bridge.handle_update/3` decides (it reads the link and remembers an unlinked
+  chat in the limiter's table, sends nothing):
+  only a private text message of a chat `Linking.chat_for_update/1` knows, not
+  older than 10 minutes; `/start <anything>` never reaches the agent (core's),
+  bare `/start` and `/help` get the help text, `/new` a new conversation,
+  forwarded messages and anything but text and voice a fixed refusal (voice: see Voice); an edited message
+  or a group is ignored. `Bridge.dispatch/3` runs it: a per-chat serial queue
+  (`ChatQueue`: a process per `{bot, chat}`, at most 3 waiting, 20 queues in
+  all, overflow texts "wait" / "busy") and the turns in
+  `PhoenixKitAgent.Telegram.TaskSupervisor`; the replies that need no turn run
+  under their own `ReplySupervisor` and come to a linked chat once in 3 s at
+  most for each kind (`Limiter.allow_quick_reply?/3`: a refusal is still told
+  right after a help). A queue that cannot start a turn (the
+  supervisor is full) answers "busy" and stays. A turn (`Telegram.Turn`)
+  subscribes to `agent:conv:<uuid>` **before** `Turns.start/6`, shows 👀, sends
+  `typing` every 4 s, then `Conversations.turn_result/2` becomes the answer
+  (markdown cleaned to plain text by `Format`, addresses left whole, cut to
+  4096 UTF-16 units, one message a second, one retry on a 429) with 👍 — only
+  when it was sent and no write tool of the turn was denied (a request to change
+  something, `Conversations.turn_denied?/2`; a made-up or refused read tool is
+  not one) — or a notice / refusal in the
+  user's language (`Telegram.Texts`, `RecipientLocale`) with 🤷. A chat nobody
+  linked is remembered for 60 s (`Limiter`) and told once per 10 minutes,
+  20 such replies a minute per bot. Nothing of an update's text or the bot's
+  token lives in a process state (the reader and the queues are
+  `:sensitive` and their `format_status` hides the state, the message and the
+  arguments of a failure; a job holds its text only while it runs, in a task
+  that catches its own exceptions) or in a log: a failure logs its
+  class and the `update_id`. In the test env the reader does not poll by itself
+  (`telegram_reader_autostart: false`); `Reader.cycle/2` is one look and one
+  poll, and `PhoenixKitAgent.Test.TelegramClient` plays the bot.
+- **Changes from Telegram** (`Telegram.Card`, `Cards`, `Press`; only where
+  `Config.writes?/0`). The turn ends at the hold as on the site (one waiting
+  write, no model call after it), and `Telegram.Turn` sends what the assistant
+  said, then **the card**: plain text of core's preview
+  (`Approvals.View.preview/1`; a `technical` remainder is cut at 1500
+  characters and then only ❌ is offered) read with the chat's own reference
+  (`Confirm.get_for_user/2`) and the buttons ✅ / ❌ whose data is `c:` / `x:`
+  and the confirmation's uuid and nothing else. A card that could not be sent
+  is one message that sends the person to the site, and 🤷. Where it went is
+  kept in `conversation.metadata["telegram_cards"]` (bot, chat, message; the
+  newest 50; one row-locked write, `Conversations.put_telegram_card/6`).
+  The row is the chat's (core binds it by `context`); a row of the site is
+  `:foreign` / `other_origin` to the chat, and the chat never settles or doubles
+  it (`waiting_same?/3` reads it with `lookup_for_user/2`). A press
+  (`Bridge` → `Press`, a task of the `ReplySupervisor`, never the chat's queue):
+  10 a minute per chat, a private chat, linked, strict data, then
+  `Confirmations.precheck/2` (the card by its confirmation, in a conversation
+  of this user and this chat, however old; its notice; the row's status) — a
+  refusal is a toast and, for a card that is gone, ran out or was handled, an
+  edit without buttons; otherwise the message is remembered, an **empty**
+  `answerCallbackQuery` goes out, then `Confirmations.confirm_press/3` /
+  `reject_press/3` (the site's click under the user's lock, `via:
+  "telegram"`). A press that did not go through and left the buttons is a line
+  under the card (re-read right before the edit). The outcome itself is shown
+  by `Cards.notice_added/1` only, called from `Conversations` once a `notice`
+  with a `confirmation_uuid` is committed in a Telegram conversation — also
+  when the site wrote it — in a task, for the bot the card was sent by, with
+  the switch on: the edit to the outcome, and for `changed` the new card. A
+  card that runs out untouched keeps its buttons until pressed. Without
+  `agent.telegram` neither ✅ nor ❌ works; without the right to the tool ✅
+  is refused and ❌ works.
 - **Boundaries:** nothing about orders, customers or other host domain data
   lives here — the module only knows "tools from the registry". Model calls,
   budget and the request journal stay in `phoenix_kit_ai`.

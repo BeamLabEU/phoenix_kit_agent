@@ -12,6 +12,59 @@ defmodule PhoenixKitAgent.ConfigTest do
   alias PhoenixKitAgent.Config
   alias PhoenixKitAgent.Test.LogProbe
 
+  describe "writes?/0, the one question about the core" do
+    defmodule WithWrites do
+      def link_writes?, do: true
+    end
+
+    defmodule WithoutWrites do
+    end
+
+    defmodule WritesOff do
+      def link_writes?, do: false
+    end
+
+    setup do
+      forced = Application.get_env(:phoenix_kit_agent, :telegram_link_writes)
+      Application.delete_env(:phoenix_kit_agent, :telegram_link_writes)
+
+      on_exit(fn ->
+        Application.put_env(:phoenix_kit_agent, :telegram_link_writes, forced)
+        Application.delete_env(:phoenix_kit_agent, :api_modules)
+      end)
+    end
+
+    test "true when the core says its chats may hold writes" do
+      Application.put_env(:phoenix_kit_agent, :api_modules, executor: WithWrites)
+      assert Config.writes?()
+    end
+
+    test "false for a core without the function, and for one that says no" do
+      Application.put_env(:phoenix_kit_agent, :api_modules, executor: WithoutWrites)
+      refute Config.writes?()
+
+      Application.put_env(:phoenix_kit_agent, :api_modules, executor: WritesOff)
+      refute Config.writes?()
+    end
+
+    test "the setting stands in for the core's answer, either way" do
+      Application.put_env(:phoenix_kit_agent, :api_modules, executor: WithoutWrites)
+      Application.put_env(:phoenix_kit_agent, :telegram_link_writes, true)
+      assert Config.writes?()
+
+      Application.put_env(:phoenix_kit_agent, :api_modules, executor: WithWrites)
+      Application.put_env(:phoenix_kit_agent, :telegram_link_writes, false)
+      refute Config.writes?()
+    end
+
+    test "without any setting it is core's own answer" do
+      executor = PhoenixKit.API.Executor
+
+      assert Config.writes?() ==
+               (function_exported?(executor, :link_writes?, 0) and executor.link_writes?())
+    end
+  end
+
   describe "defaults" do
     test "the limits are $1 a day, $10 a month, 200 turns, 20 MB files, 5 per message" do
       assert Config.limit_defaults() == %{
@@ -160,6 +213,55 @@ defmodule PhoenixKitAgent.ConfigTest do
 
       assert Settings.get_setting("agent_default_endpoint_uuid", nil) in [nil, ""]
       assert Settings.get_setting("agent_vision_endpoint_uuid", nil) in [nil, ""]
+    end
+  end
+
+  describe "the speech model" do
+    test "is set to an AI endpoint that takes audio, and back to none" do
+      endpoint = declared(%{model: "a/ears"}, %{"audio_input" => "yes"})
+
+      assert {:ok, _} = Config.put_speech_endpoint(endpoint.uuid, [])
+      assert Config.speech_endpoint_uuid() == endpoint.uuid
+      assert Config.speech?()
+
+      assert {:ok, _} = Config.put_speech_endpoint(nil, [])
+      assert Config.speech_endpoint_uuid() == nil
+      refute Config.speech?()
+    end
+
+    test "a model known not to take audio is refused (agent.speech), nothing is written" do
+      deaf = declared(%{model: "a/deaf"}, %{"audio_input" => "no"})
+
+      assert {:error, {:model_unfit, [:audio_input]}} = Config.put_speech_endpoint(deaf.uuid, [])
+      assert Settings.get_setting("agent_speech_endpoint_uuid", nil) in [nil, ""]
+    end
+
+    test "a model nobody knows about is refused until it is marked" do
+      unknown = endpoint_fixture(%{model: "a/unknown-ears"})
+
+      assert {:error, {:model_unverified, [:audio_input]}} =
+               Config.put_speech_endpoint(unknown.uuid, [])
+    end
+
+    test "an endpoint that is not there is refused" do
+      assert {:error, :invalid_endpoint} =
+               Config.put_speech_endpoint(Ecto.UUID.generate(), [])
+    end
+
+    test "speech? is off while the AI module cannot write speech down" do
+      endpoint = declared(%{model: "a/ears2"}, %{"audio_input" => "yes"})
+      {:ok, _} = Config.put_speech_endpoint(endpoint.uuid, [])
+      Application.put_env(:phoenix_kit_agent, :speech_ai, __MODULE__)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
+
+      refute Config.speech?()
+    end
+
+    test "the guard knows the task, which needs audio and names the speech endpoint" do
+      task = Enum.find(PhoenixKitAgent.ai_tasks(), &(&1.key == "agent.speech"))
+
+      assert task.needs == [:audio_input]
+      assert task.endpoints == {PhoenixKitAgent.Config, :speech_endpoint_uuid, []}
     end
   end
 

@@ -12,6 +12,7 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Users.{Permissions, RoleAssignment, Roles}
   alias PhoenixKitAgent.Config
+  alias PhoenixKitAgent.Telegram.Reader
   alias PhoenixKitAgent.Test.{LogProbe, Tools}
 
   @path "/en/admin/settings/agent"
@@ -192,6 +193,135 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
 
       assert has_element?(view, "#agent-settings-form")
       assert Config.limit_defaults().daily_turn_limit == 200
+    end
+  end
+
+  describe "the speech model: Settings → AI Agent sets the model that writes speech down" do
+    setup %{conn: conn} do
+      manager = user_with(["agent", "agent.manage"], "manager")
+
+      %{
+        conn: log_in(conn, manager),
+        manager: manager,
+        hears: declared(%{name: "Hears", model: "a/ears"}, %{"audio_input" => "yes"}),
+        deaf: declared(%{name: "Deaf", model: "a/deaf"}, %{"audio_input" => "no"}),
+        direct: endpoint_fixture(%{name: "Direct", provider: "deepseek", model: "deepseek-chat"})
+      }
+    end
+
+    test "the choice is the AI endpoints, marked when their model does not take audio", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+      speech = fn e -> "#agent-speech-endpoint option[value='#{e.uuid}']" end
+
+      for e <- [ctx.hears, ctx.deaf, ctx.direct], do: assert(has_element?(view, speech.(e)))
+      assert has_element?(view, "#agent-speech-hint")
+
+      _ = render_async(view)
+
+      refute has_element?(view, speech.(ctx.hears), "audio")
+      assert has_element?(view, speech.(ctx.deaf), "does not take audio")
+      assert has_element?(view, speech.(ctx.direct), "audio unknown")
+    end
+
+    test "saves it, with who in the settings history, and back to none", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      view
+      |> form("#agent-models-form", models: %{speech_endpoint_uuid: ctx.hears.uuid})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-info")
+      assert Config.speech_endpoint_uuid() == ctx.hears.uuid
+      assert [entry] = settings_entries("agent_speech_endpoint_uuid")
+      assert entry.actor_uuid == ctx.manager.uuid
+      # The other two were not touched.
+      assert Config.default_endpoint_uuid() == nil
+      assert Config.vision_endpoint_uuid() == nil
+
+      view
+      |> form("#agent-models-form", models: %{speech_endpoint_uuid: ""})
+      |> render_submit()
+
+      assert Config.speech_endpoint_uuid() == nil
+    end
+
+    test "a model that does not take audio, or nobody knows about, is refused", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      view
+      |> form("#agent-models-form", models: %{speech_endpoint_uuid: ctx.deaf.uuid})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      assert render(view) =~ "does not take audio"
+
+      view
+      |> form("#agent-models-form", models: %{speech_endpoint_uuid: ctx.direct.uuid})
+      |> render_submit()
+
+      assert render(view) =~ "nobody knows whether its model takes audio"
+      assert Config.speech_endpoint_uuid() == nil
+      assert settings_entries("agent_speech_endpoint_uuid") == []
+    end
+
+    test "on an AI module that cannot write speech down there is no speech select", ctx do
+      Application.put_env(:phoenix_kit_agent, :speech_ai, __MODULE__)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      refute has_element?(view, "#agent-speech-endpoint")
+      refute has_element?(view, "#agent-speech-hint")
+      assert has_element?(view, "#agent-speech-unavailable", "newer version of the AI module")
+
+      # A forged field is refused, even for a model that would be fine.
+      render_hook(view, "save_models", %{"models" => %{"speech_endpoint_uuid" => ctx.hears.uuid}})
+
+      assert Config.speech_endpoint_uuid() == nil
+      assert settings_entries("agent_speech_endpoint_uuid") == []
+    end
+
+    test "a speech model that reports no cost is warned about", ctx do
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", ctx.direct.uuid)
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-speech-money-off")
+
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", "")
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      refute has_element?(view, "#agent-speech-money-off")
+    end
+
+    test "a model the page did not offer is refused", ctx do
+      embedder = endpoint_fixture(%{name: "Embed", model: "openai/text-embedding-3-small"})
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      for forged <- [Ecto.UUID.generate(), embedder.uuid, "not-a-uuid", ["x"]] do
+        render_hook(view, "save_models", %{"models" => %{"speech_endpoint_uuid" => forged}})
+      end
+
+      assert Config.speech_endpoint_uuid() == nil
+      assert settings_entries("agent_speech_endpoint_uuid") == []
+    end
+
+    test "a page opened before the right was taken away saves no speech model", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      [role] =
+        ctx.manager
+        |> Roles.get_user_roles()
+        |> Enum.reject(&(&1 in ["Owner", "Admin", "User"]))
+        |> Enum.map(&Roles.get_role_by_name/1)
+
+      :ok = Permissions.revoke_permission(role.uuid, "agent.manage")
+
+      view
+      |> form("#agent-models-form", models: %{speech_endpoint_uuid: ctx.hears.uuid})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      assert Config.speech_endpoint_uuid() == nil
     end
   end
 
@@ -643,6 +773,133 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
 
       assert tool_status(view, "agenttest.list_items", "closed")
       assert tool_reason(view, "agenttest.list_items", "no_permission")
+    end
+  end
+
+  describe "the assistant in Telegram" do
+    alias PhoenixKitAgent.Test.TelegramClient
+
+    setup %{conn: conn} do
+      TelegramClient.start()
+      on_exit(&TelegramClient.stop/0)
+      manager = user_with(["agent", "agent.manage"], "tg_manager")
+      %{conn: log_in(conn, manager), manager: manager}
+    end
+
+    defp status_text(view), do: view |> element("#agent-telegram-status") |> render()
+
+    test "is off by default, and says so", %{conn: conn} do
+      {:ok, view, _html} = live(conn, @path)
+
+      assert has_element?(view, "#agent-telegram-form")
+      refute has_element?(view, "#agent-telegram-enabled[checked]")
+      assert status_text(view) =~ "Off"
+      refute Config.telegram_enabled?()
+    end
+
+    test "the switch is saved, with who saved it, and read back", %{conn: conn, manager: manager} do
+      {:ok, view, _html} = live(conn, @path)
+
+      view |> form("#agent-telegram-form", telegram: %{enabled: "true"}) |> render_submit()
+
+      assert has_element?(view, "#flash-info")
+      assert Config.telegram_enabled?()
+      assert has_element?(view, "#agent-telegram-enabled[checked]")
+      assert [entry] = settings_entries("agent_telegram_enabled")
+      assert entry.actor_uuid == manager.uuid
+
+      view |> form("#agent-telegram-form", telegram: %{enabled: "false"}) |> render_submit()
+      refute Config.telegram_enabled?()
+    end
+
+    test "the unchecked switch reaches the server as a value, not as a missing form", %{
+      conn: conn
+    } do
+      {:ok, _} = Config.put_telegram_enabled(true, [])
+      {:ok, view, _html} = live(conn, @path)
+
+      assert has_element?(
+               view,
+               "#agent-telegram-form input[type=hidden][name='telegram[enabled]']"
+             )
+    end
+
+    test "the status line names the bot once the switch is on", %{conn: conn} do
+      TelegramClient.set(:connection, UUIDv7.generate())
+      TelegramClient.set(:bot_username, "shop_helper_bot")
+      {:ok, _} = Config.put_telegram_enabled(true, [])
+
+      {:ok, view, _html} = live(conn, @path)
+
+      assert has_element?(view, "#agent-telegram-bot", "@shop_helper_bot")
+    end
+
+    test "with the switch off Telegram is not asked for the bot's name", %{conn: conn} do
+      TelegramClient.set(:connection, UUIDv7.generate())
+      test = self()
+      TelegramClient.set(:bot_username, fn -> send(test, :asked_for_the_name) end)
+
+      {:ok, view, _html} = live(conn, @path)
+
+      refute has_element?(view, "#agent-telegram-bot")
+      refute_received :asked_for_the_name
+    end
+
+    test "no bot name when no bot is chosen", %{conn: conn} do
+      {:ok, view, _html} = live(conn, @path)
+
+      refute has_element?(view, "#agent-telegram-bot")
+    end
+
+    test "the status line follows the state", %{conn: conn} do
+      {:ok, view, _html} = live(conn, @path)
+
+      view |> form("#agent-telegram-form", telegram: %{enabled: "true"}) |> render_submit()
+      assert status_text(view) =~ "No website bot"
+
+      connection = UUIDv7.generate()
+      TelegramClient.set(:connection, connection)
+      view |> form("#agent-telegram-form", telegram: %{enabled: "true"}) |> render_submit()
+      assert status_text(view) =~ "No default model"
+
+      endpoint = endpoint_fixture()
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", endpoint.uuid)
+      view |> form("#agent-telegram-form", telegram: %{enabled: "true"}) |> render_submit()
+      assert status_text(view) =~ "Switched on"
+
+      :yes = :global.register_name(Reader.name_of(connection), self())
+      on_exit(fn -> :global.unregister_name(Reader.name_of(connection)) end)
+      view |> form("#agent-telegram-form", telegram: %{enabled: "true"}) |> render_submit()
+      assert status_text(view) =~ "Reading"
+    end
+
+    test "a forged value or a form without fields changes nothing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, @path)
+
+      assert render_hook(view, "save_telegram", %{"telegram" => %{"enabled" => "maybe"}})
+      assert render_hook(view, "save_telegram", %{})
+      refute Config.telegram_enabled?()
+      assert Process.alive?(view.pid)
+    end
+
+    test "nothing is saved for a manager who lost the right after the page opened", %{
+      conn: conn,
+      manager: manager
+    } do
+      {:ok, view, _html} = live(conn, @path)
+
+      [role] =
+        manager
+        |> Roles.get_user_roles()
+        |> Enum.reject(&(&1 in ["Owner", "Admin", "User"]))
+        |> Enum.map(&Roles.get_role_by_name/1)
+
+      :ok = Permissions.revoke_permission(role.uuid, "agent.manage")
+
+      view |> form("#agent-telegram-form", telegram: %{enabled: "true"}) |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      refute Config.telegram_enabled?()
     end
   end
 

@@ -9,6 +9,7 @@ defmodule PhoenixKitAgent.Config do
   | `agent_enabled` | `false` (see `PhoenixKitAgent.enabled?/0`) |
   | `agent_default_endpoint_uuid` | none — the AI endpoint the assistant uses |
   | `agent_vision_endpoint_uuid` | none — describes images for a model without image input |
+  | `agent_speech_endpoint_uuid` | none — writes down voice messages and the panel's microphone; none = voice off |
   | `agent_system_prompt` | none — the module's system prompt (JSON `{"text": …}`) |
   | `agent_daily_cost_limit_micro_usd` | `1_000_000` ($1) |
   | `agent_monthly_cost_limit_micro_usd` | `10_000_000` ($10) |
@@ -21,6 +22,8 @@ defmodule PhoenixKitAgent.Config do
   | `agent_history_chars` | `24_000` |
   | `agent_tool_result_chars` | `12_000` |
   | `agent_capture_ai_content` | `false` |
+  | `agent_telegram_enabled` | `false` — answer the linked chats of the site's Telegram bot |
+  | `agent_telegram_offset` | none — `"<bot connection uuid>:<last update id>"`, kept by the reader |
 
   Money is in micro-dollars ($1 = 1_000_000); the AI journal keeps dollars
   (`phoenix_kit_ai_requests.cost`), read through `cost_to_micro/1`. A stored
@@ -31,9 +34,10 @@ defmodule PhoenixKitAgent.Config do
   Core keeps a string setting to 1000 characters, so the two settings that can
   be longer — the module prompt and the watchers — are JSON settings
   (`value_json`), written by `put_system_prompt/2` and `put_limit_watchers/2`.
-  The two models are written by `put_default_endpoint/2` and
-  `put_vision_endpoint/2`, which take only an AI endpoint that chats and fits
-  its AI task (`agent.chat`, `agent.attachment`).
+  The three models are written by `put_default_endpoint/2`,
+  `put_vision_endpoint/2` and `put_speech_endpoint/2`, which take only an AI
+  endpoint that chats and fits its AI task (`agent.chat`, `agent.attachment`,
+  `agent.speech`).
 
   Every writer records the change with who made it (`actor_uuid:` in `opts`)
   in the core Activity log: through the settings history (`setting.changed`,
@@ -60,6 +64,7 @@ defmodule PhoenixKitAgent.Config do
   alias PhoenixKitAI.Endpoint
 
   @module "agent"
+  @telegram_offset_key "agent_telegram_offset"
   @micro_per_usd 1_000_000
 
   # {field, setting key, default, min, max}
@@ -91,7 +96,7 @@ defmodule PhoenixKitAgent.Config do
   # The longest module prompt, in characters.
   @prompt_max 16_000
 
-  @typedoc "Why `put_default_endpoint/2` or `put_vision_endpoint/2` wrote nothing."
+  @typedoc "Why `put_default_endpoint/2`, `put_vision_endpoint/2` or `put_speech_endpoint/2` wrote nothing."
   @type endpoint_refusal ::
           :invalid_endpoint | {:model_unfit | :model_unverified, [atom()]}
 
@@ -125,6 +130,36 @@ defmodule PhoenixKitAgent.Config do
   @spec vision_endpoint_uuid() :: String.t() | nil
   def vision_endpoint_uuid, do: uuid_setting("agent_vision_endpoint_uuid")
 
+  @doc "The AI endpoint that writes down speech (voice messages, the panel's microphone), or `nil`."
+  @spec speech_endpoint_uuid() :: String.t() | nil
+  def speech_endpoint_uuid, do: uuid_setting("agent_speech_endpoint_uuid")
+
+  @doc """
+  Whether voice input is on: the AI module can write speech down
+  (`PhoenixKitAI.transcribe/3`, which the first releases of `phoenix_kit_ai`
+  lack, so it is feature-detected like `writes?/0`) and a speech model is
+  chosen. `config :phoenix_kit_agent, :speech_ai` names another module with
+  `transcribe/3` in tests.
+  """
+  @spec speech?() :: boolean()
+  def speech?, do: speech_endpoint_uuid() != nil and transcribe?()
+
+  @doc """
+  Whether the AI module at hand can write speech down at all
+  (`PhoenixKitAI.transcribe/3`, in the releases of `phoenix_kit_ai` after
+  0.27.0): the Settings page offers no speech model without it.
+  """
+  @spec transcribe?() :: boolean()
+  def transcribe? do
+    ai = speech_ai()
+    Code.ensure_loaded?(ai) and function_exported?(ai, :transcribe, 3)
+  end
+
+  @doc false
+  # The module that writes speech down: `PhoenixKitAI`, unless a test names another.
+  @spec speech_ai() :: module()
+  def speech_ai, do: Application.get_env(:phoenix_kit_agent, :speech_ai, PhoenixKitAI)
+
   @doc "The module's system prompt, or `nil`."
   @spec system_prompt() :: String.t() | nil
   def system_prompt do
@@ -150,7 +185,95 @@ defmodule PhoenixKitAgent.Config do
     string_setting("agent_capture_ai_content") == "true"
   end
 
+  @doc """
+  Whether the assistant answers the linked chats of the site's Telegram bot
+  (`agent_telegram_enabled`; on only when it reads exactly `"true"`).
+  """
+  @spec telegram_enabled?() :: boolean()
+  def telegram_enabled?, do: string_setting("agent_telegram_enabled") == "true"
+
+  @doc """
+  Whether the core this module runs on lets a linked Telegram chat hold a
+  write for the user's confirmation (`PhoenixKit.API.Executor.link_writes?/0`,
+  which the cores that do carry). The one place that asks: `Turns.Runner`
+  (the tools offered to a chat), `Prompt`, the help text, the bridge's button
+  presses, the reader's `allowed_updates`, `Confirmations` and the edits of a
+  card after its outcome all follow it, so on a core without it the module
+  works as before: a chat reads only.
+
+  The check can go when the core requirement of this module is raised to the
+  first release with it. `config :phoenix_kit_agent, :telegram_link_writes`
+  (`true` / `false`) stands in for the core's answer in tests.
+  """
+  @spec writes?() :: boolean()
+  def writes? do
+    case Application.get_env(:phoenix_kit_agent, :telegram_link_writes) do
+      nil ->
+        executor = core(:executor)
+
+        Code.ensure_loaded?(executor) and function_exported?(executor, :link_writes?, 0) and
+          executor.link_writes?() == true
+
+      forced ->
+        forced == true
+    end
+  end
+
+  @doc false
+  # The core module that answers for `:executor` or `:confirm`: core's own,
+  # unless `config :phoenix_kit_agent, :api_modules` names another (a test
+  # stands in for a core that lets a chat hold writes while the core at hand
+  # does not).
+  @spec core(:executor | :confirm) :: module()
+  def core(:executor), do: api_module(:executor, PhoenixKit.API.Executor)
+  def core(:confirm), do: api_module(:confirm, PhoenixKit.API.Confirm)
+
+  defp api_module(key, default) do
+    :phoenix_kit_agent |> Application.get_env(:api_modules, []) |> Keyword.get(key, default)
+  end
+
+  @doc """
+  The last update id the Telegram reader took from the bot `connection_uuid`,
+  or `nil` (none, or kept for another bot). Read from the database, not the
+  cache: a node that takes the bot over must see the last node's write.
+  """
+  @spec telegram_offset(String.t()) :: integer() | nil
+  def telegram_offset(connection_uuid) when is_binary(connection_uuid) do
+    with %{@telegram_offset_key => stored} when is_binary(stored) <-
+           Settings.get_settings_direct([@telegram_offset_key]),
+         [^connection_uuid, id] <- String.split(stored, ":", parts: 2),
+         {offset, ""} <- Integer.parse(id) do
+      offset
+    else
+      _none_or_another_bot -> nil
+    end
+  end
+
   # ── Writers ───────────────────────────────────────────────────────────
+
+  @doc """
+  Switches `agent_telegram_enabled`. `opts` go to `PhoenixKit.Settings`
+  (`actor_uuid:`, `source:`). The caller checks `agent.manage`.
+  """
+  @spec put_telegram_enabled(boolean(), keyword()) ::
+          {:ok, term()} | {:error, Ecto.Changeset.t()}
+  def put_telegram_enabled(value, opts) when is_boolean(value) do
+    Settings.update_boolean_setting_with_module("agent_telegram_enabled", value, @module, opts)
+  end
+
+  @doc false
+  # The reader's own write, once per batch: without the settings history,
+  # which would fill the Activity log with it.
+  @spec put_telegram_offset(String.t(), integer()) :: {:ok, term()} | {:error, term()}
+  def put_telegram_offset(connection_uuid, update_id)
+      when is_binary(connection_uuid) and is_integer(update_id) do
+    Settings.update_setting_with_module(
+      @telegram_offset_key,
+      "#{connection_uuid}:#{update_id}",
+      @module,
+      history: false
+    )
+  end
 
   @doc """
   Sets the module's system prompt (`agent_system_prompt`); a blank one means
@@ -215,6 +338,16 @@ defmodule PhoenixKitAgent.Config do
           {:ok, term()} | {:error, endpoint_refusal() | Ecto.Changeset.t()}
   def put_vision_endpoint(uuid, opts),
     do: put_endpoint("agent_vision_endpoint_uuid", "agent.attachment", uuid, opts)
+
+  @doc """
+  Sets the AI endpoint that writes down speech (`agent_speech_endpoint_uuid`),
+  or none (`nil`: voice is off); as `put_default_endpoint/2`, against the
+  `agent.speech` AI task (its model must take audio).
+  """
+  @spec put_speech_endpoint(String.t() | nil, keyword()) ::
+          {:ok, term()} | {:error, endpoint_refusal() | Ecto.Changeset.t()}
+  def put_speech_endpoint(uuid, opts),
+    do: put_endpoint("agent_speech_endpoint_uuid", "agent.speech", uuid, opts)
 
   defp put_endpoint(key, _task, nil, opts),
     do: Settings.update_setting_with_module(key, "", @module, opts)

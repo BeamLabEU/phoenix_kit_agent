@@ -113,6 +113,18 @@ defmodule PhoenixKitAgent do
             gettext_noop(
               "Edit the module defaults and other users' assistant settings, and see everyone's spending"
             )
+        },
+        # `opt_in: true`: never given to the Admin role at boot, only to the
+        # roles an administrator chooses (core versions that do not know the
+        # flag ignore it).
+        %{
+          key: "telegram",
+          label: gettext_noop("Agent in Telegram"),
+          description:
+            gettext_noop(
+              "Use the AI assistant from the Telegram chat linked to the site bot, to read data with the user's own rights"
+            ),
+          opt_in: true
         }
       ]
     }
@@ -209,6 +221,7 @@ defmodule PhoenixKitAgent do
   def children do
     [
       PhoenixKitAgent.Turns.Supervisor,
+      PhoenixKitAgent.Telegram.Supervisor,
       PhoenixKitAgent.Attachments.Slots,
       {Task.Supervisor, name: PhoenixKitAgent.Attachments.TaskSupervisor},
       {Task.Supervisor, name: PhoenixKitAgent.Attachments.WorkerSupervisor},
@@ -266,8 +279,10 @@ defmodule PhoenixKitAgent do
       and the model may flag a request as off-purpose (`self_flag`).
     * `agent.attachment` — a picture described by the vision model. It needs
       images in.
+    * `agent.speech` — a voice message or a recording of the panel written
+      down. It needs audio in.
 
-  Both are private: only holders of `ai.manage` see the reasons of their
+  All are private: only holders of `ai.manage` see the reasons of their
   flags and blocks. Both share the `free_text` block group with the AI
   Playground. The module keeps its own per-user limits
   (`PhoenixKitAgent.Limits`), so the guard has no user limits for them
@@ -308,6 +323,21 @@ defmodule PhoenixKitAgent do
         block_group: "free_text",
         user_limits: false,
         endpoints: {PhoenixKitAgent.Config, :vision_endpoint_uuid, []},
+        watchers: {PhoenixKitAgent.Limits, :guard_watchers, []}
+      },
+      %PhoenixKitAI.TaskSpec{
+        key: "agent.speech",
+        label: gettext_noop("AI assistant speech"),
+        gettext_backend: PhoenixKitAgent.Gettext,
+        purpose:
+          gettext_noop(
+            "Write down a voice message or a recording that a user made for the AI assistant."
+          ),
+        needs: [:audio_input],
+        private: true,
+        block_group: "free_text",
+        user_limits: false,
+        endpoints: {PhoenixKitAgent.Config, :speech_endpoint_uuid, []},
         watchers: {PhoenixKitAgent.Limits, :guard_watchers, []}
       }
     ]

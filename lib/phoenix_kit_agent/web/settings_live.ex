@@ -1,19 +1,21 @@
 defmodule PhoenixKitAgent.Web.SettingsLive do
   @moduledoc """
   Settings → AI Agent: the module defaults (`PhoenixKitAgent.Config`, spec
-  §5.6, §7) — the model the assistant uses and the one that describes
-  pictures, the per-user limits a user without settings of their own gets,
+  §5.6, §7) — the model the assistant uses, the one that describes
+  pictures and the one that writes speech down, the per-user limits a user without settings of their own gets,
   the limits of one turn, the module's system prompt and who is told when
   someone reaches a limit.
 
   The models are chosen among the AI endpoints that chat
   (`PhoenixKitAgent.Models.list_endpoints/1`); the default model's list marks
   the ones known not to take tools, the vision model's the ones known not to
-  take pictures (both fetched off the page process after it opens). A model
+  take pictures, the speech model's the ones known not to take audio (all
+  fetched off the page process after it opens). A model
   the page did not offer is refused, and `Config` takes only an existing
   endpoint that chats. A newly chosen model must also fit its AI task
   (`PhoenixKitAI.Tasks.check_selection/2`): the default model `agent.chat`
-  (tools), the vision model `agent.attachment` (pictures). One known not to
+  (tools), the vision model `agent.attachment` (pictures), the speech model
+  `agent.speech` (audio). One known not to
   have what the task needs is refused, and so is one nobody knows about
   until an admin marks what it can do on its AI endpoint. The watchers are chosen among the people who hold
   `agent.manage`, the Owners and the watchers there are; nobody chosen means
@@ -39,6 +41,17 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   (`PhoenixKitAgent.Models.reports_cost?/2`), the limits say that money is not
   counted for it and only the turn limit applies.
 
+  The speech model is offered only where the AI module can write speech down
+  (`PhoenixKitAgent.Config.transcribe?/0`); on an older one the page says that
+  voice needs a newer AI module, and a forged `speech_endpoint_uuid` is
+  refused. A speech model that does not report what a call costs gets the same
+  warning as the default one.
+
+  The Telegram section switches `agent_telegram_enabled` (the assistant
+  answering the linked chats of the website bot, `PhoenixKitAgent.Telegram`) and
+  shows what the reader is doing (`PhoenixKitAgent.Telegram.Status`). It needs
+  `agent.manage`, checked on every event like the other forms.
+
   One setting is not for every manager: `agent_capture_ai_content` (whether the
   bodies of the assistant's requests go to the AI journal, where every holder of
   `ai` reads them on `/admin/ai/usage`) is switched by an Owner only. The check
@@ -62,10 +75,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitAgent.{Config, Models, UserConfig}
+  alias PhoenixKitAgent.Telegram.Status
   alias PhoenixKitAgent.Web.{Access, ToolAvailability}
 
   # The fields of the models form.
-  @model_fields ~w(default_endpoint_uuid vision_endpoint_uuid)
+  @model_fields ~w(default_endpoint_uuid vision_endpoint_uuid speech_endpoint_uuid)
 
   @impl true
   def mount(_params, session, socket) do
@@ -80,8 +94,13 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
          page_section: gettext("Settings"),
          page_section_path: Routes.path("/admin/settings")
        )
-       |> assign(money_off?: money_off?())
+       |> assign(
+         money_off?: money_off?(),
+         speech_money_off?: speech_money_off?(),
+         transcribe?: Config.transcribe?()
+       )
        |> assign_capture()
+       |> assign_telegram()
        |> assign_form(Config.defaults_changeset(%{}) |> Map.put(:action, nil))
        |> assign_models()
        |> assign_prompt(Config.system_prompt() || "", [])
@@ -116,6 +135,13 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     end
   end
 
+  def handle_event("save_telegram", %{"telegram" => %{"enabled" => enabled}}, socket)
+      when enabled in ["true", "false"] do
+    if Access.may_manage?(socket),
+      do: {:noreply, save_telegram(socket, enabled == "true")},
+      else: {:noreply, denied(socket)}
+  end
+
   def handle_event("save_models", %{"models" => params}, socket) when is_map(params) do
     if Access.may_manage?(socket),
       do: {:noreply, save_models(socket, params)},
@@ -142,6 +168,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
              "validate",
              "save",
              "save_capture",
+             "save_telegram",
              "save_models",
              "save_prompt",
              "save_watchers"
@@ -149,14 +176,24 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       do: {:noreply, socket}
 
   @impl true
-  def handle_async(:capabilities, {:ok, {tools, images}}, socket),
+  def handle_async(:capabilities, {:ok, {tools, images, audio}}, socket),
     do:
-      {:noreply, update(socket, :models, &%{&1 | tools: tools, images: images, loading?: false})}
+      {:noreply,
+       update(
+         socket,
+         :models,
+         &%{&1 | tools: tools, images: images, audio: audio, loading?: false}
+       )}
 
   def handle_async(:capabilities, {:exit, _reason}, socket) do
     unknown = Map.new(socket.assigns.models.endpoints, &{&1.uuid, :unknown})
 
-    {:noreply, update(socket, :models, &%{&1 | tools: unknown, images: unknown, loading?: false})}
+    {:noreply,
+     update(
+       socket,
+       :models,
+       &%{&1 | tools: unknown, images: unknown, audio: unknown, loading?: false}
+     )}
   end
 
   defp denied(socket),
@@ -185,6 +222,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
           errors: %{},
           tools: %{},
           images: %{},
+          audio: %{},
           loading?: endpoints != [] and connected?(socket)
         }
       )
@@ -192,7 +230,8 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     if endpoints != [] and connected?(socket),
       do:
         start_async(socket, :capabilities, fn ->
-          {Models.tools_support_of(uuids), Models.image_input_support_of(uuids)}
+          {Models.tools_support_of(uuids), Models.image_input_support_of(uuids),
+           Models.audio_input_support_of(uuids)}
         end),
       else: socket
   end
@@ -200,7 +239,8 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   defp current_models do
     %{
       "default_endpoint_uuid" => Config.default_endpoint_uuid(),
-      "vision_endpoint_uuid" => Config.vision_endpoint_uuid()
+      "vision_endpoint_uuid" => Config.vision_endpoint_uuid(),
+      "speech_endpoint_uuid" => Config.speech_endpoint_uuid()
     }
   end
 
@@ -210,14 +250,25 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     models = socket.assigns.models
     offered = MapSet.new(models.endpoints, & &1.uuid)
     current = current_models()
+    transcribe? = Config.transcribe?()
 
     {chosen, errors} =
       Enum.reduce(@model_fields, {%{}, %{}}, fn field, {chosen, errors} ->
         case Map.fetch(params, field) do
-          :error -> {chosen, errors}
-          {:ok, ""} -> {Map.put(chosen, field, nil), errors}
-          {:ok, uuid} when is_binary(uuid) -> offered_model(field, uuid, offered, chosen, errors)
-          {:ok, _not_text} -> {chosen, Map.put(errors, field, [gettext("is not available")])}
+          :error ->
+            {chosen, errors}
+
+          {:ok, _any} when field == "speech_endpoint_uuid" and not transcribe? ->
+            {chosen, Map.put(errors, field, [gettext("is not available")])}
+
+          {:ok, ""} ->
+            {Map.put(chosen, field, nil), errors}
+
+          {:ok, uuid} when is_binary(uuid) ->
+            offered_model(field, uuid, offered, chosen, errors)
+
+          {:ok, _not_text} ->
+            {chosen, Map.put(errors, field, [gettext("is not available")])}
         end
       end)
 
@@ -252,6 +303,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
   defp task_of("default_endpoint_uuid"), do: "agent.chat"
   defp task_of("vision_endpoint_uuid"), do: "agent.attachment"
+  defp task_of("speech_endpoint_uuid"), do: "agent.speech"
 
   defp unfit_text("default_endpoint_uuid", {:error, {:model_unfit, _missing}}),
     do: gettext("cannot be used: its model does not take tools, which the assistant needs")
@@ -271,6 +323,15 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
         "cannot be used yet: nobody knows whether its model takes pictures. Mark what it can do on its AI endpoint first"
       )
 
+  defp unfit_text("speech_endpoint_uuid", {:error, {:model_unfit, _missing}}),
+    do: gettext("cannot be used: its model does not take audio")
+
+  defp unfit_text("speech_endpoint_uuid", {:error, {:model_unverified, _unclear}}),
+    do:
+      gettext(
+        "cannot be used yet: nobody knows whether its model takes audio. Mark what it can do on its AI endpoint first"
+      )
+
   defp unfit_text(_field, _not_offered), do: gettext("is not available")
 
   defp text_or_blank(value) when is_binary(value), do: value
@@ -284,7 +345,14 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
         match?({:ok, _}, write_model(field, uuid, opts))
       end)
 
-    socket = socket |> assign(money_off?: money_off?()) |> assign_models()
+    socket =
+      socket
+      |> assign(
+        money_off?: money_off?(),
+        speech_money_off?: speech_money_off?(),
+        transcribe?: Config.transcribe?()
+      )
+      |> assign_models()
 
     if failed == [],
       do: put_flash(socket, :info, gettext("AI assistant models saved.")),
@@ -300,6 +368,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     do: Config.put_default_endpoint(uuid, opts)
 
   defp write_model("vision_endpoint_uuid", uuid, opts), do: Config.put_vision_endpoint(uuid, opts)
+  defp write_model("speech_endpoint_uuid", uuid, opts), do: Config.put_speech_endpoint(uuid, opts)
 
   defp model_label(endpoint, support, unsupported, unknown) do
     base = "#{endpoint.name} (#{endpoint.model})"
@@ -330,6 +399,20 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
              models.images,
              gettext("does not take pictures"),
              gettext("pictures unknown")
+           ), endpoint.uuid}
+        end)
+    ]
+  end
+
+  defp speech_options(models) do
+    [
+      {gettext("None"), ""}
+      | Enum.map(models.endpoints, fn endpoint ->
+          {model_label(
+             endpoint,
+             models.audio,
+             gettext("does not take audio"),
+             gettext("audio unknown")
            ), endpoint.uuid}
         end)
     ]
@@ -433,6 +516,62 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     end
   end
 
+  defp save_telegram(socket, value) do
+    case Config.put_telegram_enabled(value,
+           actor_uuid: Access.user_uuid(socket),
+           source: "settings"
+         ) do
+      {:ok, _setting} ->
+        socket |> assign_telegram() |> put_flash(:info, gettext("Telegram setting saved."))
+
+      {:error, _changeset} ->
+        socket
+        |> assign_telegram()
+        |> put_flash(:error, gettext("The setting could not be saved. Nothing was changed."))
+    end
+  end
+
+  # What the Telegram section shows: the switch and what the reader is doing.
+  defp assign_telegram(socket) do
+    enabled? = Config.telegram_enabled?()
+
+    # The bot's name may be a question to Telegram: not on the static render,
+    # and not while the switch is off.
+    bot = if enabled? and connected?(socket), do: Status.bot()
+
+    assign(socket,
+      telegram?: enabled?,
+      telegram_status: Status.current(),
+      telegram_bot: bot
+    )
+  end
+
+  defp telegram_status_text(:off), do: gettext("Off: the assistant does not answer in Telegram.")
+
+  defp telegram_status_text(:no_bot),
+    do:
+      gettext(
+        "No website bot is chosen for user notifications, so there is no chat to answer. Choose one in the Telegram integration."
+      )
+
+  defp telegram_status_text(:webhook),
+    do: gettext("The bot has a webhook set, so its messages cannot be read. Remove the webhook.")
+
+  defp telegram_status_text(:conflict),
+    do:
+      gettext(
+        "Conflict: the bot is read by someone else (another reader or a webhook). The reader waits and tries again."
+      )
+
+  defp telegram_status_text(:no_model),
+    do:
+      gettext("No default model is chosen, so only users with a model of their own are answered.")
+
+  defp telegram_status_text(:reading), do: gettext("Reading the bot's messages.")
+
+  defp telegram_status_text(:starting),
+    do: gettext("Switched on. The reader starts within half a minute.")
+
   # What the capture section shows: the stored state, and whether this person
   # may change it.
   defp assign_capture(socket) do
@@ -444,6 +583,16 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     with uuid when is_binary(uuid) <- Config.default_endpoint_uuid(),
          %{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
       not Models.reports_cost?(endpoint)
+    else
+      _none -> false
+    end
+  end
+
+  # Whether the speech model leaves money uncounted (none chosen: nothing to say).
+  defp speech_money_off? do
+    with uuid when is_binary(uuid) <- Config.speech_endpoint_uuid(),
+         %{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
+      not Models.reports_cost?(endpoint, :speech)
     else
       _none -> false
     end
@@ -482,7 +631,31 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
                 options={vision_options(@models)}
                 errors={Map.get(@models.errors, "vision_endpoint_uuid", [])}
               />
+              <.select
+                :if={@transcribe?}
+                id="agent-speech-endpoint"
+                name="models[speech_endpoint_uuid]"
+                label={gettext("Speech recognition model")}
+                value={@models.params["speech_endpoint_uuid"]}
+                options={speech_options(@models)}
+                errors={Map.get(@models.errors, "speech_endpoint_uuid", [])}
+              />
             </div>
+            <p :if={not @transcribe?} id="agent-speech-unavailable" class="text-xs text-warning">
+              {gettext(
+                "Voice input needs a newer version of the AI module: it cannot write speech down yet."
+              )}
+            </p>
+            <p :if={@transcribe?} id="agent-speech-hint" class="text-xs text-base-content/60">
+              {gettext(
+                "The speech recognition model writes down the voice messages of the Telegram bot and the recordings of the chat panel's microphone. Choose a model that takes audio, for example Gemini Flash. Without it, voice input is off."
+              )}
+            </p>
+            <p :if={@transcribe? and @speech_money_off?} id="agent-speech-money-off" class="text-xs text-warning">
+              {gettext(
+                "The speech recognition model does not report what a call costs: what it spends is not counted, and nothing limits voice input by money."
+              )}
+            </p>
             <p :if={@models.loading?} class="text-xs text-base-content/60">
               {gettext("Checking what the models take…")}
             </p>
@@ -661,6 +834,44 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
               {if @capture?, do: gettext("On"), else: gettext("Off")}
             </span>
             {gettext("Only an Owner can change this setting.")}
+          </p>
+        </div>
+      </section>
+
+      <section id="agent-telegram" class="card bg-base-100 shadow-sm">
+        <div class="card-body gap-4">
+          <h2 class="card-title text-base">{gettext("Assistant in Telegram")}</h2>
+          <p class="text-sm text-base-content/70">
+            {gettext(
+              "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. It only reads: a change is made on the site."
+            )}
+          </p>
+          <.form
+            for={%{}}
+            as={:telegram}
+            id="agent-telegram-form"
+            phx-submit="save_telegram"
+            class="flex items-center justify-between gap-4"
+          >
+            <.checkbox
+              variant="toggle"
+              id="agent-telegram-enabled"
+              name="telegram[enabled]"
+              checked={@telegram?}
+              label={gettext("Answer in Telegram")}
+            />
+            <.button type="submit" variant="primary" id="agent-telegram-save">
+              {gettext("Save")}
+            </.button>
+          </.form>
+          <p id="agent-telegram-status" class="text-sm">
+            <span class={["badge", if(@telegram_status == :reading, do: "badge-success", else: "badge-ghost")]}>
+              {gettext("Status")}
+            </span>
+            <span :if={@telegram_bot} id="agent-telegram-bot" class="font-medium">
+              @{@telegram_bot}:
+            </span>
+            {telegram_status_text(@telegram_status)}
           </p>
         </div>
       </section>
