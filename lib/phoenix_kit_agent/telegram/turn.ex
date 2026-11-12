@@ -62,6 +62,12 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   @doc "Runs `job` (see `PhoenixKitAgent.Telegram.Bridge`) for the chat `ref` of the bot."
   @spec run(String.t(), Bridge.ref(), map()) :: :ok
   def run(connection_uuid, {:telegram_link, user_uuid, _connection, chat_id} = ref, job) do
+    # A job that waited in the queue while the switch went off is let go.
+    if Config.telegram_enabled?(), do: run_job(connection_uuid, ref, job, user_uuid, chat_id)
+    :ok
+  end
+
+  defp run_job(connection_uuid, ref, job, user_uuid, chat_id) do
     Bridge.safely(fn ->
       Bridge.in_locale(user_uuid, fn locale ->
         case job.kind do
@@ -74,13 +80,14 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     end)
   end
 
+  # The chat is checked before a conversation is made for it: a chat that may
+  # not use the assistant gets no row and is told so.
   defp new_conversation(connection_uuid, ref, job, user_uuid, chat_id) do
-    case start_conversation(user_uuid, ref) do
-      {:ok, _conversation} ->
-        reply(connection_uuid, chat_id, job.message_id, Texts.static(:new_started))
-
-      {:error, _changeset} ->
-        refuse(connection_uuid, chat_id, job.message_id, :not_found)
+    with {:ok, _user_uuid} <- authorize(ref),
+         {:ok, _conversation} <- start_conversation(user_uuid, ref) do
+      reply(connection_uuid, chat_id, job.message_id, Texts.static(:new_started))
+    else
+      {:error, reason} -> refuse(connection_uuid, chat_id, job.message_id, refusal(reason))
     end
   end
 
@@ -193,17 +200,22 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     do: Application.get_env(:phoenix_kit_agent, :telegram_download_deadline_ms, 30_000)
 
   defp converse(connection_uuid, ref, job, user_uuid, chat_id, locale) do
-    case current_conversation(user_uuid, ref) do
-      {:ok, conversation} ->
-        with_topic(conversation, fn ->
-          Bridge.react(connection_uuid, chat_id, job.message_id, "👀")
-          start_turn(connection_uuid, ref, job.message_id, conversation, job.text, [], locale)
-        end)
-
-      {:error, _changeset} ->
-        refuse(connection_uuid, chat_id, job.message_id, :not_found)
+    with {:ok, _user_uuid} <- authorize(ref),
+         {:ok, conversation} <- current_conversation(user_uuid, ref) do
+      with_topic(conversation, fn ->
+        Bridge.react(connection_uuid, chat_id, job.message_id, "👀")
+        start_turn(connection_uuid, ref, job.message_id, conversation, job.text, [], locale)
+      end)
+    else
+      {:error, reason} -> refuse(connection_uuid, chat_id, job.message_id, refusal(reason))
     end
   end
+
+  defp authorize(ref), do: Conversations.authorize_session(ref, impersonated: false)
+
+  # A conversation that could not be stored (a changeset) reads as "not found".
+  defp refusal(reason) when is_atom(reason), do: reason
+  defp refusal(_changeset), do: :not_found
 
   # The conversation's topic is subscribed **before** anything starts, so the
   # end of its turn cannot be missed.

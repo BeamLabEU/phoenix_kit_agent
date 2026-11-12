@@ -207,6 +207,22 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
       assert_receive {:offset_at_send, 31}, 5_000
     end
 
+    test "a read of it that fails is no reason to read the last batch again", ctx do
+      TelegramClient.set(:updates, [{:ok, [stranger_update(10)]}, {:ok, [stranger_update(10)]}])
+      cycle()
+      assert_receive {:tg, {:send_message, _, 777, _}}, 5_000
+      _ = polls()
+
+      # What a failed read of the setting gives (`get_settings_direct/1`: `%{}`).
+      Repo.delete_all(from(s in "phoenix_kit_settings", where: s.key == "agent_telegram_offset"))
+      assert Config.telegram_offset(ctx.connection) == nil
+
+      cycle()
+
+      assert [%{offset: 11}] = polls()
+      refute_receive {:tg, {:send_message, _, _, _}}, 200
+    end
+
     test "is kept without a trace in the settings history" do
       TelegramClient.set(:updates, [{:ok, [stranger_update(5)]}])
       cycle()
@@ -463,6 +479,21 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
 
       assert log =~ "RuntimeError"
       refute log =~ "SECRET-REASON"
+    end
+
+    test "an exception after the name was taken lets the name go, and the next step reads",
+         ctx do
+      TelegramClient.set(:updates, [fn -> raise "boom" end, {:ok, []}])
+
+      capture_log([level: :warning], fn -> assert {:error, 5_000} = cycle() end)
+      refute Reader.holds?(ctx.connection)
+
+      assert {:reading, 0} = cycle()
+      assert Reader.holds?(ctx.connection)
+
+      {:ok, _} = Config.put_telegram_enabled(false, [])
+      assert {:off, _} = cycle()
+      refute Reader.holds?(ctx.connection)
     end
 
     test "nothing of an update or of the bot is kept in the state of the reader" do

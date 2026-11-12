@@ -14,6 +14,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
   alias PhoenixKit.ModuleRegistry
   alias PhoenixKit.Settings
   alias PhoenixKitAgent.Attachments.{Bounds, Slots}
+  alias PhoenixKitAgent.Config
   alias PhoenixKitAgent.Schemas.{Attachment, Message}
   alias PhoenixKitAgent.Telegram.{Bridge, Limiter, Texts}
   alias PhoenixKitAgent.Test.{Files, LogProbe, TelegramClient, Tools}
@@ -25,6 +26,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
   setup do
     {:ok, _} = PhoenixKitAgent.enable_system()
     {:ok, _} = PhoenixKitAI.enable_system()
+    {:ok, _} = Config.put_telegram_enabled(true, log: false)
     :ok = ModuleRegistry.register(Tools)
     _bucket = Files.local_bucket!()
 
@@ -699,6 +701,7 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
   end
 
   describe "the sweep of pictures nobody took" do
+    alias PhoenixKit.Integrations.Telegram.Linking
     alias PhoenixKit.Modules.Storage
     alias PhoenixKitAgent.{Attachments, Conversations}
     alias PhoenixKitAgent.Schemas.{Conversation, Message}
@@ -742,9 +745,25 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
     defp remaining(uuids),
       do: Repo.all(from(a in Attachment, where: a.uuid in ^uuids, select: a.uuid))
 
-    test "removes only the old, unsent pictures of the chat that the bridge added", ctx do
+    test "the bridge's discard needs no rights left: a turn refused for them still cleans up",
+         ctx do
+      conversation = telegram_conversation(ctx.user)
+      picture = row(conversation, ctx.user, %{age_s: 0})
+      panel_upload = row(conversation, ctx.user, %{filename: "report.png"})
+
+      :ok = Linking.drop_links(ctx.user.uuid)
+      assert {:error, _gone} = Conversations.authorize_session(ctx.ref, impersonated: false)
+
+      assert :ok = Attachments.discard_for_telegram(ctx.ref, picture)
+      assert {:error, :not_found} = Attachments.discard_for_telegram(ctx.ref, panel_upload)
+      assert remaining([picture, panel_upload]) == [panel_upload]
+    end
+
+    test "removes only the old, unsent pictures the bridge added, in any Telegram conversation",
+         ctx do
       conversation = telegram_conversation(ctx.user)
       other_conversation = telegram_conversation(ctx.user)
+      {:ok, site_conversation} = Conversations.create_conversation_for(ctx.user, [])
       stranger = user_with(["agent", "agent.telegram"], "stranger")
       strangers_conversation = telegram_conversation(stranger)
 
@@ -760,18 +779,22 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       young = row(conversation, ctx.user, %{age_s: 1})
       sent = row(conversation, ctx.user, %{message_uuid: sent_message.uuid})
       panel_upload = row(conversation, ctx.user, %{filename: "report.png"})
-      elsewhere = row(other_conversation, ctx.user, %{})
+      # An earlier Telegram conversation (the chat's `/new` came after a turn
+      # was killed) is swept too; a conversation of the site is not.
+      earlier = row(other_conversation, ctx.user, %{})
+      on_the_site = row(site_conversation, ctx.user, %{})
       strangers = row(strangers_conversation, stranger, %{})
 
       assert :ok = Attachments.sweep_unsent_for_telegram(ctx.ref, conversation.uuid, @bound)
 
-      left = remaining([old, young, sent, panel_upload, elsewhere, strangers])
+      left = remaining([old, young, sent, panel_upload, earlier, on_the_site, strangers])
 
       refute old in left
+      refute earlier in left, "an earlier Telegram conversation"
       assert young in left, "too young"
       assert sent in left, "sent"
       assert panel_upload in left, "panel upload"
-      assert elsewhere in left, "other conversation"
+      assert on_the_site in left, "a conversation of the site"
       assert strangers in left, "other user"
     end
 

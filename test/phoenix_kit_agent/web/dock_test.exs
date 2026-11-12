@@ -989,7 +989,12 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       send_text(view, "Read it")
 
-      assert has_element?(view, "#pk-agent-dock-error", "Wait until the files are read.")
+      assert has_element?(
+               view,
+               "#pk-agent-dock-error",
+               "Wait until the files are uploaded and read; a paused file has to be resumed or removed first."
+             )
+
       assert messages(ctx.chat) == []
       assert lock_of(ctx.chat) == {nil, nil}
     end
@@ -1004,7 +1009,12 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       send_text(view, "Now")
 
-      assert has_element?(view, "#pk-agent-dock-error", "Wait until the files are read.")
+      assert has_element?(
+               view,
+               "#pk-agent-dock-error",
+               "Wait until the files are uploaded and read; a paused file has to be resumed or removed first."
+             )
+
       assert messages(ctx.chat) == []
     end
 
@@ -1018,7 +1028,12 @@ defmodule PhoenixKitAgent.Web.DockTest do
       |> form("#pk-agent-composer", message: %{text: "Now"})
       |> render_submit(%{message: %{page: "/en/admin/orders/7", uploads_waiting: "1"}})
 
-      assert has_element?(view, "#pk-agent-dock-error", "Wait until the files are read.")
+      assert has_element?(
+               view,
+               "#pk-agent-dock-error",
+               "Wait until the files are uploaded and read; a paused file has to be resumed or removed first."
+             )
+
       assert messages(ctx.chat) == []
     end
 

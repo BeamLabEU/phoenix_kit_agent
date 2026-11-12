@@ -87,7 +87,11 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
         "The answer has not stopped yet. Press Stop again, or wait: if it is no longer running, the chat will be free again in a few minutes."
       )
 
-  def refusal(:files_pending), do: gettext("Wait until the files are read.")
+  def refusal(:files_pending),
+    do:
+      gettext(
+        "Wait until the files are uploaded and read; a paused file has to be resumed or removed first."
+      )
 
   def refusal(:rate_limited), do: gettext("Too many requests at once; try again in a minute.")
 

@@ -12,7 +12,7 @@ defmodule PhoenixKitAgent.Telegram.VoiceTest do
 
   alias PhoenixKit.ModuleRegistry
   alias PhoenixKit.Settings
-  alias PhoenixKitAgent.{Conversations, Speech}
+  alias PhoenixKitAgent.{Config, Conversations, Speech}
   alias PhoenixKitAgent.Schemas.Message
   alias PhoenixKitAgent.Telegram.{Bridge, Limiter, Texts}
   alias PhoenixKitAgent.Test.{LogProbe, TelegramClient, Tools}
@@ -25,6 +25,7 @@ defmodule PhoenixKitAgent.Telegram.VoiceTest do
   setup do
     {:ok, _} = PhoenixKitAgent.enable_system()
     {:ok, _} = PhoenixKitAI.enable_system()
+    {:ok, _} = Config.put_telegram_enabled(true, log: false)
     :ok = ModuleRegistry.register(Tools)
 
     Req.Test.set_req_test_to_shared()

@@ -75,20 +75,27 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
     end
   end
 
+  # The registry lets a queue's key go after the queue ended, not with it: a
+  # queue that has just stopped (idle) is no queue, and a new one is started
+  # (the registry gives the key of a dead process to the new one).
   defp process({connection_uuid, _chat_id} = key) do
     case Registry.lookup(@registry, key) do
       [{pid, _}] ->
-        {:ok, pid}
+        if Process.alive?(pid), do: {:ok, pid}, else: start(key, connection_uuid)
 
       [] ->
-        case DynamicSupervisor.start_child(
-               @supervisor,
-               {__MODULE__, key: key, connection_uuid: connection_uuid}
-             ) do
-          {:ok, pid} -> {:ok, pid}
-          {:error, {:already_started, pid}} -> {:ok, pid}
-          {:error, _max_children_or_other} -> :busy
-        end
+        start(key, connection_uuid)
+    end
+  end
+
+  defp start(key, connection_uuid) do
+    case DynamicSupervisor.start_child(
+           @supervisor,
+           {__MODULE__, key: key, connection_uuid: connection_uuid}
+         ) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      {:error, _max_children_or_other} -> :busy
     end
   end
 

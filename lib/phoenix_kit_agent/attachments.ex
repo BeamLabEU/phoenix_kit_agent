@@ -156,7 +156,17 @@ defmodule PhoenixKitAgent.Attachments do
     do: {:error, :not_in_telegram}
 
   def add(session_ref, conversation_uuid, upload, opts),
-    do: add_checked(session_ref, conversation_uuid, upload, opts, nil)
+    do: add_checked(session_ref, conversation_uuid, not_reserved(upload), opts, nil)
+
+  # The bridge's pictures are told apart by their name (the sweep below): a
+  # file the user names so in the panel is stored under another.
+  defp not_reserved(%{filename: filename} = upload) when is_binary(filename) do
+    if clean_name(filename) == @telegram_picture,
+      do: %{upload | filename: @telegram_picture <> " (1)"},
+      else: upload
+  end
+
+  defp not_reserved(upload), do: upload
 
   # `only`: the one kind of file taken (`nil`: any the module reads).
   defp add_checked(session_ref, conversation_uuid, upload, opts, only) do
@@ -489,11 +499,12 @@ defmodule PhoenixKitAgent.Attachments do
 
   @doc false
   # Removes the pictures the bridge added (`add_picture_for_telegram/3`) to the
-  # Telegram chat's conversation that no message took and that are older than
-  # `older_than_ms`: what a turn killed between adding a picture and asking
-  # about it left behind (they would count against
-  # `max_attachments_per_message`). A file the user attached in the panel to the
-  # same conversation is never touched. A trusted entry point of the bridge.
+  # user's Telegram conversations (this one, and any earlier one a `/new` left)
+  # that no message took and that are older than `older_than_ms`: what a turn
+  # killed between adding a picture and asking about it left behind (they
+  # would count against `max_attachments_per_message`). A file the user
+  # attached in the panel is never touched (it never has the bridge's name).
+  # A trusted entry point of the bridge.
   @spec sweep_unsent_for_telegram(Conversations.session_ref(), term(), non_neg_integer()) ::
           :ok | {:error, refusal()}
   def sweep_unsent_for_telegram(
@@ -506,8 +517,11 @@ defmodule PhoenixKitAgent.Attachments do
       cutoff = DateTime.add(DateTime.utc_now(), -older_than_ms, :millisecond)
 
       from(a in Attachment,
+        join: c in Conversation,
+        on: c.uuid == a.conversation_uuid,
         where:
-          a.conversation_uuid == ^conversation.uuid and a.user_uuid == ^conversation.user_uuid and
+          a.user_uuid == ^conversation.user_uuid and c.user_uuid == ^conversation.user_uuid and
+            fragment("?->>'source' = 'telegram'", c.metadata) and
             is_nil(a.message_uuid) and a.filename == ^@telegram_picture and
             a.inserted_at < ^cutoff,
         select: a.uuid
@@ -532,10 +546,16 @@ defmodule PhoenixKitAgent.Attachments do
   @doc false
   # `discard/3` for a linked Telegram chat's reference: a picture the turn did
   # not take stays in a chat nobody sees the files of, so the bridge removes it.
+  # Only a picture the bridge added for the reference's user and no message
+  # took; the chat is not asked for its rights again, since a turn refused
+  # because they went must still clean up after itself.
   @spec discard_for_telegram(Conversations.session_ref(), term()) :: :ok | {:error, refusal()}
-  def discard_for_telegram({:telegram_link, _user, _connection, _chat} = ref, attachment_uuid) do
-    with {:ok, user_uuid} <- Conversations.authorize_session(ref, impersonated: false) do
-      discard_row(user_uuid, attachment_uuid)
+  def discard_for_telegram({:telegram_link, user_uuid, _connection, _chat}, attachment_uuid)
+      when is_binary(user_uuid) do
+    case fetch(user_uuid, attachment_uuid) do
+      {:ok, %Attachment{filename: @telegram_picture}} -> discard_row(user_uuid, attachment_uuid)
+      {:ok, _not_the_bridges} -> {:error, :not_found}
+      {:error, _} = refused -> refused
     end
   end
 

@@ -230,7 +230,8 @@ defmodule PhoenixKitAgent.TelegramTest do
       assert {:error, :forbidden} = Conversations.authorize_session(ctx.ref, @me)
     end
 
-    test "the scope is the user's default narrowed role", ctx do
+    # That it is narrowed to the default role: the test after this one.
+    test "the scope is the linked user's", ctx do
       assert {:ok, scope} = Conversations.authorized_scope(ctx.ref, @me)
       assert Scope.user_uuid(scope) == ctx.user.uuid
     end

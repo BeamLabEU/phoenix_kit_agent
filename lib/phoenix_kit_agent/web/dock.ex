@@ -191,6 +191,7 @@ defmodule PhoenixKitAgent.Web.Dock do
     UserConfig
   }
 
+  alias PhoenixKitAgent.Attachments.Work
   alias PhoenixKitAgent.Schemas.{Message, UserSettings}
   alias PhoenixKitAgent.Turns.Monitor
   alias PhoenixKitAgent.Web.Dock.{Panel, Texts}
@@ -997,10 +998,45 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   defp attach_file(socket, entry, uuid, path) do
     %{ref: ref} = socket.assigns
-    upload = %{path: path, filename: entry.client_name}
     opts = me(socket)
 
-    start_async(socket, {:attach, entry.ref}, fn -> safe_add(ref, uuid, upload, opts) end)
+    case own_link(path) do
+      {:ok, dir, file} ->
+        upload = %{path: file, filename: entry.client_name}
+
+        start_async(socket, {:attach, entry.ref}, fn ->
+          try do
+            safe_add(ref, uuid, upload, opts)
+          after
+            Work.remove(dir)
+          end
+        end)
+
+      :error ->
+        start_async(socket, {:attach, entry.ref}, fn -> {:error, :file_unreadable} end)
+    end
+  end
+
+  # Core names an assembled file after its owner, name, size and time, so two
+  # entries of the same file share it, and the first one done releases it
+  # (`drop_entry/2`) while the other's `add/4` may still read it: each `add/4`
+  # reads its own link to it (a copy where the two directories are on
+  # different file systems) in a private scratch directory, removed after.
+  defp own_link(path) do
+    case Work.create() do
+      {:ok, dir} ->
+        file = Path.join(dir, "upload")
+
+        if File.ln(path, file) == :ok or File.cp(path, file) == :ok do
+          {:ok, dir, file}
+        else
+          Work.remove(dir)
+          :error
+        end
+
+      {:error, _unavailable} ->
+        :error
+    end
   end
 
   # What LiveView refused (too large, not accepted, too many, a failed

@@ -824,6 +824,20 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
              )
     end
 
+    test "what a chat may do is told as the core lets it: read only, or changes with buttons",
+         %{conn: conn} do
+      {:ok, _view, html} = live(conn, @path)
+      assert html =~ "It only reads"
+      refute html =~ "shown as a card with two buttons"
+
+      Application.put_env(:phoenix_kit_agent, :telegram_link_writes, true)
+      on_exit(fn -> Application.put_env(:phoenix_kit_agent, :telegram_link_writes, false) end)
+
+      {:ok, _view, html} = live(conn, @path)
+      assert html =~ "shown as a card with two buttons"
+      refute html =~ "It only reads"
+    end
+
     test "the status line names the bot once the switch is on", %{conn: conn} do
       TelegramClient.set(:connection, UUIDv7.generate())
       TelegramClient.set(:bot_username, "shop_helper_bot")

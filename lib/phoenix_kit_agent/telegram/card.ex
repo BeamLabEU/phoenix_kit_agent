@@ -108,7 +108,9 @@ defmodule PhoenixKitAgent.Telegram.Card do
 
   # A card whose preview does not fit whole is never offered for ✅: the person
   # would confirm what they cannot read. It shows what fits and sends them to
-  # the site, with ❌ alone.
+  # the site, with ❌ alone. A row the site shows and the card leaves out (past
+  # the rows' share of the message) counts as not fitting; the rows core
+  # itself leaves out ("…and N more" on the site too) do not.
   defp open({:ok, %{status: "unused", preview: preview}}, confirmation_uuid, note) do
     %{summary: summary, lines: lines, technical_cut?: cut?} = body(preview)
     head = gettext("Confirm this change:")
@@ -159,7 +161,8 @@ defmodule PhoenixKitAgent.Telegram.Card do
       %{summary: summary, lines: summary, technical_cut?: false}
     else
       {rows, hidden} = rows(view)
-      {technical, cut?} = technical(view.technical)
+      {technical, technical_cut?} = technical(view.technical)
+      rows_cut? = hidden > view.hidden
 
       lines =
         summary ++
@@ -167,7 +170,7 @@ defmodule PhoenixKitAgent.Telegram.Card do
           hidden_line(hidden) ++
           Enum.map(view.warnings, &("⚠ " <> &1)) ++ technical
 
-      %{summary: summary, lines: lines, technical_cut?: cut?}
+      %{summary: summary, lines: lines, technical_cut?: technical_cut? or rows_cut?}
     end
   end
 

@@ -113,7 +113,8 @@ defmodule PhoenixKitAgent.Telegram.Reader do
        webhook?: false,
        webhook_checked_at: nil,
        backoff_s: @min_backoff_s,
-       warned_at: %{}
+       warned_at: %{},
+       taken: nil
      }}
   end
 
@@ -155,9 +156,30 @@ defmodule PhoenixKitAgent.Telegram.Reader do
     kind, _reason -> failed(state, kind)
   end
 
+  # `state` is the one from before the step, which may have taken the name in
+  # the meantime: every name this process holds is let go, or no one (not even
+  # this reader, whose `register_name/3` would answer `:no`) would read the bot
+  # again, while `holds?/1` kept core's own reading off.
   defp failed(state, kind) do
     warn(state, :crash, "[PhoenixKitAgent] telegram reader failed: #{inspect(kind)}")
-    pause_backoff(mark_warned(state, :crash), :error)
+    drop_held_names()
+    pause_backoff(mark_warned(%{state | registered?: false}, :crash), :error)
+  end
+
+  defp drop_held_names do
+    for {__MODULE__, _connection} = name <- :global.registered_names(),
+        :global.whereis_name(name) == self(),
+        do: :global.unregister_name(name)
+
+    :ok
+  end
+
+  # Only a name this process holds is let go: after a netsplit it may be
+  # another node's.
+  defp drop_name(connection) do
+    name = name_of(connection)
+    if :global.whereis_name(name) == self(), do: :global.unregister_name(name)
+    :ok
   end
 
   defp refresh(state) do
@@ -171,11 +193,11 @@ defmodule PhoenixKitAgent.Telegram.Reader do
   end
 
   defp release(%{registered?: true, connection: old} = state, _new) when is_binary(old) do
-    :global.unregister_name(name_of(old))
-    %{state | registered?: false, webhook?: false, webhook_checked_at: nil}
+    drop_name(old)
+    %{state | registered?: false, webhook?: false, webhook_checked_at: nil, taken: nil}
   end
 
-  defp release(state, _new), do: %{state | webhook?: false, webhook_checked_at: nil}
+  defp release(state, _new), do: %{state | webhook?: false, webhook_checked_at: nil, taken: nil}
 
   defp check_webhook(state) do
     now = System.monotonic_time(:millisecond)
@@ -204,7 +226,7 @@ defmodule PhoenixKitAgent.Telegram.Reader do
 
   defp unregister(%{registered?: true, connection: connection} = state)
        when is_binary(connection) do
-    :global.unregister_name(name_of(connection))
+    drop_name(connection)
     %{state | registered?: false}
   end
 
@@ -232,8 +254,11 @@ defmodule PhoenixKitAgent.Telegram.Reader do
 
   # ── reading ───────────────────────────────────────────────────────
 
+  # The stored offset, or the last id this process took when that is later: a
+  # read of the setting that failed looks like none, and a poll without the
+  # offset would get the last batch again.
   defp poll(state) do
-    offset = Config.telegram_offset(state.connection)
+    offset = later(Config.telegram_offset(state.connection), state.taken)
 
     options =
       [timeout: @poll_timeout_s, limit: 100] ++
@@ -271,7 +296,25 @@ defmodule PhoenixKitAgent.Telegram.Reader do
     {%{state | registered?: false}, @idle_ms}
   end
 
+  # An update this process took already (a poll that went without the offset)
+  # is not answered again.
   defp process_batch(state, updates) do
+    case Enum.filter(updates, &new_update?(&1, state.taken)) do
+      [] -> ok(state)
+      fresh -> link_and_take(state, fresh)
+    end
+  end
+
+  defp new_update?(%{"update_id" => id}, taken) when is_integer(id) and is_integer(taken),
+    do: id > taken
+
+  defp new_update?(_update, _taken), do: true
+
+  defp later(nil, taken), do: taken
+  defp later(stored, nil), do: stored
+  defp later(stored, taken), do: max(stored, taken)
+
+  defp link_and_take(state, updates) do
     # Core confirms the batch (stores our offset) before it tells anyone of a link.
     confirm = fn _updates -> store_offset(state.connection, updates) end
 
@@ -289,6 +332,7 @@ defmodule PhoenixKitAgent.Telegram.Reader do
   # The offset first, then the updates: at most once.
   defp take(state, updates) do
     if store_offset(state.connection, updates) == :ok do
+      state = %{state | taken: later(last_id(updates), state.taken)}
       Enum.each(updates, &dispatch(state.connection, &1))
       ok(state)
     else
@@ -298,18 +342,23 @@ defmodule PhoenixKitAgent.Telegram.Reader do
 
   # Idempotent: the same batch stored by `Linking`'s confirmation is not written twice.
   defp store_offset(connection, updates) do
-    case for(%{"update_id" => id} <- updates, is_integer(id), do: id) do
-      [] ->
+    case last_id(updates) do
+      nil ->
         :error
 
-      ids ->
-        last = Enum.max(ids)
-
+      last ->
         cond do
           Config.telegram_offset(connection) == last -> :ok
           match?({:ok, _}, Config.put_telegram_offset(connection, last)) -> :ok
           true -> :error
         end
+    end
+  end
+
+  defp last_id(updates) do
+    case for(%{"update_id" => id} <- updates, is_integer(id), do: id) do
+      [] -> nil
+      ids -> Enum.max(ids)
     end
   end
 

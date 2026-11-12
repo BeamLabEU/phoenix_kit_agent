@@ -541,6 +541,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
     assign(socket,
       telegram?: enabled?,
+      telegram_writes?: Config.writes?(),
       telegram_status: Status.current(),
       telegram_bot: bot
     )
@@ -841,9 +842,14 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       <section id="agent-telegram" class="card bg-base-100 shadow-sm">
         <div class="card-body gap-4">
           <h2 class="card-title text-base">{gettext("Assistant in Telegram")}</h2>
-          <p class="text-sm text-base-content/70">
+          <p :if={!@telegram_writes?} class="text-sm text-base-content/70">
             {gettext(
               "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. It only reads: a change is made on the site."
+            )}
+          </p>
+          <p :if={@telegram_writes?} class="text-sm text-base-content/70">
+            {gettext(
+              "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. A change is shown as a card with two buttons, and is made only when the person confirms it."
             )}
           </p>
           <.form

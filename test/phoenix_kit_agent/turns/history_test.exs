@@ -105,9 +105,12 @@ defmodule PhoenixKitAgent.Turns.HistoryTest do
 
     test "a failed or pending one names no file" do
       for status <- ["failed", "pending"] do
-        content =
-          History.user_content("Look", [attachment(%{status: status})], 10_000)
+        file =
+          attachment(%{status: status, kind: "text", filename: "f.txt", extracted_text: "words"})
 
+        content = History.user_content("Look", [file], 10_000)
+
+        assert content =~ ~s|[Attachment: f.txt|
         refute content =~ "file_uuid"
       end
     end

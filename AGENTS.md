@@ -166,7 +166,10 @@ and `Web.Markdown`).
   `Attachments.add/4` is the file `ResumableUpload.consume/3` returns
   (`{:postpone, path}` until `add/4` is done; `consume/3` runs the function only
   for a file whole to the declared size, and `drop_entry/2` releases it
-  afterwards), never a path from the browser. `add/4` runs in its task under a
+  afterwards), never a path from the browser; `add/4` reads its own hard link
+  (else copy) of it in an `Attachments.Work` directory (`own_link/1`), since two
+  entries of one file share core's assembled file and the first one done
+  releases it. `add/4` runs in its task under a
   guard that logs only the exception's class. The manager hands files over a
   few at a time, so a file waiting in the browser is no entry: the composer's
   hook sends `uploads_waiting` with the form and a send is refused while it is
@@ -339,13 +342,17 @@ and `Web.Markdown`).
   places for descriptions are free in turn; the whole wait is bounded by
   `Bounds` queue wait + process deadline + 10 s (`:telegram_attachment_wait_ms`
   in tests). What no message took is removed by `discard_for_telegram/2` (a
-  chat has no panel to discard in) whatever ends the turn (`try … after`); a
-  turn killed outright cannot, so `sweep_unsent_for_telegram/3` removes the
-  chat's unsent pictures older than that wait bound + 5 s before the next
-  picture (they would count against `max_attachments_per_message`); only the
-  files the bridge added, which are all stored under the name
-  `telegram-picture` (the sender's file name is not kept), never a panel upload
-  to the same conversation. The turn runs on the
+  chat has no panel to discard in) whatever ends the turn (`try … after`) —
+  without asking the chat's rights again (a turn refused because they went
+  still cleans up), and only a picture the bridge added for the reference's
+  user; a turn killed outright cannot, so `sweep_unsent_for_telegram/3` removes
+  the user's unsent bridge pictures, in any of their Telegram conversations
+  (a `/new` may have followed), older than that wait bound + 5 s before the
+  next picture (they would count against `max_attachments_per_message`); only
+  the files the bridge added, which are all stored under the name
+  `telegram-picture` (the sender's file name is not kept, and `add/4` stores a
+  panel upload so named as `telegram-picture (1)`), never a panel upload. The
+  turn runs on the
   caption, else "What is in this picture?" in the user's language. The
   pictures of one album are **one turn**: the album's parts are siblings of a
   job of the same group that runs **or waits** in `ChatQueue` (not counted
@@ -402,21 +409,29 @@ and `Web.Markdown`).
   may be in a long poll), and the name is registered only while the reader
   really polls (switch on, a bot, no webhook). A reader that lost the name
   (`{:global_name_conflict, name}` after a netsplit, or a check before each
-  poll) stops reading and is `standby`. The offset
+  poll) stops reading and is `standby`. An exception in a step lets go of every
+  name the process holds (the step may have taken one), so the bot is never
+  left held by a reader that does not read. The offset
   (`agent_telegram_offset`, `"<connection uuid>:<update id>"`, written with
   `history: false`) is stored **before** the batch goes on — also from the
   `confirm:` of `Linking.handle_updates/3` — so an update is answered at most
-  once; `:busy` leaves it alone and the batch is read again in 2 s. A 409
+  once; `:busy` leaves it alone and the batch is read again in 2 s. The reader
+  also keeps the last id it took (`taken`): a poll asks from the later of that
+  and the stored offset (a failed read of the setting is `nil`), and an update
+  at or below it is not handed on again. A 409
   "Conflict" pauses 60 s (status, one warning per 10 minutes); other errors
   back off 5 → 60 s. `Bridge.handle_update/3` decides (it reads the link and remembers an unlinked
   chat in the limiter's table, sends nothing):
   only a private text message of a chat `Linking.chat_for_update/1` knows, not
   older than 10 minutes; `/start <anything>` never reaches the agent (core's),
-  bare `/start` and `/help` get the help text, `/new` a new conversation,
+  bare `/start` and `/help` get the help text, `/new` a new conversation (the
+  chat is authorized — `Conversations.authorize_session/2` — before any
+  conversation is made for it, for `/new` and for a message alike),
   forwarded messages and anything but text and voice a fixed refusal (voice: see Voice); an edited message
   or a group is ignored. `Bridge.dispatch/3` runs it: a per-chat serial queue
   (`ChatQueue`: a process per `{bot, chat}`, at most 3 waiting, 20 queues in
-  all, overflow texts "wait" / "busy") and the turns in
+  all, overflow texts "wait" / "busy"; a job whose place comes while the switch
+  is off is let go unanswered, `Telegram.Turn.run/3`) and the turns in
   `PhoenixKitAgent.Telegram.TaskSupervisor`; the replies that need no turn run
   under their own `ReplySupervisor` and come to a linked chat once in 3 s at
   most for each kind (`Limiter.allow_quick_reply?/3`: a refusal is still told
@@ -444,7 +459,8 @@ and `Web.Markdown`).
   write, no model call after it), and `Telegram.Turn` sends what the assistant
   said, then **the card**: plain text of core's preview
   (`Approvals.View.preview/1`; a `technical` remainder is cut at 1500
-  characters and then only ❌ is offered) read with the chat's own reference
+  characters, and rows the site shows past what the card's rows may take are
+  counted only — either way then only ❌ is offered) read with the chat's own reference
   (`Confirm.get_for_user/2`) and the buttons ✅ / ❌ whose data is `c:` / `x:`
   and the confirmation's uuid and nothing else. A card that could not be sent
   is one message that sends the person to the site, and 🤷. Where it went is
@@ -466,7 +482,8 @@ and `Web.Markdown`).
   by `Cards.notice_added/1` only, called from `Conversations` once a `notice`
   with a `confirmation_uuid` is committed in a Telegram conversation — also
   when the site wrote it — in a task, for the bot the card was sent by, with
-  the switch on: the edit to the outcome, and for `changed` the new card. A
+  the switch on: the edit to the outcome, and for `changed` the new card (only
+  while the chat is still linked to the card's owner). A
   card that runs out untouched keeps its buttons until pressed. Without
   `agent.telegram` neither ✅ nor ❌ works; without the right to the tool ✅
   is refused and ❌ works.

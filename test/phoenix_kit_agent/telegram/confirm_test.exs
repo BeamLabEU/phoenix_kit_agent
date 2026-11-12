@@ -845,6 +845,22 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
       assert row(new_uuid).context["origin"] == "telegram"
     end
 
+    test "a chat no longer linked to the user gets no new card, and the change waits on the site",
+         ctx do
+      held = hold!(ctx)
+      {:ok, _} = Settings.update_setting("agenttest_written", "someone-else")
+      :ok = Linking.drop_links(ctx.user.uuid)
+
+      assert {:ok, :changed} =
+               Confirmations.confirm(ctx.site_ref, false, held.chat.uuid, held.card.uuid)
+
+      settle()
+      calls = drain()
+
+      assert cards_sent(calls) == []
+      assert sent(calls) == []
+    end
+
     test "a new card that cannot be sent is told as a line that sends to the site", ctx do
       held = hold!(ctx)
       {:ok, _} = Settings.update_setting("agenttest_written", "someone-else")

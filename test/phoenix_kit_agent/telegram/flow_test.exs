@@ -45,6 +45,7 @@ defmodule PhoenixKitAgent.Telegram.FlowTest do
 
     endpoint = endpoint_fixture(%{model: @model})
     {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", endpoint.uuid)
+    {:ok, _} = Config.put_telegram_enabled(true, log: false)
 
     user = user_with(["agent", "agent.telegram", "dashboard"], "flow")
     connection = UUIDv7.generate()
@@ -219,6 +220,34 @@ defmodule PhoenixKitAgent.Telegram.FlowTest do
       calls = calls_until(reaction?("👍"))
       assert texts(calls) == [Texts.static(:new_started)]
       refute Conversations.latest_telegram_conversation(ctx.user.uuid).uuid == first.uuid
+    end
+
+    test "a chat without the right to the assistant gets no conversation, for /new or a message",
+         ctx do
+      stranger = user_with(["agent", "dashboard"], "no-telegram")
+      chat = @chat + 1
+      _ref = telegram_link_fixture(stranger, ctx.connection, chat)
+
+      for {text, id} <- [{"/new", 1}, {"Hello", 2}] do
+        Bridge.dispatch(ctx.connection, TelegramClient.update(chat, text, message_id: id))
+        calls = calls_until(reaction?("🤷"))
+        assert texts(calls) == [Texts.refusal(:forbidden)]
+      end
+
+      assert Conversations.latest_telegram_conversation(stranger.uuid) == nil
+
+      assert Repo.aggregate(from(c in Conversation, where: c.user_uuid == ^stranger.uuid), :count) ==
+               0
+    end
+
+    test "a message that waited while the switch went off is let go, unanswered", ctx do
+      {:ok, _} = Config.put_telegram_enabled(false, log: false)
+
+      send_update(ctx, "Hello")
+
+      refute_receive {:tg, {:send_message, _, _, _}}, 300
+      refute_receive {:tg, {:react, _, _, _, _}}, 0
+      assert Conversations.latest_telegram_conversation(ctx.user.uuid) == nil
     end
 
     test "markdown is taken out and a long answer comes in parts", ctx do
@@ -774,6 +803,8 @@ defmodule PhoenixKitAgent.Telegram.FlowTest do
   end
 
   test "the module's own setting is read from the database", _ctx do
+    assert Config.telegram_enabled?()
+    {:ok, _} = Config.put_telegram_enabled(false, log: false)
     refute Config.telegram_enabled?()
   end
 end

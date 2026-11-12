@@ -19,6 +19,7 @@ defmodule PhoenixKitAgent.Telegram.Cards do
   is. What Telegram refuses is logged by its kind and nothing else.
   """
 
+  alias PhoenixKit.Integrations.Telegram.Linking
   alias PhoenixKitAgent.{Config, Confirmations, Conversations}
   alias PhoenixKitAgent.Schemas.{Conversation, Message}
   alias PhoenixKitAgent.Telegram.{Bridge, Card, Client, Texts}
@@ -115,15 +116,22 @@ defmodule PhoenixKitAgent.Telegram.Cards do
   end
 
   # The new card of a change whose data moved; one that cannot be sent is a
-  # line that sends the person to the site (as for a turn's card).
-  defp replacement(connection, {:telegram_link, _, _, chat_id} = ref, message) do
-    with %Message{} = card <-
+  # line that sends the person to the site (as for a turn's card). Only to a
+  # chat still linked to the card's owner: one unlinked or linked to someone
+  # else since gets no new message (the change waits on the site).
+  defp replacement(connection, {:telegram_link, user_uuid, _, chat_id} = ref, message) do
+    with true <- still_linked?(connection, chat_id, user_uuid),
+         %Message{} = card <-
            Confirmations.replacement_card(message.conversation_uuid, message.confirmation_uuid),
          :error <- deliver(connection, ref, message.conversation_uuid, card) do
       Bridge.say(connection, chat_id, Texts.static(:card_not_shown))
     end
 
     :ok
+  end
+
+  defp still_linked?(connection, chat_id, user_uuid) do
+    match?(%{uuid: ^user_uuid}, Linking.linked_user(connection, chat_id))
   end
 
   @doc false

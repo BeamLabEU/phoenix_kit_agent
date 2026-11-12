@@ -288,6 +288,13 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       upload = %{Files.upload!("z", "c.txt") | filename: ".."}
       assert {:error, :unsupported_type} = Attachments.add(ctx.ref, ctx.chat.uuid, upload, @me)
     end
+
+    test "the name the Telegram bridge marks its pictures with is not a panel upload's", ctx do
+      serve_ai()
+
+      image = add_done!(ctx, Files.png(40, 30), " telegram-picture ", "image/png")
+      assert image.filename == "telegram-picture (1)"
+    end
   end
 
   # ── processing: text and sheets ─────────────────────────────────────

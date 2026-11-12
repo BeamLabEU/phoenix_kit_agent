@@ -52,17 +52,27 @@ defmodule PhoenixKitAgent.Telegram.CardTest do
       assert byte_size(confirm["callback_data"]) == 38
     end
 
-    test "many rows are counted past what fits, and the text stays within Telegram's limit" do
+    test "rows the site shows and the card cannot: within Telegram's limit, and ❌ alone" do
       rows =
         for n <- 1..25,
             do: row(n, %{"description" => %{"from" => "a", "to" => String.duplicate("x", 300)}})
 
       preview = preview(rows, %{"totals" => %{"rows" => 90, "update" => 90}})
 
-      %{text: text} = Card.render(held(preview), @uuid, :open)
+      %{text: text, markup: markup} = Card.render(held(preview), @uuid, :open)
 
       assert String.length(text) <= 4096
+      assert text =~ "Confirm it on the site"
+      assert [[%{"callback_data" => "x:" <> @uuid}]] = markup["inline_keyboard"]
+    end
+
+    test "rows core itself leaves out are counted, as on the site, and keep both buttons" do
+      preview = preview([row(1), row(2)], %{"totals" => %{"rows" => 90, "update" => 90}})
+
+      %{text: text, markup: markup} = Card.render(held(preview), @uuid, :open)
+
       assert text =~ ~r/…and \d+ more/
+      assert [[_, _]] = markup["inline_keyboard"]
     end
 
     test "a preview the common shape does not hold: the technical details, cut, and ❌ alone" do
