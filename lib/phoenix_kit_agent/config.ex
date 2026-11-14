@@ -22,6 +22,8 @@ defmodule PhoenixKitAgent.Config do
   | `agent_history_chars` | `24_000` |
   | `agent_tool_result_chars` | `12_000` |
   | `agent_capture_ai_content` | `false` |
+  | `agent_retention_days` | none — chats are kept without a time limit (`PhoenixKitAgent.Retention`) |
+  | `agent_attachment_types` | none — every type the module reads: png, jpg, webp, heic, pdf, xlsx, csv, txt, md |
   | `agent_telegram_enabled` | `false` — answer the linked chats of the site's Telegram bot |
   | `agent_telegram_offset` | none — `"<bot connection uuid>:<last update id>"`, kept by the reader |
 
@@ -46,6 +48,14 @@ defmodule PhoenixKitAgent.Config do
   to): it is written without that history, and its change is recorded as
   `agent.settings_updated` with the field name only.
 
+  `agent_retention_days` is a whole number of days, `1` to 3650, or empty. Empty
+  is the default and means no chat is ever deleted by the module. A value
+  that is not a whole number in that range is read as empty, never as a short
+  period: a damaged setting must not delete anything.
+  `agent_attachment_types` is a comma-separated list of the types of file a
+  chat accepts (`PhoenixKitAgent.Attachments.Detect.types/0`); empty, or a
+  value with no known type, reads as every type.
+
   `agent_capture_ai_content` is on only when it reads exactly `"true"`: then the
   bodies of the assistant's model calls are written to the AI request journal,
   where every holder of the `ai` permission reads them. Only an Owner may switch
@@ -60,6 +70,7 @@ defmodule PhoenixKitAgent.Config do
   alias PhoenixKit.Settings
   alias PhoenixKit.Settings.History
   alias PhoenixKit.Utils.Number
+  alias PhoenixKitAgent.Attachments.Detect
   alias PhoenixKitAgent.Schemas.Message
   alias PhoenixKitAI.Endpoint
 
@@ -95,6 +106,12 @@ defmodule PhoenixKitAgent.Config do
 
   # The longest module prompt, in characters.
   @prompt_max 16_000
+
+  @retention_key "agent_retention_days"
+  @attachment_types_key "agent_attachment_types"
+
+  # The longest retention a person can set: ten years.
+  @retention_max_days 3650
 
   @typedoc "Why `put_default_endpoint/2`, `put_vision_endpoint/2` or `put_speech_endpoint/2` wrote nothing."
   @type endpoint_refusal ::
@@ -171,6 +188,45 @@ defmodule PhoenixKitAgent.Config do
         nil
     end
   end
+
+  @doc """
+  After how many days without a message a chat is deleted for good
+  (`agent_retention_days`), or `nil`: no chat is deleted (the default). See
+  `PhoenixKitAgent.Retention`.
+  """
+  @spec retention_days() :: pos_integer() | nil
+  def retention_days, do: @retention_key |> string_setting() |> retention_value()
+
+  @doc false
+  # `retention_days/0` read from the database, not the cache: the nightly
+  # deletion must act on the period as it was last saved, and a stale longer
+  # or shorter value on another node would delete what the person meant to
+  # keep. A read that fails is `nil`: nothing is deleted.
+  @spec retention_days_direct() :: pos_integer() | nil
+  def retention_days_direct do
+    case Settings.get_settings_direct([@retention_key]) do
+      %{@retention_key => value} when is_binary(value) -> retention_value(value)
+      _none -> nil
+    end
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  @doc "The longest retention, in days, that can be set."
+  @spec retention_max_days() :: pos_integer()
+  def retention_max_days, do: @retention_max_days
+
+  @doc """
+  The types of file a chat accepts (`agent_attachment_types`), a sublist of
+  `PhoenixKitAgent.Attachments.Detect.types/0` in its order. Every type is
+  accepted until a site narrows the list. The server checks it on every file
+  added (`PhoenixKitAgent.Attachments.add/4`); the panel's file input only
+  mirrors it.
+  """
+  @spec attachment_types() :: [String.t()]
+  def attachment_types, do: @attachment_types_key |> string_setting() |> attachment_types_value()
 
   @doc """
   The users told when someone hits a limit (`agent_limit_watchers`). Empty means
@@ -276,6 +332,55 @@ defmodule PhoenixKitAgent.Config do
   end
 
   @doc """
+  Sets `agent_retention_days`: a whole number of days from `1` to
+  3650 (an integer, or text a person typed), or `nil` / blank for none
+  (chats are kept without a time limit). Anything else is
+  `{:error, :invalid_days}` and nothing is written (`{:ok, :unchanged}` for
+  none when none was ever set). `opts` go to
+  `PhoenixKit.Settings` (`actor_uuid:`, `source:`), so the change is in the
+  settings history with who made it. The caller checks `agent.manage`.
+  """
+  @spec put_retention_days(pos_integer() | String.t() | nil, keyword()) ::
+          {:ok, term()} | {:error, :invalid_days | Ecto.Changeset.t()}
+  def put_retention_days(days, opts) do
+    case parse_retention_days(days) do
+      {:ok, nil} ->
+        store(@retention_key, "", opts)
+
+      {:ok, days} ->
+        store(@retention_key, Integer.to_string(days), opts)
+
+      :error ->
+        {:error, :invalid_days}
+    end
+  end
+
+  @doc """
+  Sets `agent_attachment_types`: the types of file a chat accepts, each one of
+  `PhoenixKitAgent.Attachments.Detect.types/0` (repeats and order do not
+  matter). A name that is not one of them, or no type at all, is
+  `{:error, :invalid_types}` and nothing is written (to take no files, set the
+  attachments per message to `0`). The full list is stored as empty, the
+  default, so it follows a type the module learns later. `opts` as for
+  `put_retention_days/2`. The caller checks `agent.manage`.
+  """
+  @spec put_attachment_types([String.t()], keyword()) ::
+          {:ok, term()} | {:error, :invalid_types | Ecto.Changeset.t()}
+  def put_attachment_types(types, opts) when is_list(types) do
+    known = Detect.types()
+
+    if types != [] and Enum.all?(types, &(&1 in known)) do
+      chosen = Enum.filter(known, &(&1 in types))
+      value = if chosen == known, do: "", else: Enum.join(chosen, ",")
+      store(@attachment_types_key, value, opts)
+    else
+      {:error, :invalid_types}
+    end
+  end
+
+  def put_attachment_types(_types, _opts), do: {:error, :invalid_types}
+
+  @doc """
   Sets the module's system prompt (`agent_system_prompt`); a blank one means
   none. NUL characters are cut (the database refuses them); a prompt over
   #{@prompt_max} characters is `{:error, changeset}` and nothing is written —
@@ -374,6 +479,58 @@ defmodule PhoenixKitAgent.Config do
     if uuid_setting(key) == endpoint.uuid,
       do: :ok,
       else: PhoenixKitAI.Tasks.check_selection(task, endpoint)
+  end
+
+  # A blank value clears a setting; one that was never stored has nothing to
+  # clear (core takes no new row without a value).
+  defp store(key, "", opts) do
+    case Settings.get_settings_direct([key]) do
+      %{^key => _stored} -> Settings.update_setting_with_module(key, "", @module, opts)
+      _never_stored -> {:ok, :unchanged}
+    end
+  end
+
+  defp store(key, value, opts), do: Settings.update_setting_with_module(key, value, @module, opts)
+
+  defp retention_value(value) do
+    case parse_retention_days(value) do
+      {:ok, days} -> days
+      :error -> nil
+    end
+  end
+
+  defp parse_retention_days(nil), do: {:ok, nil}
+  defp parse_retention_days(days) when is_integer(days), do: in_retention_range(days)
+
+  defp parse_retention_days(text) when is_binary(text) do
+    case String.trim(text) do
+      "" ->
+        {:ok, nil}
+
+      trimmed ->
+        case whole_number(trimmed) do
+          days when is_integer(days) -> in_retention_range(days)
+          nil -> :error
+        end
+    end
+  end
+
+  defp parse_retention_days(_other), do: :error
+
+  defp in_retention_range(days) when days >= 1 and days <= @retention_max_days,
+    do: {:ok, days}
+
+  defp in_retention_range(_days), do: :error
+
+  defp attachment_types_value(nil), do: Detect.types()
+
+  defp attachment_types_value(value) do
+    listed = value |> String.split(",") |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+
+    case Enum.filter(Detect.types(), &(&1 in listed)) do
+      [] -> Detect.types()
+      types -> types
+    end
   end
 
   defp stored_prompt do

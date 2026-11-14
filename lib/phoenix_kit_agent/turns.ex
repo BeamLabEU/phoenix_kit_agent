@@ -23,7 +23,9 @@ defmodule PhoenixKitAgent.Turns do
          `agent_default_endpoint_uuid`; `PhoenixKitAgent.UserConfig`), no more
          attachments than `max_attachments_per_message` allows, and each one
          ready, the user's own, of this chat and not sent yet
-         (`PhoenixKitAgent.Attachments`);
+         (`PhoenixKitAgent.Attachments`), and of a type the site still
+         accepts (`Config.attachment_types/0`: a file added before the list
+         was narrowed is `:type_not_allowed`, and the user discards it);
     2. the locks (`PhoenixKitAgent.Turns.Locks`): one turn per chat
        (`:conversation_busy`) and per user (`:turn_in_flight`, or
        `:click_in_flight` while a click on a confirmation card runs); the history
@@ -77,6 +79,7 @@ defmodule PhoenixKitAgent.Turns do
 
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.RepoHelper
+  alias PhoenixKitAgent.Attachments.Detect
   alias PhoenixKitAgent.{Config, Confirmations, Conversations, Limits, Prompt, Spend, UserConfig}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
   alias PhoenixKitAgent.Turns.{History, Locks, Monitor, Runner}
@@ -95,6 +98,7 @@ defmodule PhoenixKitAgent.Turns do
           | :ai_disabled
           | :no_endpoint
           | :invalid_attachments
+          | :type_not_allowed
           | :too_many_attachments
           | :conversation_busy
           | :turn_in_flight
@@ -299,9 +303,16 @@ defmodule PhoenixKitAgent.Turns do
           )
         )
 
-      if length(found) == length(uuids), do: {:ok, found}, else: {:error, :invalid_attachments}
+      cond do
+        length(found) != length(uuids) -> {:error, :invalid_attachments}
+        not Enum.all?(found, &type_allowed?/1) -> {:error, :type_not_allowed}
+        true -> {:ok, found}
+      end
     end
   end
+
+  defp type_allowed?(%Attachment{content_type: content_type}),
+    do: Detect.type_of_content_type(content_type) in Config.attachment_types()
 
   defp cast_uuids(uuids) do
     uuids

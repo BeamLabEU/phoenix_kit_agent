@@ -1722,6 +1722,48 @@ defmodule PhoenixKitAgent.Web.DockTest do
       refute has_element?(view, "#pk-agent-att-#{failed.uuid}")
       assert attachments_of(ctx.chat) == []
     end
+
+    test "the file input offers every type until the site narrows the list", ctx do
+      view = dock(ctx)
+
+      assert has_element?(view, "input[type=file][accept*='image/*']")
+      assert has_element?(view, "input[type=file][accept*='.pdf']")
+
+      {:ok, _} = Config.put_attachment_types(["png", "heic"], [])
+      view = dock(ctx)
+
+      assert has_element?(view, "input[type=file][accept*='image/png']")
+      assert has_element?(view, "input[type=file][accept*='.heic']")
+      refute has_element?(view, "input[type=file][accept*='image/*']")
+      refute has_element?(view, "input[type=file][accept*='.pdf']")
+      refute has_element?(view, "input[type=file][accept*='.csv']")
+    end
+
+    test "a file off the narrowed list is refused by the upload, and nothing is stored", ctx do
+      {:ok, _} = Config.put_attachment_types(["png", "jpg"], [])
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      input = pick(view, "table.csv", "a,b\n1,2\n", "text/csv")
+      assert {:error, [[_ref, %{reason: :not_accepted}]]} = render_upload(input, "table.csv")
+      view |> form("#pk-agent-composer") |> render_change()
+
+      assert has_element?(view, ~s([data-pk-upload-entry][data-error="not_accepted"]))
+      assert attachments_of(ctx.chat) == []
+    end
+
+    test "a file the browser let through, of a type off the list, is refused by the server",
+         ctx do
+      {:ok, _} = Config.put_attachment_types(["txt"], [])
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      # A picture named .txt: LiveView takes it by its name, the content decides.
+      upload(view, "notes.txt", Files.png(8, 8), "text/plain")
+
+      assert await_files(view) =~ "This site accepts only these kinds of file: txt."
+      assert attachments_of(ctx.chat) == []
+    end
   end
 
   # ── the feed and its chat ──────────────────────────────────────────

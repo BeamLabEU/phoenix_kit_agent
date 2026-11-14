@@ -77,15 +77,29 @@ defmodule PhoenixKitAgent.UserDeletion do
   # logged, never raised: the caller's own work is done.
   @spec release_file(String.t()) :: :ok
   def release_file(file_uuid) when is_binary(file_uuid) do
+    release_files([file_uuid])
+    :ok
+  end
+
+  @doc false
+  # `release_file/1` for the files of attachment rows already deleted
+  # (`PhoenixKitAgent.Retention`): the library and the references are looked up
+  # once for all of them. How many files it deleted.
+  @spec release_files([String.t()]) :: non_neg_integer()
+  def release_files([]), do: 0
+
+  def release_files(file_uuids) when is_list(file_uuids) do
     library = step("library lookup", nil, &AgentLibrary.library/0)
     refs = step("file references", nil, &file_references/0)
     ctx = %{user_uuid: nil, library: library, refs: refs}
 
-    step("an attachment file", :ok, fn ->
-      if deletable?(file_uuid, ctx), do: delete_file(file_uuid)
+    file_uuids
+    |> Enum.map(fn file_uuid ->
+      step("an attachment file", :ok, fn ->
+        if deletable?(file_uuid, ctx), do: delete_file(file_uuid)
+      end)
     end)
-
-    :ok
+    |> Enum.count(&(&1 == :deleted))
   end
 
   # Each step runs on its own: one that fails is logged and the others still
@@ -286,7 +300,7 @@ defmodule PhoenixKitAgent.UserDeletion do
 
   defp delete_file(file_uuid) do
     case Storage.delete_file_completely(file_uuid) do
-      {:ok, _} -> :ok
+      {:ok, _} -> :deleted
       {:error, :not_found} -> :ok
       other -> log_failure("an attachment file", other)
     end

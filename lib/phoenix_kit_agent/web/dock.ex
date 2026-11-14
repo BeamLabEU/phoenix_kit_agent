@@ -191,7 +191,7 @@ defmodule PhoenixKitAgent.Web.Dock do
     UserConfig
   }
 
-  alias PhoenixKitAgent.Attachments.Work
+  alias PhoenixKitAgent.Attachments.{Detect, Work}
   alias PhoenixKitAgent.Schemas.{Message, UserSettings}
   alias PhoenixKitAgent.Turns.Monitor
   alias PhoenixKitAgent.Web.Dock.{Panel, Texts}
@@ -208,6 +208,19 @@ defmodule PhoenixKitAgent.Web.Dock do
   # its MIME type, and its name may carry no listed extension. What the file
   # really is is told by its content (`Attachments.add/4`), not by this list.
   @accept ~w(image/* .png .jpg .jpeg .webp .heic .heif .pdf .xlsx .csv .txt .md)
+  # What the input offers for each type a site may narrow the list to
+  # (`Config.attachment_types/0`); the server checks the type itself.
+  @accept_of %{
+    "png" => ~w(image/png .png),
+    "jpg" => ~w(image/jpeg .jpg .jpeg),
+    "webp" => ~w(image/webp .webp),
+    "heic" => ~w(image/heic image/heif .heic .heif),
+    "pdf" => ~w(.pdf),
+    "xlsx" => ~w(.xlsx),
+    "csv" => ~w(.csv),
+    "txt" => ~w(.txt),
+    "md" => ~w(.md)
+  }
   # A slow tablet link needs more than LiveView's 10 s between two chunks.
   @chunk_timeout_ms 60_000
   @mb 1_048_576
@@ -280,7 +293,7 @@ defmodule PhoenixKitAgent.Web.Dock do
       )
       |> attach_hook(:pk_agent_finished_upload, :handle_event, &keep_finished_upload/3)
       |> UploadManager.allow_upload(:files,
-        accept: @accept,
+        accept: accept(Config.attachment_types()),
         max_entries: max(settings.max_attachments_per_message, 1),
         max_file_size: max(settings.max_attachment_mb * @mb, 1),
         chunk_timeout: @chunk_timeout_ms,
@@ -293,6 +306,14 @@ defmodule PhoenixKitAgent.Web.Dock do
     else
       _not_this_session -> socket
     end
+  end
+
+  # Every type: the input as it always was (`image/*` too); a narrowed list:
+  # only its types.
+  defp accept(types) do
+    if types == Detect.types(),
+      do: @accept,
+      else: Enum.flat_map(types, &Map.fetch!(@accept_of, &1))
   end
 
   defp speech?, do: Config.speech?() and Code.ensure_loaded?(recorder())

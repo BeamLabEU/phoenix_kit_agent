@@ -569,6 +569,134 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
     end
   end
 
+  describe "keeping chats" do
+    setup %{conn: conn} do
+      manager = user_with(["agent", "agent.manage"], "manager")
+      %{conn: log_in(conn, manager), manager: manager}
+    end
+
+    test "is empty by default: chats are kept without a limit", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-retention-form")
+      assert has_element?(view, "#agent-retention-days[value='']")
+      refute has_element?(view, "#agent-retention-due")
+      assert Config.retention_days() == nil
+    end
+
+    test "saves a period, with who saved it in the settings history, and says what is due",
+         ctx do
+      old = conversation_fixture(ctx.manager)
+
+      Repo.update_all(from(c in PhoenixKitAgent.Schemas.Conversation, where: c.uuid == ^old.uuid),
+        set: [last_message_at: DateTime.add(DateTime.utc_now(), -40 * 86_400)]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      view |> form("#agent-retention-form", retention: %{days: "30"}) |> render_submit()
+
+      assert has_element?(view, "#flash-info")
+      assert Config.retention_days() == 30
+      assert has_element?(view, "#agent-retention-days[value='30']")
+      assert render(view) =~ "Chats the next nightly run would delete: 1."
+      assert [entry] = settings_entries("agent_retention_days")
+      assert entry.actor_uuid == ctx.manager.uuid
+      # Saving deletes nothing: the nightly job does.
+      assert Repo.get(PhoenixKitAgent.Schemas.Conversation, old.uuid)
+
+      view |> form("#agent-retention-form", retention: %{days: ""}) |> render_submit()
+      assert Config.retention_days() == nil
+      refute has_element?(view, "#agent-retention-due")
+    end
+
+    test "a value that is not a period is shown as an error and nothing is saved", ctx do
+      {:ok, _} = Config.put_retention_days(30, [])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      for bad <- ["0", "-5", "3651", "abc", "1.5"] do
+        html = view |> form("#agent-retention-form", retention: %{days: bad}) |> render_submit()
+
+        assert html =~ "Enter a whole number of days from 1 to 3650"
+        assert has_element?(view, "#flash-error")
+        assert Config.retention_days() == 30
+      end
+    end
+
+    test "an event without the form's fields changes nothing and does not crash", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      render_hook(view, "save_retention", %{})
+      render_hook(view, "save_retention", %{"retention" => %{"days" => 30}})
+      render_hook(view, "save_retention", %{"retention" => %{}})
+
+      assert has_element?(view, "#agent-retention-form")
+      assert Config.retention_days() == nil
+    end
+  end
+
+  describe "types of file in chats" do
+    setup %{conn: conn} do
+      manager = user_with(["agent", "agent.manage"], "manager")
+      %{conn: log_in(conn, manager), manager: manager}
+    end
+
+    test "every type is ticked by default", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      for type <- ~w(png jpg webp heic pdf xlsx csv txt md) do
+        assert has_element?(view, "#agent-file-type-#{type}[checked]")
+      end
+    end
+
+    test "saves a narrower list, with who saved it, and back to every type", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      view
+      |> form("#agent-attachment-types-form", attachment_types: %{types: ["", "png", "jpg"]})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-info")
+      assert Config.attachment_types() == ["png", "jpg"]
+      assert has_element?(view, "#agent-file-type-png[checked]")
+      refute has_element?(view, "#agent-file-type-pdf[checked]")
+      assert [entry] = settings_entries("agent_attachment_types")
+      assert entry.actor_uuid == ctx.manager.uuid
+
+      all = ~w(png jpg webp heic pdf xlsx csv txt md)
+
+      view
+      |> form("#agent-attachment-types-form", attachment_types: %{types: [""] ++ all})
+      |> render_submit()
+
+      assert Config.attachment_types() == all
+    end
+
+    test "no type at all, or a type the page did not offer, is refused and nothing is saved",
+         ctx do
+      {:ok, _} = Config.put_attachment_types(["png"], [])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      for forged <- [[""], [], ["exe"], ["png", "exe"], ["PNG"], [%{"a" => 1}]] do
+        render_hook(view, "save_attachment_types", %{"attachment_types" => %{"types" => forged}})
+        assert Config.attachment_types() == ["png"]
+      end
+
+      assert has_element?(view, "#flash-error")
+      assert has_element?(view, "#agent-attachment-types-form")
+    end
+
+    test "an event without the form's fields changes nothing and does not crash", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      render_hook(view, "save_attachment_types", %{})
+      render_hook(view, "save_attachment_types", %{"attachment_types" => %{"types" => "png"}})
+
+      assert has_element?(view, "#agent-attachment-types-form")
+      assert Config.attachment_types() == ~w(png jpg webp heic pdf xlsx csv txt md)
+    end
+  end
+
   describe "agent_capture_ai_content: the Owner's switch" do
     defp owner_user, do: owner_fixture()
 
@@ -1001,6 +1129,30 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert Config.vision_endpoint_uuid() == nil
       assert Config.system_prompt() == nil
       assert Config.limit_watchers() == []
+    end
+
+    test "a page opened before the right was taken away saves no retention or file types", %{
+      conn: conn
+    } do
+      manager = user_with(["agent", "agent.manage"], "manager")
+      {:ok, view, _html} = live(log_in(conn, manager), @path)
+
+      [role] =
+        manager
+        |> Roles.get_user_roles()
+        |> Enum.reject(&(&1 in ["Owner", "Admin", "User"]))
+        |> Enum.map(&Roles.get_role_by_name/1)
+
+      :ok = Permissions.revoke_permission(role.uuid, "agent.manage")
+
+      view |> form("#agent-retention-form", retention: %{days: "1"}) |> render_submit()
+
+      view
+      |> form("#agent-attachment-types-form", attachment_types: %{types: ["png"]})
+      |> render_submit()
+
+      assert Config.retention_days() == nil
+      assert Config.attachment_types() == ~w(png jpg webp heic pdf xlsx csv txt md)
     end
 
     test "nobody signed in is sent away", %{conn: conn} do
