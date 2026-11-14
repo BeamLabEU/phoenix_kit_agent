@@ -155,6 +155,17 @@ UTF-8: one saved by Excel in a code page or as UTF-16 is refused with its own
 reason (`unsupported_encoding`), and bytes that are not UTF-8 inside a file show
 as U+FFFD.
 
+Which types of file a chat takes is a setting, `agent_attachment_types`
+(Settings → AI Agent → "Types of file in chats"): a list of `png`, `jpg`,
+`webp`, `heic`, `pdf`, `xlsx`, `csv`, `txt`, `md`. Unset, it is all of them, as
+before; a site that wants only pictures keeps the first four. The server holds
+the list, on the content's type, in `Attachments.add/4` (`type_not_allowed`;
+the Telegram bridge's pictures too) and again when a message is sent with a
+file added before the list was narrowed (`Turns.start/6`: `type_not_allowed`,
+and the user discards the file); the file input of the chat panel only mirrors
+it, and the refusal names the types the site takes. To take no file at all, set
+the attachments per message to 0.
+
 Before the turn a task makes each file readable, and the row goes from
 `pending` to `ready` (or `failed`, with a code in `error`): a PDF gives its
 text; a PDF with no text (a scan) and a picture are shown to a model known to
@@ -392,10 +403,57 @@ about limits (none chosen: every Owner). A user without a model of their own,
 while no default is chosen, is refused every turn with a text that says where
 the model is chosen.
 
-The Settings page has one switch only an Owner can change,
+The Settings page has two settings only an Owner can change. One is
 `agent_capture_ai_content`: when on, the bodies of the assistant's requests are
 written to the AI request journal and every holder of the `ai` permission reads
-them on `/admin/ai/usage`.
+them on `/admin/ai/usage`. The other is the retention period, below.
+
+## Keeping chats
+
+By default the module keeps every chat for ever, and deletes nothing. A site
+can set `agent_retention_days` (Settings → AI Agent → "Keeping chats", whole
+days from 1 to 3650; empty is the default) to have them deleted for good:
+
+  * a chat whose last message is older than that (a chat with no message
+    counts from the day it was made), whatever its status, archived included;
+  * a chat the user deleted ("Delete" only hides a chat), at the next run and
+    whatever its age.
+
+With each chat go its messages and attachment rows, and the Storage files of its
+attachments from the hidden library, unless another row still uses the file
+(`PhoenixKitAgent.Retention`). A chat whose turn holds its lock is left for the
+next night. The job is `PhoenixKitAgent.RetentionWorker`, in core's `default`
+queue, scheduled once a night (03:43) by the module's `oban_crons/0`, which
+core writes into the host's crontab on `mix phoenix_kit.update`. It runs
+whether or not the module is switched on, and does nothing while the period
+is empty. An unreadable stored value is read as empty, never as a short period.
+A run that deleted something is recorded in the Activity log as
+`agent.retention_purged`: the period and the counts of chats, messages,
+attachment rows and files (and the files the sweep below deleted), never a
+title, a text or a file name. Not covered: the AI request journal, which
+`phoenix_kit_ai` keeps by its own retention and which, with
+`agent_capture_ai_content` on, holds the text of requests.
+
+Saving a period deletes nothing at once. Only an Owner changes it, because it
+makes the job delete data for good; anyone with `agent.manage` sees it. While
+an Owner types, the page says how many chats the typed value would delete at the
+next run, before it is saved.
+
+A file whose release did not happen after its rows went (the job or the node
+stopped, or Storage or the database refused the delete) is not forgotten: each
+run ends with a sweep that deletes the files of the hidden library that no
+attachment row refers to and that are more than a day old, the same way as the
+rest.
+
+The sweep does not cover an S3 outage. Core's Storage deletes a file's row first
+and the bucket objects after; if the bucket refuses, it only logs a warning and
+still reports success. The row is then gone and nothing in this module can tell
+that the bytes remain: they stay in the bucket until Storage keeps and retries
+the keys it failed to delete. The only trace is Storage's own log warning.
+
+The job allows one run at a time (an Oban `unique` that also covers a job still
+`executing`): a host without Oban's Lifeline plugin should add it, or a job
+orphaned in `executing` would block the nights after it.
 
 ## Installation
 
@@ -416,6 +474,9 @@ linked Telegram chat as an actor) with its migrations run up to
 V223 (`mix phoenix_kit.update`), which keeps the AI journal's cost in dollars (`cost`):
 before V223 every limit check fails on the missing column, and so does every
 turn.
+
+The nightly chat retention is an Oban cron of the module: after adding or
+updating the module run `mix phoenix_kit.update` so the host's crontab has it.
 
 ## Development
 

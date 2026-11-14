@@ -61,6 +61,9 @@ defmodule PhoenixKitAgent.UserDeletion do
 
   @attachments_table "phoenix_kit_agent_attachments"
 
+  @orphan_grace_s 86_400
+  @orphan_batch 100
+
   @doc "Runs the cleanup for `user_uuid`. Always `:ok`; failures are logged."
   @spec run(String.t()) :: :ok
   def run(user_uuid) do
@@ -77,15 +80,157 @@ defmodule PhoenixKitAgent.UserDeletion do
   # logged, never raised: the caller's own work is done.
   @spec release_file(String.t()) :: :ok
   def release_file(file_uuid) when is_binary(file_uuid) do
+    release_files([file_uuid])
+    :ok
+  end
+
+  @doc false
+  # `release_file/1` for the files of attachment rows already deleted
+  # (`PhoenixKitAgent.Retention`): the library and the references are looked up
+  # once for all of them. Each file is checked and deleted under a lock on its
+  # row (see `release_one/2`). Option `deadline:` (a
+  # `System.monotonic_time(:millisecond)`): no file is started after it, and
+  # those left are met by the sweep (`release_orphans/1`). How many files it
+  # deleted.
+  @spec release_files([String.t()], keyword()) :: non_neg_integer()
+  def release_files(file_uuids, opts \\ [])
+  def release_files([], _opts), do: 0
+
+  def release_files(file_uuids, opts) when is_list(file_uuids) do
     library = step("library lookup", nil, &AgentLibrary.library/0)
     refs = step("file references", nil, &file_references/0)
     ctx = %{user_uuid: nil, library: library, refs: refs}
+    deadline = opts[:deadline]
 
-    step("an attachment file", :ok, fn ->
-      if deletable?(file_uuid, ctx), do: delete_file(file_uuid)
+    Enum.reduce_while(file_uuids, 0, fn file_uuid, deleted ->
+      if deadline && System.monotonic_time(:millisecond) >= deadline do
+        {:halt, deleted}
+      else
+        outcome = step("an attachment file", :ok, fn -> release_one(file_uuid, ctx) end)
+        {:cont, if(outcome == :deleted, do: deleted + 1, else: deleted)}
+      end
     end)
+  end
 
-    :ok
+  # The check and the delete in one transaction, under a lock on the file's
+  # row. An upload that stores the same bytes again is handed this very file
+  # (Storage deduplicates) and then links it to its attachment row; that link
+  # takes a shared lock on the row (the foreign key). Whichever comes first
+  # wins cleanly: a link made before the lock is seen by the check, so the file
+  # stays; a link that comes after the delete finds no file and the upload fails
+  # (and is cleaned up). A row someone else holds locked is left for the next
+  # run, not waited for.
+  #
+  # Storage deletes the bucket objects inside this transaction, before it
+  # commits: a node killed between the two leaves the row with no bytes behind
+  # it, and the next sweep deletes that row again.
+  defp release_one(file_uuid, ctx) do
+    result =
+      repo().transaction(fn ->
+        locked =
+          from(f in Storage.File,
+            where: f.uuid == ^file_uuid,
+            lock: "FOR UPDATE SKIP LOCKED",
+            select: f.uuid
+          )
+          |> repo().one()
+
+        if locked && deletable?(file_uuid, ctx), do: delete_file(file_uuid)
+      end)
+
+    case result do
+      {:ok, outcome} ->
+        outcome
+
+      # Storage's own refusal (a foreign key the module cannot see) marks this
+      # transaction failed, so the commit is rolled back; `delete_file` has
+      # already logged why, and the file is met again by the next sweep.
+      {:error, :rollback} ->
+        :ok
+    end
+  end
+
+  @doc false
+  # The files of the module's hidden library that no attachment row refers to
+  # and that are older than `grace_s` (a day by default, so a file a request is
+  # storing right now is never met): what a release that did not happen after
+  # the rows went (`PhoenixKitAgent.Retention`: the node or the job stopped, or
+  # Storage or the database refused the delete) or a path that never linked its
+  # file left behind. Each is checked again and deleted as `release_files/2`
+  # does, so a file anything else refers to stays. It cannot find bytes whose
+  # file row is already gone: Storage deletes the row first and, if the bucket
+  # then refuses (S3 down), only logs a warning and reports success, so those
+  # bytes are not met again. Options:
+  # `now:`, `grace_s:`, `batch:`, `deadline:` (a `System.monotonic_time(:millisecond)`
+  # after which no batch is started). How many files it deleted.
+  @spec release_orphans(keyword()) :: non_neg_integer()
+  def release_orphans(opts \\ []) do
+    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+
+    cutoff =
+      now
+      |> DateTime.add(-Keyword.get(opts, :grace_s, @orphan_grace_s))
+      |> DateTime.truncate(:second)
+
+    case step("library lookup", nil, &AgentLibrary.library/0) do
+      %Library{uuid: library_uuid} ->
+        sweep(
+          library_uuid,
+          cutoff,
+          Keyword.get(opts, :batch, @orphan_batch),
+          opts[:deadline],
+          nil,
+          0
+        )
+
+      nil ->
+        0
+    end
+  end
+
+  # Batches by the file's uuid, so a file that cannot be deleted is met once
+  # per run, not again and again.
+  defp sweep(library_uuid, cutoff, batch, deadline, after_uuid, deleted) do
+    if deadline && System.monotonic_time(:millisecond) >= deadline do
+      deleted
+    else
+      case step("orphan files", [], fn -> orphans(library_uuid, cutoff, batch, after_uuid) end) do
+        [] ->
+          deleted
+
+        uuids ->
+          sweep(
+            library_uuid,
+            cutoff,
+            batch,
+            deadline,
+            List.last(uuids),
+            deleted + release_files(uuids, deadline: deadline)
+          )
+      end
+    end
+  end
+
+  # Files of the library (not a system-managed child of another file) with no
+  # attachment row, made before `cutoff`.
+  defp orphans(library_uuid, cutoff, batch, after_uuid) do
+    query =
+      from(f in Storage.File,
+        as: :file,
+        where:
+          f.library_uuid == ^library_uuid and is_nil(f.parent_file_uuid) and
+            f.inserted_at < ^cutoff,
+        where:
+          not exists(
+            from(a in Attachment, where: a.file_uuid == parent_as(:file).uuid, select: 1)
+          ),
+        order_by: f.uuid,
+        limit: ^batch,
+        select: f.uuid
+      )
+
+    query = if after_uuid, do: from(f in query, where: f.uuid > ^after_uuid), else: query
+    repo().all(query)
   end
 
   # Each step runs on its own: one that fails is logged and the others still
@@ -286,7 +431,7 @@ defmodule PhoenixKitAgent.UserDeletion do
 
   defp delete_file(file_uuid) do
     case Storage.delete_file_completely(file_uuid) do
-      {:ok, _} -> :ok
+      {:ok, _} -> :deleted
       {:error, :not_found} -> :ok
       other -> log_failure("an attachment file", other)
     end
@@ -306,9 +451,7 @@ defmodule PhoenixKitAgent.UserDeletion do
   defp quote_ident(name), do: ~s("#{String.replace(name, "\"", "\"\"")}")
 
   defp log_failure(what, reason) do
-    Logger.warning(
-      "[PhoenixKitAgent] user deletion cleanup of #{what} failed: #{failure_class(reason)}"
-    )
+    Logger.warning("[PhoenixKitAgent] cleanup of #{what} failed: #{failure_class(reason)}")
 
     :ok
   end

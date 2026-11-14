@@ -501,7 +501,11 @@ defmodule PhoenixKitAgent.Conversations do
     end)
   end
 
-  @doc "Archives a chat: it leaves the list, nothing is deleted."
+  @doc """
+  Archives a chat: it leaves the list. Nothing is deleted by this; with a
+  retention period set (`PhoenixKitAgent.Retention`) the chat is deleted for
+  good once its last message is older than the period.
+  """
   @spec archive_conversation(session_ref(), term(), keyword()) ::
           {:ok, Conversation.t()} | {:error, refusal() | Ecto.Changeset.t()}
   def archive_conversation(session_ref, conversation_uuid, opts),
@@ -509,7 +513,9 @@ defmodule PhoenixKitAgent.Conversations do
 
   @doc """
   Soft-deletes a chat: its row and messages stay, but no function here sees it
-  any more.
+  any more. With no retention period set they stay for good; with one
+  (`PhoenixKitAgent.Retention`) the nightly job deletes the chat, with its
+  messages and files, at its next run.
   """
   @spec delete_conversation(session_ref(), term(), keyword()) ::
           {:ok, Conversation.t()} | {:error, refusal() | Ecto.Changeset.t()}

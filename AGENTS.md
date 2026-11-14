@@ -43,7 +43,8 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
 `Cmd`, `Bounds`, `Unzip`, `Jpeg`, `Work`) and the chat panel
 (`PhoenixKitAgent.Web.Dock`, the module's header widget, with
 `Web.Dock.Panel` (markup and hooks), `Web.Dock.Components`, `Web.Dock.Texts`
-and `Web.Markdown`).
+and `Web.Markdown`) and the optional chat retention
+(`PhoenixKitAgent.Retention` with `RetentionWorker`, off by default).
 
 - **Depends on:** `phoenix_kit` (the writes of a live session:
   `allow: :all`, `Executor.redeem_as/6`, the session functions of
@@ -140,6 +141,41 @@ and `Web.Markdown`).
   that bind a file name or its text use `log: false`. Tests that need poppler
   or ImageMagick carry `@tag :poppler` / `:imagemagick` and are excluded, with a
   message, where the program is missing.
+- **Attachment types** (`agent_attachment_types`, `Config.attachment_types/0`):
+  a sublist of `Attachments.Detect.types/0` (png jpg webp heic pdf xlsx csv txt
+  md; unset or unreadable = all of them, so nothing changes for a site that
+  never sets it). The server checks it on `Detect`'s `ext` in
+  `Attachments.add_checked/5` (`{:error, :type_not_allowed}`, before anything is
+  stored; the bridge's pictures too) and on the stored `content_type` of the
+  files a turn is started with (`Turns.new_attachments/2`); the panel's
+  `accept` is derived from the same list and is never the check. A new kind
+  of file needs a name in `Detect.types/0` and `@accept_of` in `Web.Dock`.
+- **Retention** (`agent_retention_days`, `Config.retention_days/0`,
+  `PhoenixKitAgent.Retention`): empty is the default and deletes nothing — keep
+  that for every new path that deletes chats; a stored value that is not 1..3650
+  days reads as empty, never as a short period. The nightly
+  `RetentionWorker` (`oban_crons/0`) reads the period from the database
+  (`retention_days_direct/0`, not the cache) and hard-deletes in batches
+  (`FOR UPDATE SKIP LOCKED`, chats whose turn lock is fresh are left): chats
+  whose last message (`last_message_at`, else `inserted_at`) is older than the
+  period, and every chat the user deleted (status `deleted`), at the next run.
+  Messages and attachment rows go by `ON DELETE CASCADE`; the Storage files by
+  `UserDeletion.release_files/1` after the commit (library files nothing else
+  refers to). That release can be missed after the rows are gone (job or node
+  stopped, Storage or the database refused), so every run ends with
+  `UserDeletion.release_orphans/1`: library files no attachment row refers to,
+  older than a day (a request storing a file is never met), go the same way —
+  keep that sweep for any path that deletes attachment rows without the file.
+  Each release locks the file row (`FOR UPDATE SKIP LOCKED`) across the check and
+  the delete, so a deduplicated upload either is seen by the check or fails
+  cleanly. The sweep does **not** recover an S3 outage: core's
+  `delete_file_completely/1` deletes the row first and only logs a warning when
+  the bucket refuses, so no row is left to find — a core follow-up, never
+  promise "the photos are deleted" without that caveat.
+  Nothing of a chat goes to the log or the Activity entry
+  (`agent.retention_purged`: counts and days). The period is Owner-only to change
+  (`Access.owner?/1` in `save_retention`, like `agent_capture_ai_content`); the
+  page previews what a typed value would delete before it is saved.
 - **The chat panel** (`Web.Dock`): the widget's session carries only the
   user's uuid and locale (`header_widget_session/1`); the session reference and
   the impersonation flag are read by the panel itself in its **connected**
