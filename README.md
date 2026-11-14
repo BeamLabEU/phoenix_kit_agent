@@ -403,6 +403,11 @@ about limits (none chosen: every Owner). A user without a model of their own,
 while no default is chosen, is refused every turn with a text that says where
 the model is chosen.
 
+The Settings page has two settings only an Owner can change. One is
+`agent_capture_ai_content`: when on, the bodies of the assistant's requests are
+written to the AI request journal and every holder of the `ai` permission reads
+them on `/admin/ai/usage`. The other is the retention period, below.
+
 ## Keeping chats
 
 By default the module keeps every chat for ever, and deletes nothing. A site
@@ -424,16 +429,24 @@ whether or not the module is switched on, and does nothing while the period
 is empty. An unreadable stored value is read as empty, never as a short period.
 A run that deleted something is recorded in the Activity log as
 `agent.retention_purged`: the period and the counts of chats, messages,
-attachment rows and files, never a title, a text or a file name. Saving a
-period deletes nothing at once; the page says how many chats the next run would
-delete. Not covered: the AI request journal, which `phoenix_kit_ai` keeps by its
-own retention and which, with `agent_capture_ai_content` on, holds the text of
-requests.
+attachment rows and files (and the files the sweep below deleted), never a
+title, a text or a file name. Not covered: the AI request journal, which
+`phoenix_kit_ai` keeps by its own retention and which, with
+`agent_capture_ai_content` on, holds the text of requests.
 
-The Settings page has one switch only an Owner can change,
-`agent_capture_ai_content`: when on, the bodies of the assistant's requests are
-written to the AI request journal and every holder of the `ai` permission reads
-them on `/admin/ai/usage`.
+Saving a period deletes nothing at once. Only an Owner changes it, because it
+makes the job delete data for good; anyone with `agent.manage` sees it. While
+an Owner types, the page says how many chats the typed value would delete at the
+next run, before it is saved.
+
+A file whose release failed after its rows went (Storage down, the job stopped)
+is not forgotten: each run ends with a sweep that deletes the files of the hidden
+library that no attachment row refers to and that are more than a day old, the
+same way as the rest.
+
+The job allows one run at a time (an Oban `unique` that also covers a job still
+`executing`): a host without Oban's Lifeline plugin should add it, or a job
+orphaned in `executing` would block the nights after it.
 
 ## Installation
 
@@ -449,14 +462,14 @@ The module requires `phoenix_kit_ai` to be enabled (`required_modules/0` is
 `["ai"]`) and is switched on in Admin > Modules; it is off by default
 (setting `agent_enabled`).
 
-The nightly chat retention is an Oban cron of the module: after adding or
-updating the module run `mix phoenix_kit.update` so the host's crontab has it.
-
 It needs `phoenix_kit` 3.4.0 or later (the chat panel's upload manager, the
 linked Telegram chat as an actor) with its migrations run up to
 V223 (`mix phoenix_kit.update`), which keeps the AI journal's cost in dollars (`cost`):
 before V223 every limit check fails on the missing column, and so does every
 turn.
+
+The nightly chat retention is an Oban cron of the module: after adding or
+updating the module run `mix phoenix_kit.update` so the host's crontab has it.
 
 ## Development
 

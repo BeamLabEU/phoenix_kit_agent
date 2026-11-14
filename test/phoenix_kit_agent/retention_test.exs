@@ -146,6 +146,32 @@ defmodule PhoenixKitAgent.RetentionTest do
       assert Config.retention_days_direct() == 30
     end
 
+    test "the run reads the period from the database, not from the cache", %{user: user} do
+      # The settings cache is not running in the suite: start it, so that a
+      # value is cached the way a node that has read it keeps it.
+      start_supervised!(%{
+        id: :cache_registry,
+        start: {PhoenixKit.Cache.Registry, :start_link, []}
+      })
+
+      start_supervised!({PhoenixKit.Cache, name: :settings})
+
+      chat = chat!(user, last_message_at: ago(10))
+      assert Config.retention_days() == 30
+
+      # Another node (or a person's save that has not reached this cache yet)
+      # changed the period: the row says 5, the cache still says 30.
+      Repo.update_all(from(s in PhoenixKit.Settings.Setting, where: s.key == ^@key),
+        set: [value: "5"]
+      )
+
+      assert Config.retention_days() == 30
+      assert Config.retention_days_direct() == 5
+
+      assert {:ok, %{days: 5, conversations: 1}} = Retention.run()
+      refute chat?(chat)
+    end
+
     test "a chat older than the period goes with its messages, rows and file; a newer one stays",
          %{user: user, library: library} do
       old = chat!(user, last_message_at: ago(31))
@@ -159,7 +185,15 @@ defmodule PhoenixKitAgent.RetentionTest do
       attach!(user, recent, recent_file)
 
       assert {:ok, summary} = Retention.run()
-      assert summary == %{days: 30, conversations: 1, messages: 2, attachments: 1, files: 1}
+
+      assert summary == %{
+               days: 30,
+               conversations: 1,
+               messages: 2,
+               attachments: 1,
+               files: 1,
+               orphan_files: 0
+             }
 
       refute chat?(old)
       assert chat?(recent)
@@ -284,7 +318,7 @@ defmodule PhoenixKitAgent.RetentionTest do
 
       assert [entry] = Repo.all(from(e in Entry, where: e.action == "agent.retention_purged"))
       assert entry.module == "agent"
-      assert entry.mode == "auto"
+      assert entry.mode == "cron"
       assert entry.actor_uuid == nil
       assert entry.permanent
 
@@ -293,7 +327,8 @@ defmodule PhoenixKitAgent.RetentionTest do
                "conversations" => 1,
                "messages" => 1,
                "attachments" => 0,
-               "files" => 0
+               "files" => 0,
+               "orphan_files" => 0
              }
 
       refute inspect(entry) =~ "SECRET"
@@ -309,6 +344,232 @@ defmodule PhoenixKitAgent.RetentionTest do
       old = chat!(user, last_message_at: ago(100))
       assert :ok = RetentionWorker.perform(%Oban.Job{})
       refute chat?(old)
+    end
+  end
+
+  describe "a chat another transaction holds" do
+    # A second connection outside the test's sandbox: a row it has committed
+    # and holds under `FOR UPDATE` is a row a real transaction (a turn, a
+    # click on a confirmation) holds while the nightly job comes by.
+    setup do
+      set_days!("30")
+      lock_repo = :"retention_lock_repo_#{System.unique_integer([:positive])}"
+
+      {:ok, pid} =
+        Repo.start_link(name: lock_repo, pool: DBConnection.ConnectionPool, pool_size: 2)
+
+      Process.unlink(pid)
+      on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+      %{lock_repo: lock_repo}
+    end
+
+    test "is skipped, not waited for, and taken at the next run", %{lock_repo: lock_repo} do
+      test_pid = self()
+
+      holder =
+        Task.async(fn ->
+          Repo.put_dynamic_repo(lock_repo)
+
+          user =
+            Repo.insert!(%PhoenixKit.Users.Auth.User{
+              email: "lock-#{System.unique_integer([:positive])}@example.com",
+              hashed_password: "x"
+            })
+
+          chat =
+            Repo.insert!(%Conversation{
+              user_uuid: user.uuid,
+              title: "held",
+              last_message_at: ago(90)
+            })
+
+          Repo.transaction(fn ->
+            Repo.all(from(c in Conversation, where: c.uuid == ^chat.uuid, lock: "FOR UPDATE"))
+
+            send(test_pid, {:held, user.uuid, chat.uuid})
+
+            receive do
+              :release -> :ok
+            after
+              10_000 -> :timeout
+            end
+          end)
+        end)
+
+      assert_receive {:held, user_uuid, chat_uuid}, 5_000
+      # The rows are committed: they go away by hand, whatever happens below.
+      on_exit(fn -> delete_committed(lock_repo, user_uuid) end)
+
+      # `FOR UPDATE` without `SKIP LOCKED` would wait here for the holder.
+      run = Task.async(fn -> Retention.run() end)
+
+      result =
+        case Task.yield(run, 3_000) || Task.shutdown(run, :brutal_kill) do
+          {:ok, result} -> result
+          other -> other
+        end
+
+      send(holder.pid, :release)
+      Task.await(holder, 15_000)
+
+      assert {:ok, %{conversations: 0}} = result
+      assert Retention.due_count(30) == 1
+      assert Repo.get(Conversation, chat_uuid)
+    end
+
+    defp delete_committed(lock_repo, user_uuid) do
+      {:ok, uuid} = Ecto.UUID.dump(user_uuid)
+      Repo.put_dynamic_repo(lock_repo)
+      Repo.query!("DELETE FROM phoenix_kit_users WHERE uuid = $1", [uuid])
+    end
+  end
+
+  describe "files a release left behind" do
+    setup %{user: user, library: library} do
+      set_days!("30")
+      %{old: chat!(user, last_message_at: ago(90)), library: library}
+    end
+
+    # The file as a request that stored it a while ago left it.
+    defp aged!(file, days) do
+      Repo.update_all(from(f in Storage.File, where: f.uuid == ^file.uuid),
+        set: [inserted_at: DateTime.truncate(ago(days), :second)]
+      )
+
+      file
+    end
+
+    # A foreign key the module's own lookup cannot see (two columns): Storage
+    # itself refuses to delete a file it points at, as a reference added by
+    # a later module would. Rolled back with the test's transaction.
+    defp block!(file) do
+      Repo.query!(
+        "CREATE UNIQUE INDEX retention_test_files_ref ON phoenix_kit_files (uuid, library_uuid)"
+      )
+
+      Repo.query!(
+        "CREATE TABLE retention_test_blockers (file_uuid uuid, library_uuid uuid, " <>
+          "FOREIGN KEY (file_uuid, library_uuid) REFERENCES phoenix_kit_files (uuid, library_uuid))"
+      )
+
+      {:ok, uuid} = Ecto.UUID.dump(file.uuid)
+      {:ok, library_uuid} = Ecto.UUID.dump(file.library_uuid)
+      Repo.query!("INSERT INTO retention_test_blockers VALUES ($1, $2)", [uuid, library_uuid])
+    end
+
+    defp unblock!, do: Repo.query!("DELETE FROM retention_test_blockers")
+
+    test "a release that fails is made good by a later run", ctx do
+      %{user: user, old: old, library: library} = ctx
+      file = user |> store(library.uuid, "stuck bytes") |> aged!(3)
+      attach!(user, old, file)
+      block!(file)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:ok, %{conversations: 1, attachments: 1, files: 0, orphan_files: 0}} =
+                   Retention.run()
+        end)
+
+      # The rows went, the bytes did not, and the log says so without a name.
+      refute chat?(old)
+      assert file?(file)
+      assert count(Attachment) == 0
+      assert log =~ "cleanup of an attachment file failed"
+      refute log =~ "user deletion"
+      refute log =~ file.uuid
+      refute log =~ "a.jpg"
+
+      # The next night, the cause gone: nothing refers to the file, so it goes.
+      unblock!()
+
+      assert {:ok, %{conversations: 0, files: 0, orphan_files: 1}} = Retention.run()
+      refute file?(file)
+
+      # A run that deleted only files is in the Activity log too.
+      entries =
+        Repo.all(
+          from(e in Entry,
+            where: e.action == "agent.retention_purged",
+            order_by: [asc: e.inserted_at]
+          )
+        )
+
+      assert [%{metadata: %{"conversations" => 1, "orphan_files" => 0}}, last] = entries
+      assert %{"conversations" => 0, "orphan_files" => 1, "files" => 0} = last.metadata
+    end
+
+    test "a file that cannot be deleted is met once a run, and the run ends", ctx do
+      %{user: user, library: library} = ctx
+      file = user |> store(library.uuid, "stuck again") |> aged!(3)
+      block!(file)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:ok, %{orphan_files: 0}} = Retention.run(batch: 1)
+      end)
+
+      assert file?(file)
+    end
+
+    test "only a file nothing refers to, older than the grace, in the module's library",
+         ctx do
+      %{user: user, library: library} = ctx
+      other = user_fixture("other")
+
+      fresh = store(user, library.uuid, "being stored now")
+      referenced = user |> store(library.uuid, "in use") |> aged!(30)
+      attach!(user, chat!(other, last_message_at: ago(1)), referenced)
+      media = user |> store(nil, "a media file") |> aged!(30)
+      orphan = user |> store(library.uuid, "left behind") |> aged!(2)
+      child = user |> store(library.uuid, "a system-made child") |> aged!(30)
+
+      Repo.update_all(from(f in Storage.File, where: f.uuid == ^child.uuid),
+        set: [parent_file_uuid: referenced.uuid]
+      )
+
+      Repo.delete!(ctx.old)
+      assert {:ok, %{conversations: 0, orphan_files: 1}} = Retention.run()
+
+      refute file?(orphan)
+      assert file?(fresh)
+      assert file?(referenced)
+      assert file?(media)
+      assert file?(child)
+    end
+
+    test "the grace is a day by default, and a run can be told another", ctx do
+      %{user: user, library: library} = ctx
+      file = user |> store(library.uuid, "a day and a bit") |> aged!(1)
+
+      assert {:ok, %{orphan_files: 1}} = Retention.run()
+      refute file?(file)
+
+      young = user |> store(library.uuid, "an hour") |> aged!(0)
+      assert {:ok, %{orphan_files: 0}} = Retention.run()
+      assert file?(young)
+      assert {:ok, %{orphan_files: 1}} = Retention.run(grace_s: 0)
+    end
+
+    test "it runs when no chat is due, and not when the period is unset", ctx do
+      %{user: user, library: library} = ctx
+      Repo.delete!(ctx.old)
+      file = user |> store(library.uuid, "alone") |> aged!(5)
+
+      set_days!("")
+      assert {:skipped, :off} = Retention.run()
+      assert file?(file)
+
+      set_days!("30")
+      assert {:ok, %{conversations: 0, orphan_files: 1}} = Retention.run()
+      refute file?(file)
+    end
+
+    test "stops starting batches when its budget is spent", ctx do
+      %{user: user, library: library} = ctx
+      file = user |> store(library.uuid, "no time") |> aged!(5)
+
+      assert {:ok, %{orphan_files: 0}} = Retention.run(sweep_budget_ms: 0)
+      assert file?(file)
     end
   end
 

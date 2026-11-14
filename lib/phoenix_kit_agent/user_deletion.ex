@@ -61,6 +61,9 @@ defmodule PhoenixKitAgent.UserDeletion do
 
   @attachments_table "phoenix_kit_agent_attachments"
 
+  @orphan_grace_s 86_400
+  @orphan_batch 100
+
   @doc "Runs the cleanup for `user_uuid`. Always `:ok`; failures are logged."
   @spec run(String.t()) :: :ok
   def run(user_uuid) do
@@ -100,6 +103,85 @@ defmodule PhoenixKitAgent.UserDeletion do
       end)
     end)
     |> Enum.count(&(&1 == :deleted))
+  end
+
+  @doc false
+  # The files of the module's hidden library that no attachment row refers to
+  # and that are older than `grace_s` (a day by default, so a file a request is
+  # storing right now is never met): what a release that failed after the rows
+  # went (`PhoenixKitAgent.Retention`: S3 down, the node stopped) or a path
+  # that never linked its file left behind. Each is checked again and deleted
+  # as `release_files/1` does, so a file anything else refers to stays. Options:
+  # `now:`, `grace_s:`, `batch:`, `deadline:` (a `System.monotonic_time(:millisecond)`
+  # after which no batch is started). How many files it deleted.
+  @spec release_orphans(keyword()) :: non_neg_integer()
+  def release_orphans(opts \\ []) do
+    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+
+    cutoff =
+      now
+      |> DateTime.add(-Keyword.get(opts, :grace_s, @orphan_grace_s))
+      |> DateTime.truncate(:second)
+
+    case step("library lookup", nil, &AgentLibrary.library/0) do
+      %Library{uuid: library_uuid} ->
+        sweep(
+          library_uuid,
+          cutoff,
+          Keyword.get(opts, :batch, @orphan_batch),
+          opts[:deadline],
+          nil,
+          0
+        )
+
+      nil ->
+        0
+    end
+  end
+
+  # Batches by the file's uuid, so a file that cannot be deleted is met once
+  # per run, not again and again.
+  defp sweep(library_uuid, cutoff, batch, deadline, after_uuid, deleted) do
+    if deadline && System.monotonic_time(:millisecond) >= deadline do
+      deleted
+    else
+      case step("orphan files", [], fn -> orphans(library_uuid, cutoff, batch, after_uuid) end) do
+        [] ->
+          deleted
+
+        uuids ->
+          sweep(
+            library_uuid,
+            cutoff,
+            batch,
+            deadline,
+            List.last(uuids),
+            deleted + release_files(uuids)
+          )
+      end
+    end
+  end
+
+  # Files of the library (not a system-managed child of another file) with no
+  # attachment row, made before `cutoff`.
+  defp orphans(library_uuid, cutoff, batch, after_uuid) do
+    query =
+      from(f in Storage.File,
+        as: :file,
+        where:
+          f.library_uuid == ^library_uuid and is_nil(f.parent_file_uuid) and
+            f.inserted_at < ^cutoff,
+        where:
+          not exists(
+            from(a in Attachment, where: a.file_uuid == parent_as(:file).uuid, select: 1)
+          ),
+        order_by: f.uuid,
+        limit: ^batch,
+        select: f.uuid
+      )
+
+    query = if after_uuid, do: from(f in query, where: f.uuid > ^after_uuid), else: query
+    repo().all(query)
   end
 
   # Each step runs on its own: one that fails is logged and the others still
@@ -320,9 +402,7 @@ defmodule PhoenixKitAgent.UserDeletion do
   defp quote_ident(name), do: ~s("#{String.replace(name, "\"", "\"\"")}")
 
   defp log_failure(what, reason) do
-    Logger.warning(
-      "[PhoenixKitAgent] user deletion cleanup of #{what} failed: #{failure_class(reason)}"
-    )
+    Logger.warning("[PhoenixKitAgent] cleanup of #{what} failed: #{failure_class(reason)}")
 
     :ok
   end

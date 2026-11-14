@@ -305,14 +305,21 @@ defmodule PhoenixKitAgent.Turns do
 
       cond do
         length(found) != length(uuids) -> {:error, :invalid_attachments}
-        not Enum.all?(found, &type_allowed?/1) -> {:error, :type_not_allowed}
+        not types_allowed?(found) -> {:error, :type_not_allowed}
         true -> {:ok, found}
       end
     end
   end
 
-  defp type_allowed?(%Attachment{content_type: content_type}),
-    do: Detect.type_of_content_type(content_type) in Config.attachment_types()
+  # With the list as it ships (every type) nothing is checked: a row the module
+  # stored is of a type it reads, so the check can only refuse a file a site has
+  # taken off a narrowed list — and must never refuse one for want of a name here.
+  defp types_allowed?(attachments) do
+    types = Config.attachment_types()
+
+    types == Detect.types() or
+      Enum.all?(attachments, &(Detect.type_of_content_type(&1.content_type) in types))
+  end
 
   defp cast_uuids(uuids) do
     uuids

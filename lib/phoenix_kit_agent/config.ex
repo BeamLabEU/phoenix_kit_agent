@@ -338,7 +338,9 @@ defmodule PhoenixKitAgent.Config do
   `{:error, :invalid_days}` and nothing is written (`{:ok, :unchanged}` for
   none when none was ever set). `opts` go to
   `PhoenixKit.Settings` (`actor_uuid:`, `source:`), so the change is in the
-  settings history with who made it. The caller checks `agent.manage`.
+  settings history with who made it. The caller checks that the person is an
+  **Owner**: this setting makes the nightly job delete chats for good, which
+  `agent.manage` (an Admin holds it) is not enough for.
   """
   @spec put_retention_days(pos_integer() | String.t() | nil, keyword()) ::
           {:ok, term()} | {:error, :invalid_days | Ecto.Changeset.t()}
@@ -499,10 +501,16 @@ defmodule PhoenixKitAgent.Config do
     end
   end
 
-  defp parse_retention_days(nil), do: {:ok, nil}
-  defp parse_retention_days(days) when is_integer(days), do: in_retention_range(days)
+  @doc """
+  What a period typed by a person means: `{:ok, days}`, `{:ok, nil}` for none
+  (blank), `:error` for anything else. The same reading `put_retention_days/2`
+  applies, so the Settings page can say what a value would do before it is saved.
+  """
+  @spec parse_retention_days(term()) :: {:ok, pos_integer() | nil} | :error
+  def parse_retention_days(nil), do: {:ok, nil}
+  def parse_retention_days(days) when is_integer(days), do: in_retention_range(days)
 
-  defp parse_retention_days(text) when is_binary(text) do
+  def parse_retention_days(text) when is_binary(text) do
     case String.trim(text) do
       "" ->
         {:ok, nil}
@@ -515,7 +523,7 @@ defmodule PhoenixKitAgent.Config do
     end
   end
 
-  defp parse_retention_days(_other), do: :error
+  def parse_retention_days(_other), do: :error
 
   defp in_retention_range(days) when days >= 1 and days <= @retention_max_days,
     do: {:ok, days}

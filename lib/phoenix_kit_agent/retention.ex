@@ -24,12 +24,20 @@ defmodule PhoenixKitAgent.Retention do
   next run, and so is a row a transaction of the module holds.
 
   With a chat go, in the one transaction, its messages and its attachment rows
-  (the database's `ON DELETE CASCADE`); afterwards the Storage files of its attachments are deleted completely from the hidden
-  library (`PhoenixKitAgent.UserDeletion.release_files/1`) — only a file that
-  lies in the module's library and that nothing else refers to; a file
-  something else uses is left alone. A failure there is logged as its class
-  and the rows are gone already: the bytes of such a file stay in the hidden
-  library, which nobody can read through the module.
+  (the database's `ON DELETE CASCADE`); afterwards the Storage files of its
+  attachments are deleted completely from the hidden library
+  (`PhoenixKitAgent.UserDeletion.release_files/1`) — only a file that lies in
+  the module's library and that nothing else refers to; a file something else
+  uses is left alone.
+
+  **A release that fails is made good, not forgotten.** The rows are gone
+  once the transaction commits, so a file whose release failed (Storage or S3
+  down, the job stopped between the commit and the release) is no longer
+  found through them. Each run therefore ends with a sweep
+  (`PhoenixKitAgent.UserDeletion.release_orphans/1`): every file of the hidden
+  library that no attachment row refers to and that is older than a day (a
+  file a request is storing now is never met) is released the same way. A
+  failure is logged as its class, and the file is met again the next night.
 
   What this does not touch: the AI request journal (`phoenix_kit_ai`), which
   has its own retention and, with `agent_capture_ai_content` on, keeps the
@@ -40,9 +48,9 @@ defmodule PhoenixKitAgent.Retention do
   not from the cache. Work is done in batches within a time budget; what is
   left waits for the next night. The run is recorded in the Activity log as
   `agent.retention_purged` — counts (chats, messages, attachment rows, Storage
-  files deleted) and the period, never a title, a text or a file name — when it
-  deleted something. It runs whether or not the module is
-  switched on: data kept for a module that is off is still data.
+  files deleted, files the sweep deleted) and the period, never a title, a
+  text or a file name — when it deleted something. It runs whether or not the
+  module is switched on: data kept for a module that is off is still data.
   """
 
   import Ecto.Query, only: [from: 2]
@@ -54,6 +62,7 @@ defmodule PhoenixKitAgent.Retention do
 
   @batch 100
   @budget_ms :timer.minutes(5)
+  @sweep_budget_ms :timer.minutes(2)
 
   @typedoc "What a run deleted."
   @type summary :: %{
@@ -61,12 +70,15 @@ defmodule PhoenixKitAgent.Retention do
           conversations: non_neg_integer(),
           messages: non_neg_integer(),
           attachments: non_neg_integer(),
-          files: non_neg_integer()
+          files: non_neg_integer(),
+          orphan_files: non_neg_integer()
         }
 
   @doc """
   Applies the retention now. Options: `now:` (a `DateTime`), `batch:` (chats
-  per transaction), `budget_ms:` (stop starting batches after this long).
+  per transaction), `budget_ms:` (stop starting batches after this long),
+  `sweep_budget_ms:` (the same for the sweep of files left behind), `grace_s:`
+  (how old a file nothing refers to must be for the sweep).
 
   `{:skipped, :off}` when no period is set (nothing is read or deleted),
   `{:skipped, :not_installed}` when the module's tables are not in the
@@ -103,11 +115,24 @@ defmodule PhoenixKitAgent.Retention do
         conversations: 0,
         messages: 0,
         attachments: 0,
-        files: 0
+        files: 0,
+        orphan_files: 0
       })
 
-    if summary.conversations > 0, do: log_run(summary)
+    summary = sweep(summary, now, opts)
+    if summary.conversations > 0 or summary.orphan_files > 0, do: log_run(summary)
     summary
+  end
+
+  # After the chats: the files an earlier release left behind.
+  defp sweep(summary, now, opts) do
+    budget = Keyword.get(opts, :sweep_budget_ms, @sweep_budget_ms)
+
+    sweep_opts =
+      [now: now, deadline: System.monotonic_time(:millisecond) + budget] ++
+        Keyword.take(opts, [:grace_s, :batch])
+
+    %{summary | orphan_files: UserDeletion.release_orphans(sweep_opts)}
   end
 
   defp loop(now, days, batch, deadline, acc) do
@@ -194,7 +219,7 @@ defmodule PhoenixKitAgent.Retention do
 
   defp log_run(summary) do
     Activity.log("agent", "agent.retention_purged",
-      mode: "auto",
+      mode: "cron",
       resource_type: "agent_retention",
       permanent: true,
       metadata: %{
@@ -202,7 +227,8 @@ defmodule PhoenixKitAgent.Retention do
         "conversations" => summary.conversations,
         "messages" => summary.messages,
         "attachments" => summary.attachments,
-        "files" => summary.files
+        "files" => summary.files,
+        "orphan_files" => summary.orphan_files
       }
     )
 

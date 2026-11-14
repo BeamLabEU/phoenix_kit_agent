@@ -43,7 +43,8 @@ Agent → Spending (`PhoenixKitAgent.Web.SpendingLive`) and the attachments
 `Cmd`, `Bounds`, `Unzip`, `Jpeg`, `Work`) and the chat panel
 (`PhoenixKitAgent.Web.Dock`, the module's header widget, with
 `Web.Dock.Panel` (markup and hooks), `Web.Dock.Components`, `Web.Dock.Texts`
-and `Web.Markdown`).
+and `Web.Markdown`) and the optional chat retention
+(`PhoenixKitAgent.Retention` with `RetentionWorker`, off by default).
 
 - **Depends on:** `phoenix_kit` (the writes of a live session:
   `allow: :all`, `Executor.redeem_as/6`, the session functions of
@@ -160,8 +161,14 @@ and `Web.Markdown`).
   period, and every chat the user deleted (status `deleted`), at the next run.
   Messages and attachment rows go by `ON DELETE CASCADE`; the Storage files by
   `UserDeletion.release_files/1` after the commit (library files nothing else
-  refers to). Nothing of a chat goes to the log or the Activity entry
-  (`agent.retention_purged`: counts and days).
+  refers to). That release can fail after the rows are gone, so every run ends
+  with `UserDeletion.release_orphans/1`: library files no attachment row refers
+  to, older than a day (a request storing a file is never met), go the same way
+  — keep that sweep for any path that deletes attachment rows without the file.
+  Nothing of a chat goes to the log or the Activity entry
+  (`agent.retention_purged`: counts and days). The period is Owner-only to change
+  (`Access.owner?/1` in `save_retention`, like `agent_capture_ai_content`); the
+  page previews what a typed value would delete before it is saved.
 - **The chat panel** (`Web.Dock`): the widget's session carries only the
   user's uuid and locale (`header_widget_session/1`); the session reference and
   the impersonation flag are read by the panel itself in its **connected**

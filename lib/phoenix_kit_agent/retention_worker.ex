@@ -7,6 +7,10 @@ defmodule PhoenixKitAgent.RetentionWorker do
   One run at a time: while a run is queued or executing, another is not
   inserted. A batch that fails is an error and Oban retries it (3 attempts);
   the chats already deleted stay deleted.
+
+  "While a run is executing" includes a job orphaned in that state by a crash:
+  with no Oban Lifeline plugin on the host it would block every later night, so
+  the host must run it (see the README).
   """
 
   use Oban.Worker,

@@ -108,7 +108,7 @@ defmodule PhoenixKitAgent.UserDeletionTest do
     assert {:ok, _} = result
     # A failing step is logged and the user is deleted anyway: a failure must show.
     refute log =~ "before_user_delete hook"
-    refute log =~ "user deletion cleanup"
+    refute log =~ "cleanup of"
   end
 
   defp count(schema, user_uuid) do

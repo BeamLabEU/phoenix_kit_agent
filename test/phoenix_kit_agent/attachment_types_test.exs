@@ -14,7 +14,7 @@ defmodule PhoenixKitAgent.AttachmentTypesTest do
   alias PhoenixKit.Users.{Permissions, Roles}
   alias PhoenixKitAgent.{Attachments, Config, Conversations, Turns}
   alias PhoenixKitAgent.Attachments.Detect
-  alias PhoenixKitAgent.Schemas.Attachment
+  alias PhoenixKitAgent.Schemas.{Attachment, Conversation}
   alias PhoenixKitAgent.Test.Files
   alias PhoenixKitAgent.Web.Dock.Texts
 
@@ -192,6 +192,133 @@ defmodule PhoenixKitAgent.AttachmentTypesTest do
 
       # The user discards it, and the message goes without it.
       assert Repo.get!(Attachment, attachment.uuid).message_uuid == nil
+    end
+  end
+
+  describe "every type the module reads, one by one" do
+    # One real sample per type, named the way a user names it.
+    defp samples do
+      %{
+        "png" => {Files.png(8, 8), "p.png"},
+        "jpg" => {Files.jpeg(8, 8), "p.jpg"},
+        "webp" => {"RIFF" <> <<0, 0, 0, 0>> <> "WEBPVP8 " <> <<0::64>>, "p.webp"},
+        "heic" => {<<0, 0, 0, 24>> <> "ftypheic" <> <<0::96>>, "p.heic"},
+        "pdf" => {Files.text_pdf(["x"]), "d.pdf"},
+        "xlsx" => {Files.xlsx([{"S", [["a", 1]]}]), "t.xlsx"},
+        "csv" => {"a,b\n1,2\n", "t.csv"},
+        "txt" => {"plain words", "n.txt"},
+        "md" => {"# title\n", "n.md"}
+      }
+    end
+
+    # A ready attachment row of the content `binary` is, not yet in a message,
+    # in a chat whose lock is held: `Turns.start/6` then ends in
+    # `:conversation_busy` exactly when its check of the files let it through.
+    defp ready_row!(ctx, binary, name) do
+      path = Files.tmp!(binary, "sample")
+      assert {:ok, detected} = Detect.detect(path, name)
+
+      %Attachment{conversation_uuid: ctx.chat.uuid, user_uuid: ctx.user.uuid}
+      |> Attachment.changeset(%{
+        filename: name,
+        content_type: detected.content_type,
+        size_bytes: byte_size(binary),
+        kind: detected.kind,
+        status: "ready"
+      })
+      |> Repo.insert!()
+    end
+
+    defp hold_lock!(ctx) do
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^ctx.chat.uuid),
+        set: [busy_since: DateTime.utc_now()]
+      )
+    end
+
+    test "the samples are every type there is, and the content says which", _ctx do
+      assert samples() |> Map.keys() |> Enum.sort() == Enum.sort(Detect.types())
+
+      for {type, {binary, name}} <- samples() do
+        assert {:ok, %{ext: ^type, content_type: content_type}} =
+                 Detect.detect(Files.tmp!(binary, "sample"), name)
+
+        # What a stored row says is mapped back to the name the list uses.
+        assert Detect.type_of_content_type(content_type) == type
+      end
+    end
+
+    test "with no list set, Attachments.add takes each of them", ctx do
+      for {type, {binary, name}} <- samples() do
+        # A chat each: a message takes only so many files.
+        chat = conversation_fixture(ctx.user)
+        :ok = Conversations.subscribe(ctx.ref, chat.uuid, @me)
+
+        result = Attachments.add(ctx.ref, chat.uuid, Files.upload!(binary, name), @me)
+
+        assert {:ok, attachment} = result, "#{type} was refused: #{inspect(result)}"
+        uuid = attachment.uuid
+
+        # Processed or not (a stub of a picture may fail): a task is working on it.
+        assert_receive {:agent_attachment_processed, _chat_uuid, ^uuid}, 10_000
+      end
+    end
+
+    test "with no list set, Turns.start lets each of them through", ctx do
+      hold_lock!(ctx)
+
+      for {type, {binary, name}} <- samples() do
+        row = ready_row!(ctx, binary, name)
+
+        assert {:error, :conversation_busy} =
+                 Turns.start(ctx.ref, false, ctx.chat.uuid, "See file", [row.uuid]),
+               "#{type} did not get through"
+      end
+    end
+
+    test "with a list, Turns.start lets through a type on it and only that", ctx do
+      hold_lock!(ctx)
+
+      for {type, {binary, name}} <- samples() do
+        row = ready_row!(ctx, binary, name)
+        others = Detect.types() -- [type]
+
+        set!([type])
+
+        assert {:error, :conversation_busy} =
+                 Turns.start(ctx.ref, false, ctx.chat.uuid, "See file", [row.uuid]),
+               "#{type} was refused with only #{type} on the list"
+
+        set!(others)
+
+        assert {:error, :type_not_allowed} =
+                 Turns.start(ctx.ref, false, ctx.chat.uuid, "See file", [row.uuid]),
+               "#{type} got through with #{type} off the list"
+      end
+    end
+
+    test "with the list as it ships, a row of a content type the module has no name for is not refused",
+         ctx do
+      hold_lock!(ctx)
+
+      row =
+        %Attachment{conversation_uuid: ctx.chat.uuid, user_uuid: ctx.user.uuid}
+        |> Attachment.changeset(%{
+          filename: "x",
+          content_type: "application/x-future",
+          size_bytes: 1,
+          kind: "text",
+          status: "ready"
+        })
+        |> Repo.insert!()
+
+      assert {:error, :conversation_busy} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "See file", [row.uuid])
+
+      # A narrowed list refuses what it has no name for.
+      set!(["png"])
+
+      assert {:error, :type_not_allowed} =
+               Turns.start(ctx.ref, false, ctx.chat.uuid, "See file", [row.uuid])
     end
   end
 
