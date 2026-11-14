@@ -87,31 +87,67 @@ defmodule PhoenixKitAgent.UserDeletion do
   @doc false
   # `release_file/1` for the files of attachment rows already deleted
   # (`PhoenixKitAgent.Retention`): the library and the references are looked up
-  # once for all of them. How many files it deleted.
-  @spec release_files([String.t()]) :: non_neg_integer()
-  def release_files([]), do: 0
+  # once for all of them. Each file is checked and deleted under a lock on its
+  # row (see `release_one/2`). Option `deadline:` (a
+  # `System.monotonic_time(:millisecond)`): no file is started after it, and
+  # those left are met by the sweep (`release_orphans/1`). How many files it
+  # deleted.
+  @spec release_files([String.t()], keyword()) :: non_neg_integer()
+  def release_files(file_uuids, opts \\ [])
+  def release_files([], _opts), do: 0
 
-  def release_files(file_uuids) when is_list(file_uuids) do
+  def release_files(file_uuids, opts) when is_list(file_uuids) do
     library = step("library lookup", nil, &AgentLibrary.library/0)
     refs = step("file references", nil, &file_references/0)
     ctx = %{user_uuid: nil, library: library, refs: refs}
+    deadline = opts[:deadline]
 
-    file_uuids
-    |> Enum.map(fn file_uuid ->
-      step("an attachment file", :ok, fn ->
-        if deletable?(file_uuid, ctx), do: delete_file(file_uuid)
-      end)
+    Enum.reduce_while(file_uuids, 0, fn file_uuid, deleted ->
+      if deadline && System.monotonic_time(:millisecond) >= deadline do
+        {:halt, deleted}
+      else
+        outcome = step("an attachment file", :ok, fn -> release_one(file_uuid, ctx) end)
+        {:cont, if(outcome == :deleted, do: deleted + 1, else: deleted)}
+      end
     end)
-    |> Enum.count(&(&1 == :deleted))
+  end
+
+  # The check and the delete in one transaction, under a lock on the file's
+  # row. An upload that stores the same bytes again is handed this very file
+  # (Storage deduplicates) and then links it to its attachment row; that link
+  # takes a shared lock on the row (the foreign key). Whichever comes first
+  # wins cleanly: a link made before the lock is seen by the check, so the file
+  # stays; a link that comes after the delete finds no file and the upload fails
+  # (and is cleaned up). A row someone else holds locked is left for the next
+  # run, not waited for.
+  defp release_one(file_uuid, ctx) do
+    {:ok, outcome} =
+      repo().transaction(fn ->
+        locked =
+          from(f in Storage.File,
+            where: f.uuid == ^file_uuid,
+            lock: "FOR UPDATE SKIP LOCKED",
+            select: f.uuid
+          )
+          |> repo().one()
+
+        if locked && deletable?(file_uuid, ctx), do: delete_file(file_uuid)
+      end)
+
+    outcome
   end
 
   @doc false
   # The files of the module's hidden library that no attachment row refers to
   # and that are older than `grace_s` (a day by default, so a file a request is
-  # storing right now is never met): what a release that failed after the rows
-  # went (`PhoenixKitAgent.Retention`: S3 down, the node stopped) or a path
-  # that never linked its file left behind. Each is checked again and deleted
-  # as `release_files/1` does, so a file anything else refers to stays. Options:
+  # storing right now is never met): what a release that did not happen after
+  # the rows went (`PhoenixKitAgent.Retention`: the node or the job stopped, or
+  # Storage or the database refused the delete) or a path that never linked its
+  # file left behind. Each is checked again and deleted as `release_files/2`
+  # does, so a file anything else refers to stays. It cannot find bytes whose
+  # file row is already gone: Storage deletes the row first and, if the bucket
+  # then refuses (S3 down), only logs a warning and reports success, so those
+  # bytes are not met again. Options:
   # `now:`, `grace_s:`, `batch:`, `deadline:` (a `System.monotonic_time(:millisecond)`
   # after which no batch is started). How many files it deleted.
   @spec release_orphans(keyword()) :: non_neg_integer()
@@ -156,7 +192,7 @@ defmodule PhoenixKitAgent.UserDeletion do
             batch,
             deadline,
             List.last(uuids),
-            deleted + release_files(uuids)
+            deleted + release_files(uuids, deadline: deadline)
           )
       end
     end

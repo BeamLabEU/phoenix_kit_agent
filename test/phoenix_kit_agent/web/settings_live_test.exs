@@ -629,7 +629,8 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert html =~ "delete for good: 2"
 
       html = view |> form("#agent-retention-form", retention: %{days: "1"}) |> render_change()
-      assert html =~ "With 1 days (not saved yet)"
+      assert html =~ "With 1 day (not saved yet)"
+      refute html =~ "1 days"
       assert html =~ "delete for good: 3"
 
       html = view |> form("#agent-retention-form", retention: %{days: "1000"}) |> render_change()
@@ -658,6 +659,11 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       view |> form("#agent-retention-form", retention: %{days: "20"}) |> render_submit()
       refute has_element?(view, "#agent-retention-preview")
       assert Config.retention_days() == 20
+    end
+
+    test "the period field waits for a pause in typing before it asks for a preview", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+      assert has_element?(view, "#agent-retention-days[phx-debounce]")
     end
 
     test "a value that is not a period is shown as an error and nothing is saved", ctx do
@@ -708,6 +714,12 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert render(view) =~ "Chats are kept for 45 days."
       assert has_element?(view, "#agent-retention-due")
       assert render(view) =~ "Only an Owner can change this setting."
+
+      {:ok, _} = Config.put_retention_days(1, [])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert render(view) =~ "Chats are kept for 1 day."
+      refute render(view) =~ "1 days"
     end
 
     test "a forged submit changes nothing, and neither does a forged preview", ctx do
@@ -721,8 +733,11 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       render_hook(view, "save_retention", %{"retention" => %{"days" => ""}})
       assert Config.retention_days() == 45
 
+      # The preview is drawn only inside the Owner's form, so the page cannot
+      # show a forged one; the state is what pins the check.
       render_hook(view, "preview_retention", %{"retention" => %{"days" => "1"}})
       refute has_element?(view, "#agent-retention-preview")
+      assert :sys.get_state(view.pid).socket.assigns.retention_preview == nil
       # Only the history entry of the setup above.
       assert [%{actor_uuid: nil}] = settings_entries("agent_retention_days")
     end

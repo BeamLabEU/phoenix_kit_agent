@@ -351,12 +351,12 @@ msgstr "Midagi ei salvestatud: keegi valituist pole nimekirjas."
 msgid "Notify"
 msgstr "Teavita"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1091
+#: lib/phoenix_kit_agent/web/settings_live.ex:1097
 #, elixir-autogen, elixir-format
 msgid "Off"
 msgstr "Väljas"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1091
+#: lib/phoenix_kit_agent/web/settings_live.ex:1097
 #, elixir-autogen, elixir-format
 msgid "On"
 msgstr "Sees"
@@ -378,8 +378,8 @@ msgstr "Omaniku assistenti saab muuta ainult omanik."
 
 #: lib/phoenix_kit_agent/web/settings_live.ex:152
 #: lib/phoenix_kit_agent/web/settings_live.ex:194
-#: lib/phoenix_kit_agent/web/settings_live.ex:1017
-#: lib/phoenix_kit_agent/web/settings_live.ex:1093
+#: lib/phoenix_kit_agent/web/settings_live.ex:1023
+#: lib/phoenix_kit_agent/web/settings_live.ex:1099
 #, elixir-autogen, elixir-format
 msgid "Only an Owner can change this setting."
 msgstr "Seda sätet saab muuta ainult omanik."
@@ -417,7 +417,7 @@ msgstr "Eemalda fail"
 msgid "Rename"
 msgstr "Nimeta ümber"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1064
+#: lib/phoenix_kit_agent/web/settings_live.ex:1070
 #, elixir-autogen, elixir-format
 msgid "Request content in the AI journal"
 msgstr "Päringu sisu AI logis"
@@ -428,10 +428,10 @@ msgstr "Päringu sisu AI logis"
 #: lib/phoenix_kit_agent/web/settings_live.ex:892
 #: lib/phoenix_kit_agent/web/settings_live.ex:916
 #: lib/phoenix_kit_agent/web/settings_live.ex:953
-#: lib/phoenix_kit_agent/web/settings_live.ex:1002
-#: lib/phoenix_kit_agent/web/settings_live.ex:1055
-#: lib/phoenix_kit_agent/web/settings_live.ex:1086
-#: lib/phoenix_kit_agent/web/settings_live.ex:1126
+#: lib/phoenix_kit_agent/web/settings_live.ex:1004
+#: lib/phoenix_kit_agent/web/settings_live.ex:1061
+#: lib/phoenix_kit_agent/web/settings_live.ex:1092
+#: lib/phoenix_kit_agent/web/settings_live.ex:1132
 #: lib/phoenix_kit_agent/web/users_live.ex:668
 #, elixir-autogen, elixir-format
 msgid "Save"
@@ -822,7 +822,7 @@ msgstr "Mis AI-assistent kasutajate kaupa maksis"
 msgid "When a user reaches a limit and their settings say to tell someone, and when the AI budget is used up."
 msgstr "Kui kasutaja jõuab limiidini ja tema sätete järgi tuleb kedagi teavitada, ning kui AI eelarve saab otsa."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1066
+#: lib/phoenix_kit_agent/web/settings_live.ex:1072
 #, elixir-autogen, elixir-format
 msgid "When on, the full text of the assistant's requests and answers, with the data its tools returned, is written to the AI request journal, where everyone who holds the AI permission can read it on the AI usage page (/admin/ai/usage). When off, the journal keeps only the counts and the cost."
 msgstr "Kui sees, kirjutatakse assistendi päringute ja vastuste täistekst koos tööriistade tagastatud andmetega AI päringute logisse, kus kõik AI õigusega kasutajad saavad seda lugeda AI kasutuse lehel (/admin/ai/usage). Kui väljas, hoiab logi ainult arvud ja hinna."
@@ -852,7 +852,7 @@ msgstr "Kirjuta esmalt sõnum."
 msgid "Write a message…"
 msgstr "Kirjuta sõnum…"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1083
+#: lib/phoenix_kit_agent/web/settings_live.ex:1089
 #, elixir-autogen, elixir-format
 msgid "Write request content to the AI journal"
 msgstr "Kirjuta päringu sisu AI logisse"
@@ -1527,12 +1527,12 @@ msgstr "Telegram"
 msgid "Use the AI assistant from the Telegram chat linked to the site bot, to read data with the user's own rights"
 msgstr "Kasuta tehisintellekti assistenti saidi botiga seotud Telegrami vestlusest, et lugeda andmeid kasutaja enda õigustega"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1123
+#: lib/phoenix_kit_agent/web/settings_live.ex:1129
 #, elixir-autogen, elixir-format
 msgid "Answer in Telegram"
 msgstr "Vasta Telegramis"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1100
+#: lib/phoenix_kit_agent/web/settings_live.ex:1106
 #, elixir-autogen, elixir-format
 msgid "Assistant in Telegram"
 msgstr "Assistent Telegramis"
@@ -1577,7 +1577,7 @@ msgstr "Boti sõnumeid loetakse."
 msgid "Started a new conversation."
 msgstr "Alustasin uut vestlust."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1131
+#: lib/phoenix_kit_agent/web/settings_live.ex:1137
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr "Olek"
@@ -1612,7 +1612,7 @@ msgstr "See vestlus pole kontoga seotud. Seo see saidil: Profiil → Telegram"
 msgid "Wait a little: I am still answering your previous message."
 msgstr "Oota hetk: vastan veel su eelmisele sõnumile."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1102
+#: lib/phoenix_kit_agent/web/settings_live.ex:1108
 #, elixir-autogen, elixir-format
 msgid "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. It only reads: a change is made on the site."
 msgstr "Kui sees, võib inimene, kes on oma Telegrami vestluse veebisaidi botiga sidunud (Profiil → Telegram) ja kelle rollil on õigus „Agent Telegramis“, botile kirjutada ning assistent vastab seal selle inimese enda õiguste, mudeli ja piirangutega. See ainult loeb: muudatus tehakse saidil."
@@ -1943,7 +1943,7 @@ msgstr "Võetud pilte: %{taken} / %{total} (ühes sõnumis võib olla kuni %{max
 msgid "Wait until the files are uploaded and read; a paused file has to be resumed or removed first."
 msgstr "Oota, kuni failid on üles laaditud ja loetud; peatatud fail tuleb enne jätkata või eemaldada."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1107
+#: lib/phoenix_kit_agent/web/settings_live.ex:1113
 #, elixir-autogen, elixir-format
 msgid "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. A change is shown as a card with two buttons, and is made only when the person confirms it."
 msgstr "Kui sees, võib inimene, kes on oma Telegrami vestluse veebisaidi botiga sidunud (Profiil → Telegram) ja kelle rollil on õigus „Agent Telegramis“, botile kirjutada ning assistent vastab seal selle inimese enda õiguste, mudeli ja piirangutega. Muudatust näidatakse kahe nupuga kaardina ja see tehakse alles siis, kui inimene selle kinnitab."
@@ -1958,8 +1958,8 @@ msgstr "Lubatud failitüübid on salvestatud."
 msgid "Chat retention saved."
 msgstr "Vestluste säilitamisaeg on salvestatud."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:996
-#: lib/phoenix_kit_agent/web/settings_live.ex:1012
+#: lib/phoenix_kit_agent/web/settings_live.ex:998
+#: lib/phoenix_kit_agent/web/settings_live.ex:1018
 #, elixir-autogen, elixir-format
 msgid "Chats the next nightly run would delete: %{count}."
 msgstr "Vestlusi, mille järgmine öine käivitus kustutaks: %{count}."
@@ -1989,7 +1989,7 @@ msgstr "Vestluste säilitamine"
 msgid "Nothing was saved: choose at least one type. To take no files, set the attachments per message to 0."
 msgstr "Midagi ei salvestatud: vali vähemalt üks tüüp. Et faile üldse mitte vastu võtta, sea manuste arvuks sõnumi kohta 0."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1033
+#: lib/phoenix_kit_agent/web/settings_live.ex:1039
 #, elixir-autogen, elixir-format
 msgid "The kinds of file a user can attach. The server refuses any other, whatever the browser's file picker shows. A file added before its type was taken off the list is refused when the message is sent, and the user discards it."
 msgstr "Millised failid kasutaja saab manustada. Server keeldub kõigist teistest, hoolimata sellest, mida brauseri failivalija näitab. Fail, mis lisati enne selle tüübi loendist eemaldamist, lükatakse sõnumi saatmisel tagasi ja kasutaja eemaldab selle."
@@ -1999,22 +1999,26 @@ msgstr "Millised failid kasutaja saab manustada. Server keeldub kõigist teistes
 msgid "This site accepts only these kinds of file: %{types}."
 msgstr "See sait võtab vastu ainult järgmisi faile: %{types}."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1031
+#: lib/phoenix_kit_agent/web/settings_live.ex:1037
 #, elixir-autogen, elixir-format
 msgid "Types of file in chats"
 msgstr "Failitüübid vestlustes"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1008
-#, elixir-autogen, elixir-format
-msgid "Chats are kept for %{days} days."
-msgstr "Vestlusi hoitakse %{days} päeva."
-
-#: lib/phoenix_kit_agent/web/settings_live.ex:1010
+#: lib/phoenix_kit_agent/web/settings_live.ex:1016
 #, elixir-autogen, elixir-format
 msgid "Chats are kept without a time limit."
 msgstr "Vestlusi hoitakse ilma ajapiiranguta."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:989
+#: lib/phoenix_kit_agent/web/settings_live.ex:1010
 #, elixir-autogen, elixir-format
-msgid "With %{days} days (not saved yet), chats the next nightly run would delete for good: %{count}."
-msgstr "%{days} päeva korral (veel salvestamata) kustutaks järgmine öine käivitus vestlusi jäädavalt: %{count}."
+msgid "Chats are kept for %{count} day."
+msgid_plural "Chats are kept for %{count} days."
+msgstr[0] "Vestlusi hoitakse %{count} päev."
+msgstr[1] "Vestlusi hoitakse %{count} päeva."
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:990
+#, elixir-autogen, elixir-format
+msgid "With %{count} day (not saved yet), chats the next nightly run would delete for good: %{chats}."
+msgid_plural "With %{count} days (not saved yet), chats the next nightly run would delete for good: %{chats}."
+msgstr[0] "%{count} päeva korral (veel salvestamata) kustutaks järgmine öine käivitus vestlusi jäädavalt: %{chats}."
+msgstr[1] "%{count} päeva korral (veel salvestamata) kustutaks järgmine öine käivitus vestlusi jäädavalt: %{chats}."

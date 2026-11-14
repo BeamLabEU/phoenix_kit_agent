@@ -161,10 +161,17 @@ and `Web.Markdown`) and the optional chat retention
   period, and every chat the user deleted (status `deleted`), at the next run.
   Messages and attachment rows go by `ON DELETE CASCADE`; the Storage files by
   `UserDeletion.release_files/1` after the commit (library files nothing else
-  refers to). That release can fail after the rows are gone, so every run ends
-  with `UserDeletion.release_orphans/1`: library files no attachment row refers
-  to, older than a day (a request storing a file is never met), go the same way
-  — keep that sweep for any path that deletes attachment rows without the file.
+  refers to). That release can be missed after the rows are gone (job or node
+  stopped, Storage or the database refused), so every run ends with
+  `UserDeletion.release_orphans/1`: library files no attachment row refers to,
+  older than a day (a request storing a file is never met), go the same way —
+  keep that sweep for any path that deletes attachment rows without the file.
+  Each release locks the file row (`FOR UPDATE SKIP LOCKED`) across the check and
+  the delete, so a deduplicated upload either is seen by the check or fails
+  cleanly. The sweep does **not** recover an S3 outage: core's
+  `delete_file_completely/1` deletes the row first and only logs a warning when
+  the bucket refuses, so no row is left to find — a core follow-up, never
+  promise "the photos are deleted" without that caveat.
   Nothing of a chat goes to the log or the Activity entry
   (`agent.retention_purged`: counts and days). The period is Owner-only to change
   (`Access.owner?/1` in `save_retention`, like `agent_capture_ai_content`); the

@@ -30,14 +30,25 @@ defmodule PhoenixKitAgent.Retention do
   the module's library and that nothing else refers to; a file something else
   uses is left alone.
 
-  **A release that fails is made good, not forgotten.** The rows are gone
-  once the transaction commits, so a file whose release failed (Storage or S3
-  down, the job stopped between the commit and the release) is no longer
-  found through them. Each run therefore ends with a sweep
-  (`PhoenixKitAgent.UserDeletion.release_orphans/1`): every file of the hidden
-  library that no attachment row refers to and that is older than a day (a
-  file a request is storing now is never met) is released the same way. A
-  failure is logged as its class, and the file is met again the next night.
+  **A release that did not happen is made good, not forgotten.** The rows are
+  gone once the transaction commits, so a file whose release failed (the job
+  or the node stopped between the commit and the release, or Storage or the
+  database refused the delete) is no longer found through them. Each run
+  therefore ends with a sweep (`PhoenixKitAgent.UserDeletion.release_orphans/1`):
+  every file of the hidden library that no attachment row refers to and that is
+  older than a day (a file a request is storing now is never met) is released
+  the same way. A failure is logged as its class, and the file is met again the
+  next night.
+
+  **What the sweep cannot recover: bytes an S3 outage left in the bucket.**
+  Storage (`PhoenixKit.Modules.Storage.delete_file_completely/1`) deletes the
+  file's row first and the bucket objects after it; if the bucket refuses, it
+  only logs a warning and still answers `{:ok, _}`. The row is then gone, so
+  neither this module's release nor the sweep can know that bytes remain, and
+  they are counted as deleted. Only Storage can fix that (keep the keys it
+  failed to delete and retry them); until it does, a stretch of S3 errors during
+  a run leaves the bytes of the files released in it, and the only trace is
+  Storage's own log warning.
 
   What this does not touch: the AI request journal (`phoenix_kit_ai`), which
   has its own retention and, with `agent_capture_ai_content` on, keeps the
@@ -144,7 +155,7 @@ defmodule PhoenixKitAgent.Retention do
           acc
 
         {chats, messages, attachments, files} ->
-          deleted_files = UserDeletion.release_files(files)
+          deleted_files = UserDeletion.release_files(files, deadline: deadline)
 
           acc = %{
             acc

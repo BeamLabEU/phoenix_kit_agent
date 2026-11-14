@@ -439,6 +439,17 @@ defmodule PhoenixKitAgent.RetentionTest do
       file
     end
 
+    defp aged_s!(file, seconds) do
+      Repo.update_all(from(f in Storage.File, where: f.uuid == ^file.uuid),
+        set: [
+          inserted_at:
+            DateTime.utc_now() |> DateTime.add(-seconds, :second) |> DateTime.truncate(:second)
+        ]
+      )
+
+      file
+    end
+
     # A foreign key the module's own lookup cannot see (two columns): Storage
     # itself refuses to delete a file it points at, as a reference added by
     # a later module would. Rolled back with the test's transaction.
@@ -548,6 +559,54 @@ defmodule PhoenixKitAgent.RetentionTest do
       assert {:ok, %{orphan_files: 0}} = Retention.run()
       assert file?(young)
       assert {:ok, %{orphan_files: 1}} = Retention.run(grace_s: 0)
+    end
+
+    test "the grace is exactly a day: 23 hours old stays, 25 hours old goes", ctx do
+      %{user: user, library: library} = ctx
+      young = user |> store(library.uuid, "twenty-three hours") |> aged_s!(23 * 3_600)
+      old = user |> store(library.uuid, "twenty-five hours") |> aged_s!(25 * 3_600)
+
+      assert {:ok, %{orphan_files: 1}} = Retention.run()
+
+      assert file?(young)
+      refute file?(old)
+    end
+
+    # The two orders of the race between the sweep and an upload that Storage
+    # handed this very file (same bytes). The lock that makes the check and the
+    # delete one step cannot be shown here: the sandbox runs on one connection.
+    test "a file linked before the release is kept; one deleted before the link refuses it",
+         ctx do
+      %{user: user, library: library, old: chat} = ctx
+      file = user |> store(library.uuid, "same bytes again") |> aged!(3)
+
+      # The upload's link came before the sweep's check: the file stays.
+      attach!(user, chat, file)
+      assert PhoenixKitAgent.UserDeletion.release_files([file.uuid]) == 0
+      assert file?(file)
+
+      # The sweep came first: the link finds no file and is refused, never
+      # accepted with its file gone.
+      Repo.delete_all(Attachment)
+      assert PhoenixKitAgent.UserDeletion.release_files([file.uuid]) == 1
+
+      # The link the upload makes is an update of its pending row.
+      pending = attach!(user, chat, nil)
+
+      assert_raise Postgrex.Error, ~r"foreign key", fn ->
+        Repo.update_all(from(a in Attachment, where: a.uuid == ^pending.uuid),
+          set: [file_uuid: file.uuid]
+        )
+      end
+    end
+
+    test "stops starting files when the budget given to a release is spent", ctx do
+      %{user: user, library: library} = ctx
+      file = user |> store(library.uuid, "no time either") |> aged!(3)
+
+      past = System.monotonic_time(:millisecond) - 1
+      assert PhoenixKitAgent.UserDeletion.release_files([file.uuid], deadline: past) == 0
+      assert file?(file)
     end
 
     test "it runs when no chat is due, and not when the period is unset", ctx do

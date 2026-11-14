@@ -439,10 +439,17 @@ makes the job delete data for good; anyone with `agent.manage` sees it. While
 an Owner types, the page says how many chats the typed value would delete at the
 next run, before it is saved.
 
-A file whose release failed after its rows went (Storage down, the job stopped)
-is not forgotten: each run ends with a sweep that deletes the files of the hidden
-library that no attachment row refers to and that are more than a day old, the
-same way as the rest.
+A file whose release did not happen after its rows went (the job or the node
+stopped, or Storage or the database refused the delete) is not forgotten: each
+run ends with a sweep that deletes the files of the hidden library that no
+attachment row refers to and that are more than a day old, the same way as the
+rest.
+
+The sweep does not cover an S3 outage. Core's Storage deletes a file's row first
+and the bucket objects after; if the bucket refuses, it only logs a warning and
+still reports success. The row is then gone and nothing in this module can tell
+that the bytes remain: they stay in the bucket until Storage keeps and retries
+the keys it failed to delete. The only trace is Storage's own log warning.
 
 The job allows one run at a time (an Oban `unique` that also covers a job still
 `executing`): a host without Oban's Lifeline plugin should add it, or a job

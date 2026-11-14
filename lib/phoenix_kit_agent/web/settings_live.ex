@@ -984,12 +984,14 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
               min="1"
               max={Config.retention_max_days()}
               step="1"
+              phx-debounce="400"
             />
             <p :if={@retention_preview} id="agent-retention-preview" class="text-sm text-warning">
-              {gettext(
-                "With %{days} days (not saved yet), chats the next nightly run would delete for good: %{count}.",
-                days: elem(@retention_preview, 0),
-                count: elem(@retention_preview, 1)
+              {ngettext(
+                "With %{count} day (not saved yet), chats the next nightly run would delete for good: %{chats}.",
+                "With %{count} days (not saved yet), chats the next nightly run would delete for good: %{chats}.",
+                elem(@retention_preview, 0),
+                chats: elem(@retention_preview, 1)
               )}
             </p>
             <p :if={@retention_due} id="agent-retention-due" class="text-sm">
@@ -1005,7 +1007,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
           </.form>
           <div :if={!@owner?} id="agent-retention-status" class="flex flex-col gap-2 text-sm">
             <p :if={@retention_days}>
-              {gettext("Chats are kept for %{days} days.", days: @retention_days)}
+              {ngettext(
+                "Chats are kept for %{count} day.",
+                "Chats are kept for %{count} days.",
+                @retention_days
+              )}
             </p>
             <p :if={!@retention_days}>{gettext("Chats are kept without a time limit.")}</p>
             <p :if={@retention_due} id="agent-retention-due">
