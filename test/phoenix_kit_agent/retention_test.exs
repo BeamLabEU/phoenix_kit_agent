@@ -19,10 +19,17 @@ defmodule PhoenixKitAgent.RetentionTest do
 
   @key "agent_retention_days"
 
-  setup do
+  # `@describetag :own_library`: the test commits the module's library itself
+  # (on a second connection), and a sandbox one of the same slug would hold it.
+  setup context do
     Files.local_bucket!()
-    {:ok, library} = Library.ensure_library()
-    %{user: user_fixture("keeper"), library: library}
+
+    if context[:own_library] do
+      %{user: user_fixture("keeper"), library: nil}
+    else
+      {:ok, library} = Library.ensure_library()
+      %{user: user_fixture("keeper"), library: library}
+    end
   end
 
   # ── helpers ─────────────────────────────────────────────────────────
@@ -573,8 +580,9 @@ defmodule PhoenixKitAgent.RetentionTest do
     end
 
     # The two orders of the race between the sweep and an upload that Storage
-    # handed this very file (same bytes). The lock that makes the check and the
-    # delete one step cannot be shown here: the sandbox runs on one connection.
+    # handed this very file (same bytes), as outcomes. That the check and the
+    # delete are one step under a lock is pinned in "a file another transaction
+    # is linking" below, on a second connection.
     test "a file linked before the release is kept; one deleted before the link refuses it",
          ctx do
       %{user: user, library: library, old: chat} = ctx
@@ -629,6 +637,184 @@ defmodule PhoenixKitAgent.RetentionTest do
 
       assert {:ok, %{orphan_files: 0}} = Retention.run(sweep_budget_ms: 0)
       assert file?(file)
+    end
+
+    # What a slow bucket does to a release: time passes inside it, so whether
+    # the budget is looked at again between two files shows.
+    defp slow_file_deletes!(ms) do
+      id = "retention-slow-delete-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(id, [:phoenix_kit_agent, :test, :repo, :query], &__MODULE__.slow/4, ms)
+
+      on_exit(fn -> :telemetry.detach(id) end)
+    end
+
+    @doc false
+    def slow(_event, _measurements, %{query: query}, ms) do
+      if String.contains?(query, ~s(DELETE FROM "phoenix_kit_files")), do: Process.sleep(ms)
+    end
+
+    test "the run's budget is handed to the release of a chat's files", ctx do
+      %{user: user, library: library, old: first} = ctx
+      second = chat!(user, last_message_at: ago(90))
+      file_1 = user |> store(library.uuid, "first of the batch")
+      file_2 = user |> store(library.uuid, "second of the batch")
+      attach!(user, first, file_1)
+      attach!(user, second, file_2)
+
+      slow_file_deletes!(1_000)
+
+      # Both chats go in one batch; the first file's delete outlasts the budget,
+      # so the second is not started (a fresh file, it is not the sweep's yet).
+      assert {:ok, %{conversations: 2, files: 1, orphan_files: 0}} =
+               Retention.run(budget_ms: 700)
+
+      assert Enum.count([file_1, file_2], &file?/1) == 1
+    end
+
+    test "the sweep's budget is handed to the release of a batch", ctx do
+      %{user: user, library: library} = ctx
+      Repo.delete!(ctx.old)
+      file_1 = user |> store(library.uuid, "first orphan") |> aged!(3)
+      file_2 = user |> store(library.uuid, "second orphan") |> aged!(3)
+
+      slow_file_deletes!(1_000)
+
+      assert {:ok, %{conversations: 0, orphan_files: 1}} =
+               Retention.run(sweep_budget_ms: 700, batch: 2)
+
+      assert Enum.count([file_1, file_2], &file?/1) == 1
+    end
+
+    test "a file something refuses to delete is one log line, not a crash on top", ctx do
+      %{user: user, library: library} = ctx
+      file = user |> store(library.uuid, "refused") |> aged!(3)
+      block!(file)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert PhoenixKitAgent.UserDeletion.release_files([file.uuid]) == 0
+        end)
+
+      assert [_one] = Regex.scan(~r/cleanup of an attachment file failed/, log)
+      assert log =~ "failed: :in_use"
+      refute log =~ "MatchError"
+      assert file?(file)
+    end
+  end
+
+  describe "a file another transaction is linking" do
+    # An upload that stores the bytes of an old orphan again is handed that very
+    # file and links it to its attachment row; the link takes a shared lock on
+    # the file's row (the foreign key) and is not visible to anyone until it
+    # commits. A second connection outside the sandbox plays that upload with
+    # committed rows: a user, the module's library, a file and a chat.
+    @describetag :own_library
+
+    setup do
+      set_days!("30")
+      lock_repo = :"retention_link_repo_#{System.unique_integer([:positive])}"
+
+      {:ok, pid} =
+        Repo.start_link(name: lock_repo, pool: DBConnection.ConnectionPool, pool_size: 2)
+
+      Process.unlink(pid)
+      on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+      %{lock_repo: lock_repo}
+    end
+
+    test "the release skips the file, does not wait for the link, and the link stays valid",
+         %{lock_repo: lock_repo} do
+      test_pid = self()
+
+      holder =
+        Task.async(fn ->
+          Repo.put_dynamic_repo(lock_repo)
+          n = System.unique_integer([:positive])
+
+          user =
+            Repo.insert!(%PhoenixKit.Users.Auth.User{
+              email: "link-#{n}@example.com",
+              hashed_password: "x"
+            })
+
+          library =
+            Repo.insert!(%Storage.Library{
+              name: "PhoenixKit Agent attachments",
+              slug: Library.slug(),
+              key_prefix: "agent-link-#{n}",
+              kind: "system",
+              visibility: "private"
+            })
+
+          file =
+            Repo.insert!(%Storage.File{
+              original_file_name: "a.jpg",
+              file_name: "link-#{n}.jpg",
+              mime_type: "image/jpeg",
+              file_type: "image",
+              ext: "jpg",
+              file_checksum: "link-#{n}",
+              user_file_checksum: "link-#{n}",
+              size: 10,
+              status: "active",
+              user_uuid: user.uuid,
+              library_uuid: library.uuid
+            })
+
+          chat =
+            Repo.insert!(%Conversation{
+              user_uuid: user.uuid,
+              title: "linking",
+              last_message_at: DateTime.utc_now()
+            })
+
+          Repo.transaction(fn ->
+            # The upload's link, not committed yet.
+            attach!(user, chat, file)
+            send(test_pid, {:linking, user.uuid, file.uuid, library.uuid})
+
+            receive do
+              :commit -> :ok
+            after
+              10_000 -> :timeout
+            end
+          end)
+        end)
+
+      assert_receive {:linking, user_uuid, file_uuid, library_uuid}, 5_000
+      # The rows are committed: they go away by hand, whatever happens below.
+      on_exit(fn -> delete_committed_link(lock_repo, user_uuid, file_uuid, library_uuid) end)
+
+      # Without the lock the check sees no attachment (the link is not
+      # committed), and the delete then waits for the link, and fails after it.
+      release = Task.async(fn -> PhoenixKitAgent.UserDeletion.release_files([file_uuid]) end)
+
+      result =
+        case Task.yield(release, 3_000) || Task.shutdown(release, :brutal_kill) do
+          {:ok, result} -> result
+          other -> other
+        end
+
+      send(holder.pid, :commit)
+      Task.await(holder, 15_000)
+
+      assert result == 0
+      assert Repo.get(Storage.File, file_uuid)
+
+      assert Repo.one(from(a in Attachment, where: a.file_uuid == ^file_uuid, select: count())) ==
+               1
+    end
+
+    defp delete_committed_link(lock_repo, user_uuid, file_uuid, library_uuid) do
+      [user_uuid, file_uuid, library_uuid] =
+        Enum.map([user_uuid, file_uuid, library_uuid], &(&1 |> Ecto.UUID.dump() |> elem(1)))
+
+      Repo.put_dynamic_repo(lock_repo)
+      Repo.query!("DELETE FROM phoenix_kit_users WHERE uuid = $1", [user_uuid])
+      Repo.query!("DELETE FROM phoenix_kit_files WHERE uuid = $1", [file_uuid])
+      Repo.query!("DELETE FROM phoenix_kit_storage_libraries WHERE uuid = $1", [library_uuid])
     end
   end
 

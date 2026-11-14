@@ -120,8 +120,12 @@ defmodule PhoenixKitAgent.UserDeletion do
   # stays; a link that comes after the delete finds no file and the upload fails
   # (and is cleaned up). A row someone else holds locked is left for the next
   # run, not waited for.
+  #
+  # Storage deletes the bucket objects inside this transaction, before it
+  # commits: a node killed between the two leaves the row with no bytes behind
+  # it, and the next sweep deletes that row again.
   defp release_one(file_uuid, ctx) do
-    {:ok, outcome} =
+    result =
       repo().transaction(fn ->
         locked =
           from(f in Storage.File,
@@ -134,7 +138,16 @@ defmodule PhoenixKitAgent.UserDeletion do
         if locked && deletable?(file_uuid, ctx), do: delete_file(file_uuid)
       end)
 
-    outcome
+    case result do
+      {:ok, outcome} ->
+        outcome
+
+      # Storage's own refusal (a foreign key the module cannot see) marks this
+      # transaction failed, so the commit is rolled back; `delete_file` has
+      # already logged why, and the file is met again by the next sweep.
+      {:error, :rollback} ->
+        :ok
+    end
   end
 
   @doc false
