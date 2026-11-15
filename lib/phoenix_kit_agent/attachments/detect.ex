@@ -37,8 +37,39 @@ defmodule PhoenixKitAgent.Attachments.Detect do
 
   @head_bytes 8192
 
+  # The names a site's setting (`PhoenixKitAgent.Config.attachment_types/0`)
+  # allows files by (what `detect/2` reports as `ext`), in the order the
+  # Settings page lists them, and the content type each is stored as.
+  @types ~w(png jpg webp heic pdf xlsx csv txt md)
+
+  @content_types %{
+    "image/png" => "png",
+    "image/jpeg" => "jpg",
+    "image/webp" => "webp",
+    "image/heic" => "heic",
+    "application/pdf" => "pdf",
+    @xlsx_type => "xlsx",
+    "text/csv" => "csv",
+    "text/plain" => "txt",
+    "text/markdown" => "md"
+  }
+
   @typedoc "The kind of an attachment (`Attachment.kinds/0`), its type and the extension to store it by."
   @type detected :: %{kind: String.t(), content_type: String.t(), ext: String.t()}
+
+  @doc """
+  The types of file the module reads, by the name a site allows them by:
+  png, jpg, webp, heic, pdf, xlsx, csv, txt, md (`ext` of `detect/2`).
+  """
+  @spec types() :: [String.t()]
+  def types, do: @types
+
+  @doc """
+  The type name (see `types/0`) of a stored attachment's content type, or `nil`
+  for one this module never stores.
+  """
+  @spec type_of_content_type(term()) :: String.t() | nil
+  def type_of_content_type(content_type), do: Map.get(@content_types, content_type)
 
   @doc "Tells the kind of the file at `path`, called `filename` by the uploader."
   @spec detect(Path.t(), String.t()) ::

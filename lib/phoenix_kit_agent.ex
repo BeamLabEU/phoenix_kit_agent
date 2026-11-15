@@ -234,6 +234,16 @@ defmodule PhoenixKitAgent do
   def css_sources, do: [:phoenix_kit_agent]
 
   @doc """
+  The module's scheduled job: the nightly deletion of chats older than the
+  period a site set (`PhoenixKitAgent.RetentionWorker`, core's `default`
+  queue). With no period set, the default, a run deletes nothing. Core writes
+  the entry into the host's crontab on `mix phoenix_kit.update`.
+  """
+  @impl PhoenixKit.Module
+  @spec oban_crons() :: [{String.t(), module()}]
+  def oban_crons, do: [{"43 3 * * *", PhoenixKitAgent.RetentionWorker}]
+
+  @doc """
   The assistant in the admin header (spec §10): the chat panel
   `PhoenixKitAgent.Web.Dock`, before the notifications bell, in the dock
   column. Its session comes from `header_widget_session/1`.

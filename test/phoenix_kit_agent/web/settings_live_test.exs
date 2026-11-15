@@ -569,6 +569,256 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
     end
   end
 
+  describe "keeping chats: the Owner's setting" do
+    setup %{conn: conn} do
+      owner = owner_fixture()
+      %{conn: log_in(conn, owner), owner: owner}
+    end
+
+    defp old_chat(user, days) do
+      chat = conversation_fixture(user)
+
+      Repo.update_all(
+        from(c in PhoenixKitAgent.Schemas.Conversation, where: c.uuid == ^chat.uuid),
+        set: [last_message_at: DateTime.add(DateTime.utc_now(), -days * 86_400)]
+      )
+
+      chat
+    end
+
+    test "is empty by default: chats are kept without a limit", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-retention-form")
+      assert has_element?(view, "#agent-retention-days[value='']")
+      refute has_element?(view, "#agent-retention-due")
+      refute has_element?(view, "#agent-retention-preview")
+      assert Config.retention_days() == nil
+    end
+
+    test "saves a period, with who saved it in the settings history, and says what is due",
+         ctx do
+      old = old_chat(ctx.owner, 40)
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      view |> form("#agent-retention-form", retention: %{days: "30"}) |> render_submit()
+
+      assert has_element?(view, "#flash-info")
+      assert Config.retention_days() == 30
+      assert has_element?(view, "#agent-retention-days[value='30']")
+      assert render(view) =~ "Chats the next nightly run would delete: 1."
+      assert [entry] = settings_entries("agent_retention_days")
+      assert entry.actor_uuid == ctx.owner.uuid
+      # Saving deletes nothing: the nightly job does.
+      assert Repo.get(PhoenixKitAgent.Schemas.Conversation, old.uuid)
+
+      view |> form("#agent-retention-form", retention: %{days: ""}) |> render_submit()
+      assert Config.retention_days() == nil
+      refute has_element?(view, "#agent-retention-due")
+    end
+
+    test "says what a typed value would delete before it is saved, and saves nothing", ctx do
+      old_chat(ctx.owner, 40)
+      old_chat(ctx.owner, 400)
+      old_chat(ctx.owner, 2)
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      html = view |> form("#agent-retention-form", retention: %{days: "30"}) |> render_change()
+      assert html =~ "With 30 days (not saved yet)"
+      assert html =~ "delete for good: 2"
+
+      html = view |> form("#agent-retention-form", retention: %{days: "1"}) |> render_change()
+      assert html =~ "With 1 day (not saved yet)"
+      refute html =~ "1 days"
+      assert html =~ "delete for good: 3"
+
+      html = view |> form("#agent-retention-form", retention: %{days: "1000"}) |> render_change()
+      assert html =~ "delete for good: 0"
+
+      for none <- ["", "0", "abc", "3651", "1.5"] do
+        view |> form("#agent-retention-form", retention: %{days: none}) |> render_change()
+        refute has_element?(view, "#agent-retention-preview")
+      end
+
+      assert Config.retention_days() == nil
+      assert settings_entries("agent_retention_days") == []
+    end
+
+    test "the saved period is not previewed again, and the preview goes after a save", ctx do
+      old_chat(ctx.owner, 40)
+      {:ok, _} = Config.put_retention_days(30, [])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      view |> form("#agent-retention-form", retention: %{days: "30"}) |> render_change()
+      refute has_element?(view, "#agent-retention-preview")
+
+      view |> form("#agent-retention-form", retention: %{days: "20"}) |> render_change()
+      assert has_element?(view, "#agent-retention-preview")
+
+      view |> form("#agent-retention-form", retention: %{days: "20"}) |> render_submit()
+      refute has_element?(view, "#agent-retention-preview")
+      assert Config.retention_days() == 20
+    end
+
+    test "the period field waits for a pause in typing before it asks for a preview", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+      assert has_element?(view, "#agent-retention-days[phx-debounce]")
+    end
+
+    test "a value that is not a period is shown as an error and nothing is saved", ctx do
+      {:ok, _} = Config.put_retention_days(30, [])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      for bad <- ["0", "-5", "3651", "abc", "1.5"] do
+        html = view |> form("#agent-retention-form", retention: %{days: bad}) |> render_submit()
+
+        assert html =~ "Enter a whole number of days from 1 to 3650"
+        assert has_element?(view, "#flash-error")
+        assert Config.retention_days() == 30
+      end
+    end
+
+    test "an event without the form's fields changes nothing and does not crash", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      for event <- ["save_retention", "preview_retention"] do
+        render_hook(view, event, %{})
+        render_hook(view, event, %{"retention" => %{"days" => 30}})
+        render_hook(view, event, %{"retention" => %{}})
+      end
+
+      assert has_element?(view, "#agent-retention-form")
+      assert Config.retention_days() == nil
+    end
+  end
+
+  describe "keeping chats: anyone else with agent.manage" do
+    setup %{conn: conn} do
+      admin = admin_user()
+      assert Scope.can?(scope_of(admin), "agent.manage")
+      refute Scope.owner?(scope_of(admin))
+      %{conn: log_in(conn, admin), admin: admin}
+    end
+
+    test "sees the saved period and what is due, but has no form", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-retention-status")
+      assert render(view) =~ "Chats are kept without a time limit."
+      refute has_element?(view, "#agent-retention-form")
+
+      {:ok, _} = Config.put_retention_days(45, [])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert render(view) =~ "Chats are kept for 45 days."
+      assert has_element?(view, "#agent-retention-due")
+      assert render(view) =~ "Only an Owner can change this setting."
+
+      {:ok, _} = Config.put_retention_days(1, [])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert render(view) =~ "Chats are kept for 1 day."
+      refute render(view) =~ "1 days"
+    end
+
+    test "a forged submit changes nothing, and neither does a forged preview", ctx do
+      {:ok, _} = Config.put_retention_days(45, [])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      render_hook(view, "save_retention", %{"retention" => %{"days" => "1"}})
+      assert has_element?(view, "#flash-error")
+      assert Config.retention_days() == 45
+
+      render_hook(view, "save_retention", %{"retention" => %{"days" => ""}})
+      assert Config.retention_days() == 45
+
+      # The preview is drawn only inside the Owner's form, so the page cannot
+      # show a forged one; the state is what pins the check.
+      render_hook(view, "preview_retention", %{"retention" => %{"days" => "1"}})
+      refute has_element?(view, "#agent-retention-preview")
+      assert :sys.get_state(view.pid).socket.assigns.retention_preview == nil
+      # Only the history entry of the setup above.
+      assert [%{actor_uuid: nil}] = settings_entries("agent_retention_days")
+    end
+
+    test "a page opened by an Owner who stopped being one saves nothing", %{conn: conn} do
+      second = admin_user()
+      owner_assignment(second, :insert)
+      {:ok, view, _html} = live(log_in(conn, second), @path)
+      assert has_element?(view, "#agent-retention-form")
+
+      owner_assignment(second, :delete)
+
+      view |> form("#agent-retention-form", retention: %{days: "1"}) |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      assert Config.retention_days() == nil
+    end
+  end
+
+  describe "types of file in chats" do
+    setup %{conn: conn} do
+      manager = user_with(["agent", "agent.manage"], "manager")
+      %{conn: log_in(conn, manager), manager: manager}
+    end
+
+    test "every type is ticked by default", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      for type <- ~w(png jpg webp heic pdf xlsx csv txt md) do
+        assert has_element?(view, "#agent-file-type-#{type}[checked]")
+      end
+    end
+
+    test "saves a narrower list, with who saved it, and back to every type", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      view
+      |> form("#agent-attachment-types-form", attachment_types: %{types: ["", "png", "jpg"]})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-info")
+      assert Config.attachment_types() == ["png", "jpg"]
+      assert has_element?(view, "#agent-file-type-png[checked]")
+      refute has_element?(view, "#agent-file-type-pdf[checked]")
+      assert [entry] = settings_entries("agent_attachment_types")
+      assert entry.actor_uuid == ctx.manager.uuid
+
+      all = ~w(png jpg webp heic pdf xlsx csv txt md)
+
+      view
+      |> form("#agent-attachment-types-form", attachment_types: %{types: [""] ++ all})
+      |> render_submit()
+
+      assert Config.attachment_types() == all
+    end
+
+    test "no type at all, or a type the page did not offer, is refused and nothing is saved",
+         ctx do
+      {:ok, _} = Config.put_attachment_types(["png"], [])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      for forged <- [[""], [], ["exe"], ["png", "exe"], ["PNG"], [%{"a" => 1}]] do
+        render_hook(view, "save_attachment_types", %{"attachment_types" => %{"types" => forged}})
+        assert Config.attachment_types() == ["png"]
+      end
+
+      assert has_element?(view, "#flash-error")
+      assert has_element?(view, "#agent-attachment-types-form")
+    end
+
+    test "an event without the form's fields changes nothing and does not crash", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      render_hook(view, "save_attachment_types", %{})
+      render_hook(view, "save_attachment_types", %{"attachment_types" => %{"types" => "png"}})
+
+      assert has_element?(view, "#agent-attachment-types-form")
+      assert Config.attachment_types() == ~w(png jpg webp heic pdf xlsx csv txt md)
+    end
+  end
+
   describe "agent_capture_ai_content: the Owner's switch" do
     defp owner_user, do: owner_fixture()
 
@@ -1001,6 +1251,31 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert Config.vision_endpoint_uuid() == nil
       assert Config.system_prompt() == nil
       assert Config.limit_watchers() == []
+    end
+
+    test "a page opened before the right was taken away saves no retention or file types", %{
+      conn: conn
+    } do
+      manager = user_with(["agent", "agent.manage"], "manager")
+      {:ok, view, _html} = live(log_in(conn, manager), @path)
+
+      [role] =
+        manager
+        |> Roles.get_user_roles()
+        |> Enum.reject(&(&1 in ["Owner", "Admin", "User"]))
+        |> Enum.map(&Roles.get_role_by_name/1)
+
+      :ok = Permissions.revoke_permission(role.uuid, "agent.manage")
+
+      refute has_element?(view, "#agent-retention-form")
+      render_hook(view, "save_retention", %{"retention" => %{"days" => "1"}})
+
+      view
+      |> form("#agent-attachment-types-form", attachment_types: %{types: ["png"]})
+      |> render_submit()
+
+      assert Config.retention_days() == nil
+      assert Config.attachment_types() == ~w(png jpg webp heic pdf xlsx csv txt md)
     end
 
     test "nobody signed in is sent away", %{conn: conn} do

@@ -289,6 +289,19 @@ defmodule PhoenixKitAgent.Web.DockTest do
     |> Jason.decode!()
   end
 
+  defp js_ops(view, selector, attribute) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query(selector)
+    |> LazyHTML.attribute(attribute)
+    |> hd()
+    |> Jason.decode!()
+  end
+
+  # A JS command's op without the transition fields LiveView adds to it.
+  defp drop_transitions([op, args]), do: [op, Map.take(args, ["to", "display", "attr"])]
+
   defp hook_script(view, name) do
     view
     |> render()
@@ -730,6 +743,156 @@ defmodule PhoenixKitAgent.Web.DockTest do
       view |> element("#pk-agent-new-chat") |> render_click()
       assert_push_event(view, "pk-agent:store", %{open: true, conversation_uuid: nil})
     end
+
+    test "with pk-agent-compact the panel's header stands in the host's header", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Compact"})
+      view = dock(ctx)
+
+      # Both are rendered; the class on <body> decides which one shows.
+      assert has_element?(
+               view,
+               "#pk-agent-panel > header[class*='[.pk-dock-open.pk-agent-compact_&]:hidden']"
+             )
+
+      for id <- ["bar-title", "bar-instructions-toggle", "bar-close"] do
+        assert has_element?(
+                 view,
+                 "#pk-agent-dock > #pk-agent-#{id}[class*='hidden'][class*='[.pk-dock-open.pk-agent-compact_&]:']"
+               )
+      end
+
+      assert has_element?(view, "#pk-agent-bar-title", "AI assistant")
+      open_chat(view, chat)
+      assert has_element?(view, "#pk-agent-bar-title", "Compact")
+
+      view |> element("#pk-agent-bar-instructions-toggle") |> render_click()
+      assert has_element?(view, "#pk-agent-instructions-form")
+      assert has_element?(view, "#pk-agent-bar-instructions-toggle.btn-active")
+
+      # The hook's close test is the attribute, so either close button counts.
+      assert has_element?(view, "#pk-agent-close[data-pk-agent-close]")
+      assert has_element?(view, "#pk-agent-bar-close[data-pk-agent-close]")
+      assert hook_script(view, ".DockState") =~ ~s|closest("[data-pk-agent-close]")|
+      assert click_ops(view, "#pk-agent-bar-close") == click_ops(view, "#pk-agent-close")
+
+      uuid = chat.uuid
+      view |> element("#pk-agent-bar-close") |> render_click()
+      assert_push_event(view, "pk-agent:store", %{open: false, conversation_uuid: ^uuid})
+    end
+
+    test "a chat's Rename and Archive sit behind its own button, which Escape closes", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Menu"})
+      more = "#pk-agent-chat-more-#{chat.uuid}"
+      actions = "pk-agent-chat-actions-#{chat.uuid}"
+      view = dock(ctx)
+
+      assert has_element?(
+               view,
+               "button#{more}[aria-expanded='false'][aria-controls='#{actions}']"
+             )
+
+      # Each row's button is named after its chat.
+      assert has_element?(view, "#{more}[aria-label='Actions: Menu']")
+
+      assert has_element?(view, "##{actions}.hidden #pk-agent-rename-#{chat.uuid}", "Rename")
+      assert has_element?(view, "##{actions}.hidden #pk-agent-archive-#{chat.uuid}", "Archive")
+
+      assert [
+               ["toggle", %{"to" => "#" <> ^actions, "display" => "flex"}],
+               ["toggle_attr", %{"attr" => ["aria-expanded", "true", "false"], "to" => ^more}]
+             ] = click_ops(view, more) |> Enum.map(&drop_transitions/1)
+
+      # LiveView matches a key binding on the event's target only: each button has it.
+      for selector <- [more, "#pk-agent-rename-#{chat.uuid}", "#pk-agent-archive-#{chat.uuid}"] do
+        assert has_element?(view, "#{selector}[phx-key='Escape']")
+        ops = js_ops(view, selector, "phx-keydown")
+        assert ["focus", %{"to" => more}] in ops
+        assert ["set_attr", %{"attr" => ["aria-expanded", "false"], "to" => more}] in ops
+        assert Enum.any?(ops, &match?(["hide", %{"to" => "#" <> ^actions}], &1))
+      end
+    end
+
+    test "while a turn is shown Stop stands in Send's place", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "One place"})
+      view = dock(ctx)
+      open_chat(view, chat)
+
+      assert has_element?(view, "#pk-agent-send")
+      refute has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-turn[phx-hook][data-running='false']")
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: "turn-1"]
+      )
+
+      open_chat(view, chat)
+      assert has_element?(view, "#pk-agent-stop")
+      refute has_element?(view, "#pk-agent-send")
+      assert has_element?(view, "#pk-agent-turn[data-running='true'][data-turn='turn-1']")
+
+      # Another chat, with no turn of its own: the panel shows none.
+      idle = conversation_fixture(ctx.user, %{title: "Idle"})
+      view |> element("#pk-agent-dock-button") |> render_click()
+      open_chat(view, idle)
+      assert has_element?(view, "#pk-agent-send")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
+      refute has_element?(view, "#pk-agent-turn[data-turn]")
+    end
+
+    test "on a touch screen the panel's buttons are at least 44 px both ways", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Touch"})
+      view = dock(ctx)
+
+      both =
+        ~w(#pk-agent-dock-button #pk-agent-instructions-toggle #pk-agent-close
+           #pk-agent-bar-instructions-toggle #pk-agent-bar-close
+           #pk-agent-chat-more-#{chat.uuid})
+
+      high =
+        ~w(#pk-agent-new-chat #pk-agent-send #pk-agent-rename-#{chat.uuid}
+           #pk-agent-archive-#{chat.uuid})
+
+      for selector <- both do
+        assert has_element?(
+                 view,
+                 "#{selector}[class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+               ),
+               selector
+      end
+
+      # The paper clip
+      assert has_element?(
+               view,
+               "#pk-agent-files label[class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+             )
+
+      for selector <- high do
+        assert has_element?(
+                 view,
+                 "#{selector}[class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+               ),
+               selector
+      end
+
+      # A short text ("Save") is no narrower than 44 px either.
+      view |> element("#pk-agent-instructions-toggle") |> render_click()
+
+      assert has_element?(
+               view,
+               "#pk-agent-instructions-form button[type=submit][class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+             )
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: "turn-1"]
+      )
+
+      open_chat(view, chat)
+
+      assert has_element?(
+               view,
+               "#pk-agent-stop[class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+             )
+    end
   end
 
   # ── a turn in the panel ─────────────────────────────────────────────
@@ -853,6 +1016,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
       send_text(view, "Hello there")
 
       assert has_element?(view, "#pk-agent-dock-error", "No model is chosen")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
       # It says where the model is chosen.
       assert has_element?(view, "#pk-agent-dock-error", "Settings → AI Agent")
       refute has_element?(view, "#pk-agent-panel[data-conversation]")
@@ -1237,10 +1401,12 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       assert has_element?(view, "#pk-agent-dock-error", "no longer running here")
       refute has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
       assert lock_of(chat) |> elem(1) == turn_ref
 
       :ok = Turns.stop(ctx.ref, false, chat.uuid, turn_ref)
       await_turn_end(view, chat)
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
     end
 
     test "Stop on a turn whose lock has expired since the chat was opened frees it", ctx do
@@ -1264,6 +1430,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       refute_received {:agent_stop_turn, _}
       refute has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
       refute has_element?(view, "#pk-agent-waiting")
       assert has_element?(view, "#pk-agent-feed [data-role=notice]", "interrupted")
       assert lock_of(chat) == {nil, nil}
@@ -1357,6 +1524,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
       :ok = await_let_go(view)
 
       refute has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
       assert has_element?(view, "#pk-agent-feed [data-role=assistant]", "Answered unheard.")
 
       # Nothing more to check once the turn is let go of.
@@ -1410,11 +1578,13 @@ defmodule PhoenixKitAgent.Web.DockTest do
       File.mkdir_p!(dir)
       on_exit(fn -> File.rm_rf(dir) end)
 
-      for {env, name} <- [{"HOOK_FEED", ".Feed"}, {"HOOK_COMPOSER", ".Composer"}] do
+      hooks = [{"HOOK_FEED", ".Feed"}, {"HOOK_COMPOSER", ".Composer"}, {"HOOK_TURN", ".Turn"}]
+
+      for {env, name} <- hooks do
         File.write!(Path.join(dir, env), hook_script(view, name))
       end
 
-      env = for name <- ["HOOK_FEED", "HOOK_COMPOSER"], do: {name, Path.join(dir, name)}
+      env = for {name, _hook} <- hooks, do: {name, Path.join(dir, name)}
 
       {output, status} =
         System.cmd(
@@ -1720,6 +1890,48 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       view |> element("#pk-agent-discard-#{failed.uuid}") |> render_click()
       refute has_element?(view, "#pk-agent-att-#{failed.uuid}")
+      assert attachments_of(ctx.chat) == []
+    end
+
+    test "the file input offers every type until the site narrows the list", ctx do
+      view = dock(ctx)
+
+      assert has_element?(view, "input[type=file][accept*='image/*']")
+      assert has_element?(view, "input[type=file][accept*='.pdf']")
+
+      {:ok, _} = Config.put_attachment_types(["png", "heic"], [])
+      view = dock(ctx)
+
+      assert has_element?(view, "input[type=file][accept*='image/png']")
+      assert has_element?(view, "input[type=file][accept*='.heic']")
+      refute has_element?(view, "input[type=file][accept*='image/*']")
+      refute has_element?(view, "input[type=file][accept*='.pdf']")
+      refute has_element?(view, "input[type=file][accept*='.csv']")
+    end
+
+    test "a file off the narrowed list is refused by the upload, and nothing is stored", ctx do
+      {:ok, _} = Config.put_attachment_types(["png", "jpg"], [])
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      input = pick(view, "table.csv", "a,b\n1,2\n", "text/csv")
+      assert {:error, [[_ref, %{reason: :not_accepted}]]} = render_upload(input, "table.csv")
+      view |> form("#pk-agent-composer") |> render_change()
+
+      assert has_element?(view, ~s([data-pk-upload-entry][data-error="not_accepted"]))
+      assert attachments_of(ctx.chat) == []
+    end
+
+    test "a file the browser let through, of a type off the list, is refused by the server",
+         ctx do
+      {:ok, _} = Config.put_attachment_types(["txt"], [])
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+
+      # A picture named .txt: LiveView takes it by its name, the content decides.
+      upload(view, "notes.txt", Files.png(8, 8), "text/plain")
+
+      assert await_files(view) =~ "This site accepts only these kinds of file: txt."
       assert attachments_of(ctx.chat) == []
     end
   end

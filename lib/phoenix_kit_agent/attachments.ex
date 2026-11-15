@@ -22,9 +22,12 @@ defmodule PhoenixKitAgent.Attachments do
        not believed from the caller);
     2. the **content** tells the kind (`PhoenixKitAgent.Attachments.Detect`):
        png/jpg/webp/heic, pdf, xlsx/csv, txt/md; anything else is
-       `:unsupported_type`. A picture for a user whose model is not known to
-       take images, while the module has no vision model to describe it, is
-       `:no_vision_model` here, before anything is stored (see the processor);
+       `:unsupported_type`, and a type the site's list of accepted types
+       (`PhoenixKitAgent.Config.attachment_types/0`, every type by default)
+       leaves out is `:type_not_allowed`. A picture for a user whose model is
+       not known to take images, while the module has no vision model to
+       describe it, is `:no_vision_model` here, before anything is stored (see
+       the processor);
     3. the chat has room: no more than `max_attachments_per_message` files that
        are not part of a message yet (a failed one takes no room there), and
        the user has no more than `unsent_files` (`Attachments.Bounds`) files of
@@ -78,8 +81,10 @@ defmodule PhoenixKitAgent.Attachments do
   ## Refusals
 
   Those of `PhoenixKitAgent.Conversations`, and `:file_unreadable`,
-  `:empty_file`, `:too_large`, `:unsupported_type`, `:unsupported_encoding` (a
-  text, CSV or Markdown file that is not UTF-8: save it as UTF-8),
+  `:empty_file`, `:too_large`, `:unsupported_type`, `:type_not_allowed` (a
+  kind the module reads that the site's `agent_attachment_types` leaves out),
+  `:unsupported_encoding` (a text, CSV or Markdown file that is not UTF-8: save
+  it as UTF-8),
   `:no_vision_model`, `:too_many`, `:storage_unavailable`, `:already_sent`.
   A linked Telegram chat (the `{:telegram_link, …}` reference) attaches nothing
   through these functions: each is `{:error, :not_in_telegram}` for it. The
@@ -102,7 +107,7 @@ defmodule PhoenixKitAgent.Attachments do
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Utils.FileHash
   alias PhoenixKitAgent.Attachments.{Bounds, Detect, Extract, Processor, Work}
-  alias PhoenixKitAgent.{Conversations, Library, Models, UserConfig, UserDeletion}
+  alias PhoenixKitAgent.{Config, Conversations, Library, Models, UserConfig, UserDeletion}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation}
 
   @mb 1_048_576
@@ -137,6 +142,7 @@ defmodule PhoenixKitAgent.Attachments do
           | :empty_file
           | :too_large
           | :unsupported_type
+          | :type_not_allowed
           | :unsupported_encoding
           | :no_vision_model
           | :too_many
@@ -177,6 +183,7 @@ defmodule PhoenixKitAgent.Attachments do
          :ok <- size_allowed(source.size, settings),
          {:ok, detected} <- Detect.detect(source.path, source.filename),
          :ok <- only_kind(detected, only),
+         :ok <- type_allowed(detected),
          :ok <- can_be_shown(detected, settings),
          :ok <- settle_stale(conversation.user_uuid),
          {:ok, attachment} <- reserve(conversation, source, detected, settings),
@@ -184,6 +191,12 @@ defmodule PhoenixKitAgent.Attachments do
       :ok = Processor.start(attachment.uuid, attachment.user_uuid, session_ref)
       {:ok, attachment}
     end
+  end
+
+  # The site's list of types (`Config.attachment_types/0`), on the content's
+  # type, not the name the uploader gave.
+  defp type_allowed(%{ext: ext}) do
+    if ext in Config.attachment_types(), do: :ok, else: {:error, :type_not_allowed}
   end
 
   defp only_kind(_detected, nil), do: :ok

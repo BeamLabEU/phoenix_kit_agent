@@ -47,6 +47,21 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   refused. A speech model that does not report what a call costs gets the same
   warning as the default one.
 
+  The retention section sets `agent_retention_days` (chats deleted for good
+  after that many days without a message, by the nightly
+  `PhoenixKitAgent.RetentionWorker`; empty keeps them without a limit, which is
+  the default) and says how many chats the next run would delete; the accepted
+  files section sets `agent_attachment_types` (the types of file a chat takes;
+  all by default). Both are plain `agent.manage` settings, saved on their own
+  and recorded with who changed them in the settings history.
+
+  The retention period is the one of the two that deletes data for good, so
+  only an **Owner** changes it (the same check as `agent_capture_ai_content`,
+  `Access.owner?/1` in the `save_retention` handler on every event; anyone with
+  `agent.manage` sees the saved period). While an Owner types, the page says
+  how many chats that value would delete at the next run, before anything is
+  saved.
+
   The Telegram section switches `agent_telegram_enabled` (the assistant
   answering the linked chats of the website bot, `PhoenixKitAgent.Telegram`) and
   shows what the reader is doing (`PhoenixKitAgent.Telegram.Status`). It needs
@@ -68,13 +83,14 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   import PhoenixKitWeb.Components.Core.Button, only: [button: 1]
   import PhoenixKitWeb.Components.Core.Checkbox, only: [checkbox: 1]
   import PhoenixKitWeb.Components.Core.DecimalInput, only: [decimal_input: 1]
-  import PhoenixKitWeb.Components.Core.Input, only: [translate_error: 1]
+  import PhoenixKitWeb.Components.Core.Input, only: [input: 1, translate_error: 1]
   import PhoenixKitWeb.Components.Core.Select, only: [select: 1]
   import PhoenixKitWeb.Components.Core.Textarea, only: [textarea: 1]
   import PhoenixKitAgent.Web.ToolAvailability, only: [assistant_tools: 1]
 
   alias PhoenixKit.Utils.Routes
-  alias PhoenixKitAgent.{Config, Models, UserConfig}
+  alias PhoenixKitAgent.Attachments.Detect
+  alias PhoenixKitAgent.{Config, Models, Retention, UserConfig}
   alias PhoenixKitAgent.Telegram.Status
   alias PhoenixKitAgent.Web.{Access, ToolAvailability}
 
@@ -105,6 +121,8 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
        |> assign_models()
        |> assign_prompt(Config.system_prompt() || "", [])
        |> assign_watchers()
+       |> assign_retention(nil, [])
+       |> assign_attachment_types()
        |> assign(:assistant_tools, ToolAvailability.for_scope(Access.session_scope(socket)))}
     else
       {:ok,
@@ -162,6 +180,39 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       else: {:noreply, denied(socket)}
   end
 
+  def handle_event("save_retention", %{"retention" => %{"days" => days}}, socket)
+      when is_binary(days) do
+    cond do
+      not Access.may_manage?(socket) ->
+        {:noreply, denied(socket)}
+
+      not Access.owner?(socket) ->
+        {:noreply,
+         socket
+         |> assign_capture()
+         |> assign_retention(nil, [])
+         |> put_flash(:error, gettext("Only an Owner can change this setting."))}
+
+      true ->
+        {:noreply, save_retention(socket, days)}
+    end
+  end
+
+  # What the typed period would delete at the next run, before it is saved.
+  def handle_event("preview_retention", %{"retention" => %{"days" => days}}, socket)
+      when is_binary(days) do
+    if Access.may_manage?(socket) and Access.owner?(socket),
+      do: {:noreply, assign(socket, retention_input: days, retention_preview: preview(days))},
+      else: {:noreply, socket}
+  end
+
+  def handle_event("save_attachment_types", %{"attachment_types" => %{"types" => types}}, socket)
+      when is_list(types) do
+    if Access.may_manage?(socket),
+      do: {:noreply, save_attachment_types(socket, types)},
+      else: {:noreply, denied(socket)}
+  end
+
   # A crafted event without the form's fields.
   def handle_event(event, _params, socket)
       when event in [
@@ -171,7 +222,10 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
              "save_telegram",
              "save_models",
              "save_prompt",
-             "save_watchers"
+             "save_watchers",
+             "save_retention",
+             "preview_retention",
+             "save_attachment_types"
            ],
       do: {:noreply, socket}
 
@@ -472,6 +526,106 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       |> put_flash(:error, gettext("Nothing was saved: someone chosen is not on the list."))
     end
   end
+
+  # ── retention ─────────────────────────────────────────────────────────
+
+  # `input`: what the field shows (`nil`: the saved period).
+  defp assign_retention(socket, input, errors) do
+    days = Config.retention_days()
+
+    assign(socket,
+      retention_input: input || if(days, do: Integer.to_string(days), else: ""),
+      retention_errors: errors,
+      retention_due: due_chats(days),
+      retention_days: days,
+      retention_preview: nil
+    )
+  end
+
+  # `{days, chats}` for a period that differs from the saved one; `nil` for
+  # none, an invalid value or the saved one (its count is `retention_due`).
+  defp preview(input) do
+    with {:ok, days} when is_integer(days) <- Config.parse_retention_days(input),
+         true <- days != Config.retention_days(),
+         count when is_integer(count) <- due_chats(days) do
+      {days, count}
+    else
+      _no_preview -> nil
+    end
+  end
+
+  # The page opens before the module's tables exist too: no count then.
+  defp due_chats(nil), do: nil
+
+  defp due_chats(days) do
+    Retention.due_count(days)
+  rescue
+    _error in [Postgrex.Error, DBConnection.ConnectionError] -> nil
+  end
+
+  defp save_retention(socket, input) do
+    case Config.put_retention_days(input,
+           actor_uuid: Access.user_uuid(socket),
+           source: "settings"
+         ) do
+      {:ok, _setting} ->
+        socket
+        |> assign_retention(nil, [])
+        |> put_flash(:info, gettext("Chat retention saved."))
+
+      {:error, :invalid_days} ->
+        socket
+        |> assign_retention(input, [
+          gettext("Enter a whole number of days from 1 to %{max}, or leave it empty.",
+            max: Config.retention_max_days()
+          )
+        ])
+        |> put_flash(:error, gettext("Nothing was saved: check the highlighted fields."))
+
+      {:error, _changeset} ->
+        socket
+        |> assign_retention(nil, [])
+        |> put_flash(:error, gettext("The setting could not be saved. Nothing was changed."))
+    end
+  end
+
+  # ── accepted types of file ────────────────────────────────────────────
+
+  defp assign_attachment_types(socket),
+    do: assign(socket, attachment_types: Config.attachment_types(), file_types: Detect.types())
+
+  # Only types the page offered; a blank value is the form's empty choice.
+  defp save_attachment_types(socket, types) do
+    chosen = Enum.reject(types, &(&1 == ""))
+
+    case Config.put_attachment_types(chosen,
+           actor_uuid: Access.user_uuid(socket),
+           source: "settings"
+         ) do
+      {:ok, _setting} ->
+        socket
+        |> assign_attachment_types()
+        |> put_flash(:info, gettext("Accepted file types saved."))
+
+      {:error, :invalid_types} ->
+        socket
+        |> assign_attachment_types()
+        |> put_flash(
+          :error,
+          gettext(
+            "Nothing was saved: choose at least one type. To take no files, set the attachments per message to 0."
+          )
+        )
+
+      {:error, _changeset} ->
+        socket
+        |> assign_attachment_types()
+        |> put_flash(:error, gettext("The setting could not be saved. Nothing was changed."))
+    end
+  end
+
+  defp type_label("webp"), do: "WebP"
+  defp type_label(type), do: String.upcase(type)
 
   # ── the defaults form ─────────────────────────────────────────────────
 
@@ -796,6 +950,114 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
             </ul>
             <div class="flex justify-end">
               <.button type="submit" variant="primary" id="agent-watchers-save">
+                {gettext("Save")}
+              </.button>
+            </div>
+          </div>
+        </.form>
+      </section>
+
+      <section id="agent-retention" class="card bg-base-100 shadow-sm">
+        <div class="card-body gap-4">
+          <h2 class="card-title text-base">{gettext("Keeping chats")}</h2>
+          <p class="text-sm text-base-content/70">
+            {gettext(
+              "How many days a chat is kept after its last message. Older chats, with their messages and attached files, are deleted for good by a nightly job, and so is a chat a user deleted. Leave it empty to keep chats without a time limit: nothing is deleted then. The AI request journal has its own retention, on the pages of the AI module."
+            )}
+          </p>
+          <.form
+            :if={@owner?}
+            for={%{}}
+            as={:retention}
+            id="agent-retention-form"
+            phx-change="preview_retention"
+            phx-submit="save_retention"
+            class="flex flex-col gap-4"
+          >
+            <.input
+              id="agent-retention-days"
+              type="number"
+              name="retention[days]"
+              label={gettext("Keep chats for, days")}
+              value={@retention_input}
+              errors={@retention_errors}
+              min="1"
+              max={Config.retention_max_days()}
+              step="1"
+              phx-debounce="400"
+            />
+            <p :if={@retention_preview} id="agent-retention-preview" class="text-sm text-warning">
+              {ngettext(
+                "With %{count} day (not saved yet), chats the next nightly run would delete for good: %{chats}.",
+                "With %{count} days (not saved yet), chats the next nightly run would delete for good: %{chats}.",
+                elem(@retention_preview, 0),
+                chats: elem(@retention_preview, 1)
+              )}
+            </p>
+            <p :if={@retention_due} id="agent-retention-due" class="text-sm">
+              {gettext("Chats the next nightly run would delete: %{count}.",
+                count: @retention_due
+              )}
+            </p>
+            <div class="flex justify-end">
+              <.button type="submit" variant="primary" id="agent-retention-save">
+                {gettext("Save")}
+              </.button>
+            </div>
+          </.form>
+          <div :if={!@owner?} id="agent-retention-status" class="flex flex-col gap-2 text-sm">
+            <p :if={@retention_days}>
+              {ngettext(
+                "Chats are kept for %{count} day.",
+                "Chats are kept for %{count} days.",
+                @retention_days
+              )}
+            </p>
+            <p :if={!@retention_days}>{gettext("Chats are kept without a time limit.")}</p>
+            <p :if={@retention_due} id="agent-retention-due">
+              {gettext("Chats the next nightly run would delete: %{count}.",
+                count: @retention_due
+              )}
+            </p>
+            <p class="text-base-content/70">
+              {gettext("Only an Owner can change this setting.")}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="agent-attachment-types" class="card bg-base-100 shadow-sm">
+        <.form
+          for={%{}}
+          as={:attachment_types}
+          id="agent-attachment-types-form"
+          phx-submit="save_attachment_types"
+        >
+          <div class="card-body gap-4">
+            <h2 class="card-title text-base">{gettext("Types of file in chats")}</h2>
+            <p class="text-sm text-base-content/70">
+              {gettext(
+                "The kinds of file a user can attach. The server refuses any other, whatever the browser's file picker shows. A file added before its type was taken off the list is refused when the message is sent, and the user discards it."
+              )}
+            </p>
+            <input type="hidden" name="attachment_types[types][]" value="" />
+            <ul class="flex flex-wrap gap-x-6 gap-y-2">
+              <li :for={type <- @file_types}>
+                <label class="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    id={"agent-file-type-#{type}"}
+                    name="attachment_types[types][]"
+                    value={type}
+                    checked={type in @attachment_types}
+                    class="checkbox checkbox-sm"
+                  />
+                  <span>{type_label(type)}</span>
+                </label>
+              </li>
+            </ul>
+            <div class="flex justify-end">
+              <.button type="submit" variant="primary" id="agent-attachment-types-save">
                 {gettext("Save")}
               </.button>
             </div>

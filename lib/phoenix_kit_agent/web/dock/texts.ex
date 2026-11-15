@@ -13,6 +13,9 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
 
   use Gettext, backend: PhoenixKitAgent.Gettext
 
+  alias PhoenixKitAgent.Attachments.Detect
+  alias PhoenixKitAgent.Config
+
   @doc "The text for a refusal of a call the panel made."
   @spec refusal(term()) :: String.t()
   def refusal(:impersonated), do: gettext("The assistant is not available in a borrowed session.")
@@ -100,11 +103,7 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
 
   def refusal(:too_large), do: gettext("The file is too large.")
 
-  def refusal(:unsupported_type),
-    do:
-      gettext(
-        "This kind of file is not supported. Send a picture, a PDF, an xlsx or csv sheet, or a txt or md text."
-      )
+  def refusal(reason) when reason in [:unsupported_type, :type_not_allowed], do: not_supported()
 
   def refusal(:unsupported_encoding),
     do: gettext("The text is not in UTF-8. Save the file as UTF-8 and add it again.")
@@ -389,6 +388,22 @@ defmodule PhoenixKitAgent.Web.Dock.Texts do
   @spec upload_error(atom()) :: String.t()
   def upload_error(:too_large), do: gettext("The file is too large.")
   def upload_error(:too_many_files), do: gettext("Too many files at once.")
-  def upload_error(:not_accepted), do: refusal(:unsupported_type)
+  def upload_error(:not_accepted), do: not_supported()
   def upload_error(_other), do: gettext("The file could not be uploaded.")
+
+  # A file the module does not read, or one the site does not accept: with
+  # every type accepted, what the module reads; with a narrowed list, that list.
+  defp not_supported do
+    types = Config.attachment_types()
+
+    if types == Detect.types() do
+      gettext(
+        "This kind of file is not supported. Send a picture, a PDF, an xlsx or csv sheet, or a txt or md text."
+      )
+    else
+      gettext("This site accepts only these kinds of file: %{types}.",
+        types: Enum.join(types, ", ")
+      )
+    end
+  end
 end
