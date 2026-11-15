@@ -528,7 +528,7 @@ orphaned in `executing` would block the nights after it.
 ```elixir
 def deps do
   [
-    {:phoenix_kit_agent, "~> 0.1"}
+    {:phoenix_kit_agent, "~> 0.3"}
   ]
 end
 ```

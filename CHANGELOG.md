@@ -2,6 +2,92 @@
 
 All notable changes to PhoenixKitAgent will be documented in this file.
 
+## 0.3.0 - 2026-11-15
+
+The assistant in Telegram, voice input, an optional time limit on chats, a
+setting for the accepted types of file, and a chat panel that works on a touch
+phone and fits into a host's own header.
+
+### Requirements
+
+- **`phoenix_kit >= 3.5.0 and < 4.0.0`** (was `>= 2.64.0`): the chat panel's
+  resumable uploads (`UploadManager`, `ResumableUpload`), the linked Telegram
+  chat as an actor, and the writes such a chat holds for confirmation.
+- **`phoenix_kit_ai ~> 0.27`** (was `~> 0.26`). Voice input needs a
+  `phoenix_kit_ai` with `transcribe/3` (0.28 or later); without it, voice is off
+  and Settings says so.
+- Run `mix phoenix_kit.update` after updating, so the host's crontab gets the
+  nightly retention job. There is no new migration of the module's tables.
+- To answer Telegram, a host declares `config :phoenix_kit,
+  :telegram_updates_reader, {PhoenixKitAgent.Telegram.Reader, :holds?, []}` and
+  switches the assistant on in Settings → AI Agent (see the README).
+
+### Added
+
+- **The assistant in Telegram** (`PhoenixKitAgent.Telegram.*`, off by default,
+  `agent_telegram_enabled`). A person who linked their Telegram chat to the
+  site bot, and whose role has the new opt-in permission `agent.telegram`, writes
+  to the bot. The assistant answers there with that person's own rights, model,
+  instructions and limits.
+  - One reader polls the bot across the cluster. The offset is stored before a
+    batch is handed on, so an update is answered at most once.
+  - A queue for each chat keeps its messages in order; `/new` starts a new
+    conversation and `/help` explains what the bot reads.
+  - A requested change is shown as a card with ✅ / ❌ buttons. It is made only
+    when the person confirms, and the card is edited to the outcome, also when
+    the change was settled on the site.
+  - Photos and image documents go into the conversation like a panel upload,
+    and an album is one question.
+  - Every answer, part and retry is checked against the current link and
+    rights before it is sent.
+- **Voice input** (`PhoenixKitAgent.Speech`): a speech model
+  (`agent_speech_endpoint_uuid`, the AI task `agent.speech`) writes down a
+  recording from the panel's microphone into the composer, or a Telegram voice
+  message, which is then answered. The limits are checked again right before
+  paying, and neither the audio nor the words are logged or kept.
+- **An optional time limit on chats** (`agent_retention_days`, Owner only,
+  empty by default, which deletes nothing; `PhoenixKitAgent.Retention`,
+  `RetentionWorker`). Each night, the chats whose last message is older than
+  the period, and the chats users deleted, are deleted for good with their
+  messages, attachments and library files. A chat in use is left for the next
+  night. Each run ends with a sweep of library files a failed release left
+  behind. The page previews what a typed period would delete, and the run is
+  recorded in the Activity log (counts only).
+- **The accepted types of file** (`agent_attachment_types`, Settings → AI
+  Agent): a sublist of png, jpg, webp, heic, pdf, xlsx, csv, txt and md. Empty
+  means all of them. The server checks the type by content, also for Telegram
+  pictures before they are downloaded.
+- **A Storage `file_uuid` in a ready attachment's history line**, and
+  `Attachments.file_for_user/2`, so that a host tool can act on the file after
+  checking its owner. A confirmed write keeps its `ok` / `failed` counts.
+- **The chat panel on a touch phone**: every button is at least 44 × 44 px
+  under a coarse pointer, and Enter breaks the line there. A host can show
+  the panel's header buttons in its own header (class `pk-agent-compact` on
+  `<body>`), and hears `pk-agent:turn` (`start` / `done`) on `window` when the
+  panel starts or stops showing a turn.
+
+### Changed
+
+- **The panel's file input** is core's upload manager, with chunked, resumable
+  uploads that a lost connection or a reload continues. A file stays with the
+  chat it was added in.
+- **The panel on live navigation** stays open and keeps the latest message in
+  view; a reader who scrolled up keeps their place over a reconnect.
+- A chat's Rename and Archive are behind its "⋯" button, and Escape closes
+  them.
+- A Stop that comes within 600 ms of Send (the second click of a double click)
+  is ignored.
+- A stale Settings form saves only the fields the person changed, and is
+  refused when one of them changed meanwhile.
+
+### Fixed
+
+- A confirmed write whose click was lost, then refused before core reached the
+  row, reads as confirmed, not failed.
+- A recognition is not paid for when the panel will have given up waiting for
+  it.
+- Turn and confirmation locks are judged by the database's clock.
+
 ## 0.2.0 - 2026-10-27
 
 ### Changed
