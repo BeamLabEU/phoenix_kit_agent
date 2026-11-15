@@ -289,6 +289,19 @@ defmodule PhoenixKitAgent.Web.DockTest do
     |> Jason.decode!()
   end
 
+  defp js_ops(view, selector, attribute) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query(selector)
+    |> LazyHTML.attribute(attribute)
+    |> hd()
+    |> Jason.decode!()
+  end
+
+  # A JS command's op without the transition fields LiveView adds to it.
+  defp drop_transitions([op, args]), do: [op, Map.take(args, ["to", "display", "attr"])]
+
   defp hook_script(view, name) do
     view
     |> render()
@@ -729,6 +742,125 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       view |> element("#pk-agent-new-chat") |> render_click()
       assert_push_event(view, "pk-agent:store", %{open: true, conversation_uuid: nil})
+    end
+
+    test "with pk-agent-compact the panel's header stands in the host's header", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Compact"})
+      view = dock(ctx)
+
+      # Both are rendered; the class on <body> decides which one shows.
+      assert has_element?(view, "#pk-agent-panel > header[class*='[.pk-agent-compact_&]:hidden']")
+
+      for id <- ["bar-title", "bar-instructions-toggle", "bar-close"] do
+        assert has_element?(
+                 view,
+                 "#pk-agent-dock > #pk-agent-#{id}[class*='hidden'][class*='[.pk-dock-open.pk-agent-compact_&]:']"
+               )
+      end
+
+      assert has_element?(view, "#pk-agent-bar-title", "AI assistant")
+      open_chat(view, chat)
+      assert has_element?(view, "#pk-agent-bar-title", "Compact")
+
+      view |> element("#pk-agent-bar-instructions-toggle") |> render_click()
+      assert has_element?(view, "#pk-agent-instructions-form")
+      assert has_element?(view, "#pk-agent-bar-instructions-toggle.btn-active")
+
+      # The hook's close test is the attribute, so either close button counts.
+      assert has_element?(view, "#pk-agent-close[data-pk-agent-close]")
+      assert has_element?(view, "#pk-agent-bar-close[data-pk-agent-close]")
+      assert hook_script(view, ".DockState") =~ ~s|closest("[data-pk-agent-close]")|
+      assert click_ops(view, "#pk-agent-bar-close") == click_ops(view, "#pk-agent-close")
+
+      uuid = chat.uuid
+      view |> element("#pk-agent-bar-close") |> render_click()
+      assert_push_event(view, "pk-agent:store", %{open: false, conversation_uuid: ^uuid})
+    end
+
+    test "a chat's Rename and Archive sit behind its own button, which Escape closes", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Menu"})
+      more = "#pk-agent-chat-more-#{chat.uuid}"
+      actions = "pk-agent-chat-actions-#{chat.uuid}"
+      view = dock(ctx)
+
+      assert has_element?(
+               view,
+               "button#{more}[aria-expanded='false'][aria-controls='#{actions}']"
+             )
+
+      assert has_element?(view, "##{actions}.hidden #pk-agent-rename-#{chat.uuid}", "Rename")
+      assert has_element?(view, "##{actions}.hidden #pk-agent-archive-#{chat.uuid}", "Archive")
+
+      assert [
+               ["toggle", %{"to" => "#" <> ^actions, "display" => "flex"}],
+               ["toggle_attr", %{"attr" => ["aria-expanded", "true", "false"], "to" => ^more}]
+             ] = click_ops(view, more) |> Enum.map(&drop_transitions/1)
+
+      for selector <- [more, "#" <> actions] do
+        assert has_element?(view, "#{selector}[phx-key='Escape']")
+        ops = js_ops(view, selector, "phx-keydown")
+        assert ["focus", %{"to" => more}] in ops
+        assert ["set_attr", %{"attr" => ["aria-expanded", "false"], "to" => more}] in ops
+        assert Enum.any?(ops, &match?(["hide", %{"to" => "#" <> ^actions}], &1))
+      end
+    end
+
+    test "while a turn is shown Stop stands in Send's place", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "One place"})
+      view = dock(ctx)
+      open_chat(view, chat)
+
+      assert has_element?(view, "#pk-agent-send")
+      refute has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-turn[phx-hook][data-running='false']")
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: "turn-1"]
+      )
+
+      open_chat(view, chat)
+      assert has_element?(view, "#pk-agent-stop")
+      refute has_element?(view, "#pk-agent-send")
+      assert has_element?(view, "#pk-agent-turn[data-running='true']")
+    end
+
+    test "on a touch screen the panel's buttons are at least 44 px both ways", ctx do
+      chat = conversation_fixture(ctx.user, %{title: "Touch"})
+      view = dock(ctx)
+
+      both =
+        ~w(#pk-agent-dock-button #pk-agent-instructions-toggle #pk-agent-close
+           #pk-agent-bar-instructions-toggle #pk-agent-bar-close
+           #pk-agent-chat-more-#{chat.uuid})
+
+      high =
+        ~w(#pk-agent-new-chat #pk-agent-send #pk-agent-rename-#{chat.uuid}
+           #pk-agent-archive-#{chat.uuid})
+
+      for selector <- both do
+        assert has_element?(
+                 view,
+                 "#{selector}[class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+               ),
+               selector
+      end
+
+      # The paper clip
+      assert has_element?(
+               view,
+               "#pk-agent-files label[class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+             )
+
+      for selector <- high do
+        assert has_element?(view, "#{selector}[class*='pointer-coarse:min-h-11']"), selector
+      end
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
+        set: [busy_since: DateTime.utc_now(), busy_turn_ref: "turn-1"]
+      )
+
+      open_chat(view, chat)
+      assert has_element?(view, "#pk-agent-stop[class*='pointer-coarse:min-h-11']")
     end
   end
 
@@ -1410,11 +1542,13 @@ defmodule PhoenixKitAgent.Web.DockTest do
       File.mkdir_p!(dir)
       on_exit(fn -> File.rm_rf(dir) end)
 
-      for {env, name} <- [{"HOOK_FEED", ".Feed"}, {"HOOK_COMPOSER", ".Composer"}] do
+      hooks = [{"HOOK_FEED", ".Feed"}, {"HOOK_COMPOSER", ".Composer"}, {"HOOK_TURN", ".Turn"}]
+
+      for {env, name} <- hooks do
         File.write!(Path.join(dir, env), hook_script(view, name))
       end
 
-      env = for name <- ["HOOK_FEED", "HOOK_COMPOSER"], do: {name, Path.join(dir, name)}
+      env = for {name, _hook} <- hooks, do: {name, Path.join(dir, name)}
 
       {output, status} =
         System.cmd(

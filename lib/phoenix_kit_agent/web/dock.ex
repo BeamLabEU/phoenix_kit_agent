@@ -504,8 +504,8 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   defp event("send", %{"message" => params}, socket) when is_map(params) do
     case sync_turn(socket) do
-      # A second Enter (`requestSubmit()` passes the disabled button) while
-      # the turn runs: there is nothing to say.
+      # An Enter while the turn runs (`requestSubmit()`; "Stop" stands where
+      # "Send" was): there is nothing to say.
       {:running, socket} -> {:noreply, socket}
       {:idle, socket} -> {:noreply, send_message(socket, params)}
       {:error, reason, socket} -> {:noreply, refused(socket, reason)}

@@ -38,7 +38,8 @@ A user with the `agent` permission gets a button before the notifications bell
 in the admin header (the module's header widget, `header_widgets/0`; no panel
 while the module is off or the session is impersonated). It opens the list of
 their chats — "New chat" on top, then the chats with the newest message first,
-20 at a time and "More", each with its time and "Rename" / "Archive" — and the
+20 at a time and "More", each with its time and a "⋯" button that shows
+"Rename" / "Archive" (Escape hides them again) — and the
 panel on the right, about 400 px wide (it can be dragged wider), which narrows
 the page; on a phone it takes the whole screen. The panel has the feed, the
 input with a paper clip for files, "Stop", an indicator of what the assistant
@@ -82,6 +83,32 @@ header widgets and the dock column. The hooks are inline scripts without a
 nonce: a host with a Content-Security-Policy must allow `script-src
 'unsafe-inline'`, or the panel shows but does not remember its state, resize
 or send on Enter.
+On a touch screen (`pointer: coarse`) the panel's buttons are at least 44 × 44
+px. Enter sends and Shift+Enter breaks the line; on a touch screen without a
+mouse (`(pointer: coarse) and (hover: none)`) Enter breaks the line and the
+button sends. Ctrl+Enter and Cmd+Enter send on any screen. While an answer is
+being written "Stop" stands where "Send" is.
+
+A host that renders the widget (`PhoenixKitAgent.Web.Dock`) in a header of its
+own, over a page given to the panel, can ask for a **compact panel**: with the
+class `pk-agent-compact` on `<body>` the panel has no header bar, and its
+title (the chat's), the personal instructions button and the close button
+stand in the widget, next to the button with the list of chats. The class may
+be in the layout or be set and removed at any time (say, as a tablet turns):
+`document.body.classList.toggle("pk-agent-compact", on)`; the server renders
+nothing for it. The panel also tells the page when it starts and stops showing
+a running answer, with a `pk-agent:turn` event on `window`:
+
+```js
+window.addEventListener("pk-agent:turn", (event) => {
+  // event.detail.state: "start", or "done" (the answer ended, was stopped or
+  // refused, another chat was opened, or the panel went away)
+})
+```
+
+A connection lost and found again may tell `done` and `start` once more for
+the same answer.
+
 The tools called from the panel get the user's locale and the endpoint's URL as
 their request context, and the client address only when the host's LiveView
 socket passes `:peer_data` and `:x_headers` in its `connect_info`.

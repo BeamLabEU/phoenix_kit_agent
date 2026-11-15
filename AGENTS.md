@@ -234,7 +234,20 @@ and `Web.Markdown`) and the optional chat retention
   messages it left), and every `restore` changes `data-restored`, so its
   answer patches the whole panel over whatever the browser kept. A daisyUI focus
   dropdown's trigger is a `div` with `tabindex="0"`, never a `<button>`
-  (Safari does not focus a clicked button).
+  (Safari does not focus a clicked button). The panel's header buttons are
+  rendered twice (`header_buttons/1`): in the panel's header and, shown only
+  with the class `pk-agent-compact` on `<body>`, in the widget — a host's own
+  header; the class is the host's, set or removed at any time, and nothing on
+  the server follows it. Code that finds a close button looks for
+  `[data-pk-agent-close]`, never an id. `.Turn` (`#pk-agent-turn`,
+  `data-running`) tells the page `pk-agent:turn` (`detail.state` `start` /
+  `done`) on `window` whenever the panel starts or stops showing a turn — the
+  host's signal, not a fact about the lock. Under `pointer-coarse:` every
+  button of the panel is at least 44 px both ways (`min-h-11`, and `min-w-11`
+  for an icon button); a new button gets the same. "Stop" replaces "Send"
+  (one place); a send by Enter while a turn runs is let go by the server, as
+  before. A chat's "Rename" and "Archive" are behind its "⋯", opened and
+  closed by JS commands (kept over a patch of the list).
 - **Prompt input from a browser** (`page:`, `locale:` of `Turns.start/6`) is
   untrusted: `PhoenixKitAgent.Prompt` drops a value with a control character and
   cuts a long one. The host's `page_context: {Mod, :fun}` hook is called as

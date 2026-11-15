@@ -164,7 +164,7 @@ defmodule PhoenixKitAgent.Web.Dock.Components do
           phx-click="reject_card"
           phx-value-uuid={@message.uuid}
           disabled={@card[:busy?]}
-          class="btn btn-ghost btn-sm"
+          class="btn btn-ghost btn-sm pointer-coarse:min-h-11"
         >
           {gettext("Cancel the change")}
         </button>
@@ -175,7 +175,7 @@ defmodule PhoenixKitAgent.Web.Dock.Components do
           phx-click="confirm_card"
           phx-value-uuid={@message.uuid}
           disabled={@card[:busy?]}
-          class="btn btn-primary btn-sm"
+          class="btn btn-primary btn-sm pointer-coarse:min-h-11"
         >
           <span :if={@card[:busy?]} class="loading loading-spinner loading-xs"></span>
           {gettext("Run")}
@@ -187,7 +187,7 @@ defmodule PhoenixKitAgent.Web.Dock.Components do
           phx-click="repeat_card"
           phx-value-uuid={@message.uuid}
           disabled={@card[:busy?]}
-          class="btn btn-outline btn-sm"
+          class="btn btn-outline btn-sm pointer-coarse:min-h-11"
         >
           <.icon name="hero-arrow-path" class="w-4 h-4" /> {gettext("Ask again")}
         </button>
@@ -263,7 +263,7 @@ defmodule PhoenixKitAgent.Web.Dock.Components do
         id={"pk-agent-discard-#{@attachment.uuid}"}
         phx-click="discard_attachment"
         phx-value-uuid={@attachment.uuid}
-        class="btn btn-ghost btn-xs btn-circle ml-auto"
+        class="btn btn-ghost btn-xs btn-circle ml-auto pointer-coarse:min-h-11 pointer-coarse:min-w-11"
         aria-label={gettext("Remove the file")}
         title={gettext("Remove the file")}
       >

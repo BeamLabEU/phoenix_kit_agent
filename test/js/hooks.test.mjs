@@ -1,6 +1,7 @@
-// Behaviour of the chat panel's browser hooks (`.Feed`, `.Composer`) on a
-// small fake DOM. Run by `Web.DockTest` ("the browser hooks:") with the hooks'
-// own source, taken from the rendered panel, in HOOK_FEED / HOOK_COMPOSER.
+// Behaviour of the chat panel's browser hooks (`.Feed`, `.Composer`, `.Turn`)
+// on a small fake DOM. Run by `Web.DockTest` ("the browser hooks:") with the
+// hooks' own source, taken from the rendered panel, in HOOK_FEED /
+// HOOK_COMPOSER / HOOK_TURN.
 import test from "node:test"
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -366,4 +367,135 @@ test("a send tells the server the page and whether a file is still on its way", 
 test("paused, failed, skipped and finished files do not hold a send", () => {
   const {waiting} = composer({states: ["paused", "failed", "skipped", "done"]})
   assert.equal(waiting.value, "")
+})
+
+// Enter in the composer: `touch` says what `matchMedia` answers for a touch
+// screen without a mouse; `null` is a browser without `matchMedia`.
+const TOUCH_QUERY = "(pointer: coarse) and (hover: none)"
+
+function typing(touch) {
+  environment()
+  if (touch !== null) {
+    globalThis.window.matchMedia = (query) => ({media: query, matches: query === TOUCH_QUERY && touch})
+  }
+  const def = load("HOOK_COMPOSER")
+  const keys = listeners()
+  let sent = 0
+  const el = {
+    addEventListener: keys.add,
+    value: "",
+    form: {addEventListener() {}, querySelector: () => null, requestSubmit() { sent++ }}
+  }
+  const hook = Object.assign(Object.create(def), {el, handleEvent() {}})
+  hook.mounted()
+  // What one key press did: sent the form, or left the browser to break the line.
+  return (modifiers = {}) => {
+    const before = sent
+    let prevented = false
+    keys.fire("keydown", {
+      key: "Enter", shiftKey: false, ctrlKey: false, metaKey: false, altKey: false,
+      isComposing: false, ...modifiers, preventDefault() { prevented = true }
+    })
+    if (sent > before) {
+      assert.ok(prevented, "a send keeps the line break out of the text")
+      return "send"
+    }
+    assert.ok(!prevented, "no send leaves the key to the browser")
+    return "newline"
+  }
+}
+
+test("with a mouse or no matchMedia: Enter sends, Shift+Enter breaks the line", () => {
+  for (const touch of [false, null]) {
+    const press = typing(touch)
+    assert.equal(press(), "send")
+    assert.equal(press({shiftKey: true}), "newline")
+    assert.equal(press({ctrlKey: true}), "send")
+    assert.equal(press({metaKey: true}), "send")
+  }
+})
+
+test("on a touch screen Enter breaks the line, Ctrl+Enter and Cmd+Enter send", () => {
+  const press = typing(true)
+  assert.equal(press(), "newline")
+  assert.equal(press({shiftKey: true}), "newline")
+  assert.equal(press({ctrlKey: true}), "send")
+  assert.equal(press({metaKey: true}), "send")
+})
+
+test("Enter while an input method composes is left to the input method", () => {
+  for (const touch of [false, true]) {
+    const press = typing(touch)
+    assert.equal(press({isComposing: true}), "newline")
+    assert.equal(press({isComposing: true, ctrlKey: true}), "newline")
+  }
+})
+
+test("another key does nothing", () => {
+  const press = typing(false)
+  assert.equal(press({key: "a"}), "newline")
+})
+
+test("the screen is asked at each key, so a keyboard attached later counts", () => {
+  environment()
+  let touch = true
+  globalThis.window.matchMedia = (query) => ({media: query, matches: query === TOUCH_QUERY && touch})
+  const def = load("HOOK_COMPOSER")
+  const keys = listeners()
+  let sent = 0
+  const el = {
+    addEventListener: keys.add,
+    form: {addEventListener() {}, querySelector: () => null, requestSubmit() { sent++ }}
+  }
+  Object.assign(Object.create(def), {el, handleEvent() {}}).mounted()
+  const enter = {key: "Enter", shiftKey: false, ctrlKey: false, metaKey: false, isComposing: false, preventDefault() {}}
+  keys.fire("keydown", enter)
+  assert.equal(sent, 0)
+  touch = false
+  keys.fire("keydown", enter)
+  assert.equal(sent, 1)
+})
+
+// ── .Turn ───────────────────────────────────────────────────────────
+
+function turn(running) {
+  environment()
+  const events = []
+  globalThis.window.dispatchEvent = (event) => events.push(event)
+  const def = load("HOOK_TURN")
+  const el = {dataset: {running: String(running)}}
+  const hook = Object.assign(Object.create(def), {el})
+  hook.mounted()
+  const states = () => events.map((event) => {
+    assert.equal(event.type, "pk-agent:turn")
+    assert.ok(event instanceof CustomEvent)
+    return event.detail.state
+  })
+  return {
+    states,
+    patch(next) { el.dataset.running = String(next); hook.updated() },
+    destroy() { hook.destroyed() }
+  }
+}
+
+test("the host is told when a turn starts and when it is done", () => {
+  const rig = turn(false)
+  assert.deepEqual(rig.states(), [])
+  rig.patch(true)
+  assert.deepEqual(rig.states(), ["start"])
+  // Other patches of the panel while the turn runs say nothing new.
+  rig.patch(true)
+  assert.deepEqual(rig.states(), ["start"])
+  rig.patch(false)
+  assert.deepEqual(rig.states(), ["start", "done"])
+  rig.patch(false)
+  rig.destroy()
+  assert.deepEqual(rig.states(), ["start", "done"])
+})
+
+test("a panel that mounts on a running turn says start, and done when it goes away", () => {
+  const rig = turn(true)
+  assert.deepEqual(rig.states(), ["start"])
+  rig.destroy()
+  assert.deepEqual(rig.states(), ["start", "done"])
 })
