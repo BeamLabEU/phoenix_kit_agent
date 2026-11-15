@@ -317,7 +317,8 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         </div>
         <ul id="pk-agent-chats" class="menu menu-sm w-full max-h-96 overflow-y-auto flex-nowrap p-2 pt-0">
           <li :if={@chats == []} class="px-3 py-2 text-xs opacity-60">{gettext("No chats yet.")}</li>
-          <li :for={chat <- @chats} id={"pk-agent-chat-#{chat.uuid}"} class="group">
+          <%!-- flex-nowrap: the menu's wrapping <li> would size the row to its longest title --%>
+          <li :for={chat <- @chats} id={"pk-agent-chat-#{chat.uuid}"} class="group flex-nowrap">
             <%= if @renaming == chat.uuid do %>
               <form
                 id={"pk-agent-rename-form-#{chat.uuid}"}
@@ -380,17 +381,14 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
                   <.icon name="hero-ellipsis-horizontal" class="w-4 h-4" />
                 </button>
               </div>
-              <div
-                id={"pk-agent-chat-actions-#{chat.uuid}"}
-                class="hidden gap-1 px-2 pb-1"
-                phx-keydown={close_chat_actions(chat.uuid)}
-                phx-key="Escape"
-              >
+              <div id={"pk-agent-chat-actions-#{chat.uuid}"} class="hidden gap-1 px-2 pb-1">
                 <button
                   type="button"
                   id={"pk-agent-rename-#{chat.uuid}"}
                   phx-click="start_rename"
                   phx-value-uuid={chat.uuid}
+                  phx-keydown={close_chat_actions(chat.uuid)}
+                  phx-key="Escape"
                   class="btn btn-ghost btn-xs flex-1 pointer-coarse:min-h-11"
                 >
                   <.icon name="hero-pencil" class="w-3.5 h-3.5" /> {gettext("Rename")}
@@ -400,6 +398,8 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
                   id={"pk-agent-archive-#{chat.uuid}"}
                   phx-click="archive_chat"
                   phx-value-uuid={chat.uuid}
+                  phx-keydown={close_chat_actions(chat.uuid)}
+                  phx-key="Escape"
                   class="btn btn-ghost btn-xs flex-1 pointer-coarse:min-h-11"
                 >
                   <.icon name="hero-archive-box" class="w-3.5 h-3.5" /> {gettext("Archive")}
@@ -409,7 +409,12 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           </li>
         </ul>
         <div :if={@next_cursor} class="p-2 pt-0">
-          <button id="pk-agent-more-chats" type="button" phx-click="more_chats" class="btn btn-ghost btn-xs w-full">
+          <button
+            id="pk-agent-more-chats"
+            type="button"
+            phx-click="more_chats"
+            class="btn btn-ghost btn-xs w-full pointer-coarse:min-h-11"
+          >
             {gettext("More")}
           </button>
         </div>
@@ -855,8 +860,10 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
     """
   end
 
-  # The row's "⋯" opens and closes the row's actions; Escape closes them and
-  # gives the focus back to "⋯". JS commands, so a patch of the list keeps them.
+  # The row's "⋯" opens and closes the row's actions; Escape on "⋯" or on an
+  # action (LiveView matches a key binding on the event's target only) closes
+  # them and gives the focus back to "⋯". JS commands, so a patch of the list
+  # keeps them.
   defp toggle_chat_actions(uuid) do
     JS.toggle(to: "#pk-agent-chat-actions-#{uuid}", display: "flex")
     |> JS.toggle_attribute({"aria-expanded", "true", "false"},

@@ -796,7 +796,8 @@ defmodule PhoenixKitAgent.Web.DockTest do
                ["toggle_attr", %{"attr" => ["aria-expanded", "true", "false"], "to" => ^more}]
              ] = click_ops(view, more) |> Enum.map(&drop_transitions/1)
 
-      for selector <- [more, "#" <> actions] do
+      # LiveView matches a key binding on the event's target only: each button has it.
+      for selector <- [more, "#pk-agent-rename-#{chat.uuid}", "#pk-agent-archive-#{chat.uuid}"] do
         assert has_element?(view, "#{selector}[phx-key='Escape']")
         ops = js_ops(view, selector, "phx-keydown")
         assert ["focus", %{"to" => more}] in ops
