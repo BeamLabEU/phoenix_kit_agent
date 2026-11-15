@@ -39,6 +39,7 @@ function environment() {
     removeEventListener: win.remove,
     location: {pathname: "/admin/orders"}
   }
+  globalThis.document = {activeElement: null}
   globalThis.requestAnimationFrame = (fn) => frames.push(fn)
   globalThis.setTimeout = (fn, ms) => {
     timers.set(nextTimer, {fn, ms})
@@ -458,12 +459,19 @@ test("the screen is asked at each key, so a keyboard attached later counts", () 
 
 // ── .Turn ───────────────────────────────────────────────────────────
 
-function turn(running) {
+// `turn`: the ref of the turn shown, or null for none.
+function turn(ref) {
   environment()
   const events = []
   globalThis.window.dispatchEvent = (event) => events.push(event)
   const def = load("HOOK_TURN")
-  const el = {dataset: {running: String(running)}}
+  const el = {dataset: {}}
+  const show = (next) => {
+    el.dataset.running = String(next !== null)
+    if (next === null) delete el.dataset.turn
+    else el.dataset.turn = next
+  }
+  show(ref)
   const hook = Object.assign(Object.create(def), {el})
   hook.mounted()
   const states = () => events.map((event) => {
@@ -473,29 +481,66 @@ function turn(running) {
   })
   return {
     states,
-    patch(next) { el.dataset.running = String(next); hook.updated() },
+    patch(next) { show(next); hook.updated() },
     destroy() { hook.destroyed() }
   }
 }
 
 test("the host is told when a turn starts and when it is done", () => {
-  const rig = turn(false)
+  const rig = turn(null)
   assert.deepEqual(rig.states(), [])
-  rig.patch(true)
+  rig.patch("turn-a")
   assert.deepEqual(rig.states(), ["start"])
   // Other patches of the panel while the turn runs say nothing new.
-  rig.patch(true)
+  rig.patch("turn-a")
   assert.deepEqual(rig.states(), ["start"])
-  rig.patch(false)
+  rig.patch(null)
   assert.deepEqual(rig.states(), ["start", "done"])
-  rig.patch(false)
+  rig.patch(null)
   rig.destroy()
   assert.deepEqual(rig.states(), ["start", "done"])
 })
 
+test("another chat's running turn is another turn: done, then start", () => {
+  const rig = turn("turn-a")
+  rig.patch("turn-b")
+  assert.deepEqual(rig.states(), ["start", "done", "start"])
+})
+
 test("a panel that mounts on a running turn says start, and done when it goes away", () => {
-  const rig = turn(true)
+  const rig = turn("turn-a")
   assert.deepEqual(rig.states(), ["start"])
   rig.destroy()
   assert.deepEqual(rig.states(), ["start", "done"])
+})
+
+// "Send" gives its place to "Stop": whoever had the focus on it keeps it.
+function sending({focusOnSend, touch}) {
+  environment()
+  globalThis.window.matchMedia = (query) => ({media: query, matches: query === TOUCH_QUERY && touch})
+  const def = load("HOOK_COMPOSER")
+  const form = listeners()
+  const send = {id: "pk-agent-send"}
+  let focused = 0
+  const el = {
+    addEventListener() {},
+    focus() { focused++ },
+    form: {
+      addEventListener: form.add,
+      querySelector: (selector) => (selector === "#pk-agent-send" ? send : null)
+    }
+  }
+  globalThis.document.activeElement = focusOnSend ? send : el
+  Object.assign(Object.create(def), {el, handleEvent() {}}).mounted()
+  form.fire("submit")
+  return focused
+}
+
+test("a send from the focused Send button moves the focus to the text", () => {
+  assert.equal(sending({focusOnSend: true, touch: false}), 1)
+})
+
+test("a send leaves the focus alone when it was not on Send, or on a touch screen", () => {
+  assert.equal(sending({focusOnSend: false, touch: false}), 0)
+  assert.equal(sending({focusOnSend: true, touch: true}), 0)
 })

@@ -83,11 +83,15 @@ header widgets and the dock column. The hooks are inline scripts without a
 nonce: a host with a Content-Security-Policy must allow `script-src
 'unsafe-inline'`, or the panel shows but does not remember its state, resize
 or send on Enter.
+
 On a touch screen (`pointer: coarse`) the panel's buttons are at least 44 × 44
 px. Enter sends and Shift+Enter breaks the line; on a touch screen without a
 mouse (`(pointer: coarse) and (hover: none)`) Enter breaks the line and the
 button sends. Ctrl+Enter and Cmd+Enter send on any screen. While an answer is
-being written "Stop" stands where "Send" is.
+being written "Stop" stands where "Send" is, and a focus on "Send" moves to
+the text (not on a touch screen without a mouse: it would bring the keyboard
+back). A chat's "Rename" and "Archive" are behind its "⋯" at every width, so
+on a desktop they take two clicks.
 
 A host that renders the widget (`PhoenixKitAgent.Web.Dock`) in a header of its
 own, over a page given to the panel, can ask for a **compact panel**: with the
@@ -101,13 +105,17 @@ a running answer, with a `pk-agent:turn` event on `window`:
 
 ```js
 window.addEventListener("pk-agent:turn", (event) => {
-  // event.detail.state: "start", or "done" (the answer ended, was stopped or
-  // refused, another chat was opened, or the panel went away)
+  // event.detail.state: "start", or "done" (the answer shown ended, was
+  // stopped or refused, or is no longer shown: another chat was opened, the
+  // panel went away)
 })
 ```
 
-A connection lost and found again may tell `done` and `start` once more for
-the same answer.
+An answer is told apart by its turn: opening a chat whose own answer is being
+written tells `done` for the last one and `start` for it. A connection lost
+and found again may tell `done` and `start` once more for the same answer. A
+page that starts listening late reads the state now from
+`#pk-agent-turn[data-running]` (`"true"` / `"false"`; `data-turn` is the turn).
 
 The tools called from the panel get the user's locale and the endpoint's URL as
 their request context, and the client address only when the host's LiveView

@@ -749,7 +749,10 @@ defmodule PhoenixKitAgent.Web.DockTest do
       view = dock(ctx)
 
       # Both are rendered; the class on <body> decides which one shows.
-      assert has_element?(view, "#pk-agent-panel > header[class*='[.pk-agent-compact_&]:hidden']")
+      assert has_element?(
+               view,
+               "#pk-agent-panel > header[class*='[.pk-dock-open.pk-agent-compact_&]:hidden']"
+             )
 
       for id <- ["bar-title", "bar-instructions-toggle", "bar-close"] do
         assert has_element?(
@@ -788,6 +791,9 @@ defmodule PhoenixKitAgent.Web.DockTest do
                "button#{more}[aria-expanded='false'][aria-controls='#{actions}']"
              )
 
+      # Each row's button is named after its chat.
+      assert has_element?(view, "#{more}[aria-label='Actions: Menu']")
+
       assert has_element?(view, "##{actions}.hidden #pk-agent-rename-#{chat.uuid}", "Rename")
       assert has_element?(view, "##{actions}.hidden #pk-agent-archive-#{chat.uuid}", "Archive")
 
@@ -822,7 +828,15 @@ defmodule PhoenixKitAgent.Web.DockTest do
       open_chat(view, chat)
       assert has_element?(view, "#pk-agent-stop")
       refute has_element?(view, "#pk-agent-send")
-      assert has_element?(view, "#pk-agent-turn[data-running='true']")
+      assert has_element?(view, "#pk-agent-turn[data-running='true'][data-turn='turn-1']")
+
+      # Another chat, with no turn of its own: the panel shows none.
+      idle = conversation_fixture(ctx.user, %{title: "Idle"})
+      view |> element("#pk-agent-dock-button") |> render_click()
+      open_chat(view, idle)
+      assert has_element?(view, "#pk-agent-send")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
+      refute has_element?(view, "#pk-agent-turn[data-turn]")
     end
 
     test "on a touch screen the panel's buttons are at least 44 px both ways", ctx do
@@ -853,15 +867,31 @@ defmodule PhoenixKitAgent.Web.DockTest do
              )
 
       for selector <- high do
-        assert has_element?(view, "#{selector}[class*='pointer-coarse:min-h-11']"), selector
+        assert has_element?(
+                 view,
+                 "#{selector}[class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+               ),
+               selector
       end
+
+      # A short text ("Save") is no narrower than 44 px either.
+      view |> element("#pk-agent-instructions-toggle") |> render_click()
+
+      assert has_element?(
+               view,
+               "#pk-agent-instructions-form button[type=submit][class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+             )
 
       Repo.update_all(from(c in Conversation, where: c.uuid == ^chat.uuid),
         set: [busy_since: DateTime.utc_now(), busy_turn_ref: "turn-1"]
       )
 
       open_chat(view, chat)
-      assert has_element?(view, "#pk-agent-stop[class*='pointer-coarse:min-h-11']")
+
+      assert has_element?(
+               view,
+               "#pk-agent-stop[class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+             )
     end
   end
 
@@ -986,6 +1016,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
       send_text(view, "Hello there")
 
       assert has_element?(view, "#pk-agent-dock-error", "No model is chosen")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
       # It says where the model is chosen.
       assert has_element?(view, "#pk-agent-dock-error", "Settings → AI Agent")
       refute has_element?(view, "#pk-agent-panel[data-conversation]")
@@ -1370,10 +1401,12 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       assert has_element?(view, "#pk-agent-dock-error", "no longer running here")
       refute has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
       assert lock_of(chat) |> elem(1) == turn_ref
 
       :ok = Turns.stop(ctx.ref, false, chat.uuid, turn_ref)
       await_turn_end(view, chat)
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
     end
 
     test "Stop on a turn whose lock has expired since the chat was opened frees it", ctx do
@@ -1397,6 +1430,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       refute_received {:agent_stop_turn, _}
       refute has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
       refute has_element?(view, "#pk-agent-waiting")
       assert has_element?(view, "#pk-agent-feed [data-role=notice]", "interrupted")
       assert lock_of(chat) == {nil, nil}
@@ -1490,6 +1524,7 @@ defmodule PhoenixKitAgent.Web.DockTest do
       :ok = await_let_go(view)
 
       refute has_element?(view, "#pk-agent-stop")
+      assert has_element?(view, "#pk-agent-turn[data-running='false']")
       assert has_element?(view, "#pk-agent-feed [data-role=assistant]", "Answered unheard.")
 
       # Nothing more to check once the turn is let go of.

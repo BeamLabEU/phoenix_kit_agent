@@ -31,14 +31,19 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       lost connection is found again (`reconnected`);
     * `.Turn` — tells the host page when the panel starts and stops showing
       a running turn: a `pk-agent:turn` event on `window` with
-      `detail.state` `"start"` or `"done"` (the turn ended, was stopped or
-      refused, another chat was opened, the panel went away).
+      `detail.state` `"start"` or `"done"`. A turn is told apart by its ref
+      (`data-turn`): `done` when the turn shown ended, was stopped or refused,
+      or is no longer shown (another chat opened, the panel gone); opening a
+      chat whose own turn runs is `done` for the last one and `start` for it.
+      `#pk-agent-turn[data-running]` is the state now, for a late listener.
 
   With the class `pk-agent-compact` on `<body>` (set or removed by the host at
   any time) the panel has no header of its own: its title, the personal
   instructions button and the close button stand next to the button with the
   list of chats, in the host's header where the widget is. Under
-  `(pointer: coarse)` the panel's buttons are at least 44 px both ways.
+  `(pointer: coarse)` the panel's buttons are at least 44 px both ways. When
+  "Send" gives its place to "Stop", focus on it moves to the text (not on a
+  touch screen without a mouse, where that would bring the keyboard back).
   """
 
   use Phoenix.Component
@@ -88,7 +93,14 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       class="flex items-center [.pk-agent-compact_&]:flex-1 [.pk-agent-compact_&]:min-w-0 [.pk-agent-compact_&]:gap-1"
     >
       <.hooks />
-      <span id="pk-agent-turn" phx-hook=".Turn" data-running={to_string(!!@turn_ref)} hidden></span>
+      <span
+        id="pk-agent-turn"
+        phx-hook=".Turn"
+        data-running={to_string(!!@turn_ref)}
+        data-turn={@turn_ref}
+        hidden
+      >
+      </span>
       <%!-- The panel's header, in the host's header: shown only with `pk-agent-compact` on <body> --%>
       <h2
         id="pk-agent-bar-title"
@@ -131,7 +143,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         >
         </div>
 
-        <header class="flex items-center gap-2 border-b border-base-300 px-3 py-2 [.pk-agent-compact_&]:hidden">
+        <header class="flex items-center gap-2 border-b border-base-300 px-3 py-2 [.pk-dock-open.pk-agent-compact_&]:hidden">
           <.icon name="hero-sparkles" class="w-4 h-4 shrink-0 text-primary" />
           <h2 class="flex-1 truncate text-sm font-semibold">
             {if @conversation, do: chat_title(@conversation), else: gettext("AI assistant")}
@@ -158,7 +170,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             class="textarea-sm text-sm"
           />
           <div class="flex justify-end">
-            <button type="submit" class="btn btn-primary btn-xs pointer-coarse:min-h-11">{gettext("Save")}</button>
+            <button type="submit" class="btn btn-primary btn-xs pointer-coarse:min-h-11 pointer-coarse:min-w-11">{gettext("Save")}</button>
           </div>
         </.form>
 
@@ -195,7 +207,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
                 id="pk-agent-earlier"
                 type="button"
                 phx-click="load_earlier"
-                class="btn btn-ghost btn-xs pointer-coarse:min-h-11"
+                class="btn btn-ghost btn-xs pointer-coarse:min-h-11 pointer-coarse:min-w-11"
               >
                 {gettext("Earlier messages")}
               </button>
@@ -310,7 +322,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             id="pk-agent-new-chat"
             type="button"
             phx-click={AdminDock.open() |> JS.push("new_chat") |> JS.focus(to: "#pk-agent-input")}
-            class="btn btn-primary btn-sm w-full pointer-coarse:min-h-11"
+            class="btn btn-primary btn-sm w-full pointer-coarse:min-h-11 pointer-coarse:min-w-11"
           >
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New chat")}
           </button>
@@ -336,10 +348,10 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
                   aria-label={gettext("Title")}
                   autofocus
                 />
-                <button type="submit" class="btn btn-xs btn-primary pointer-coarse:min-h-11">
+                <button type="submit" class="btn btn-xs btn-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11">
                   {gettext("Save")}
                 </button>
-                <button type="button" phx-click="cancel_rename" class="btn btn-xs btn-ghost pointer-coarse:min-h-11">
+                <button type="button" phx-click="cancel_rename" class="btn btn-xs btn-ghost pointer-coarse:min-h-11 pointer-coarse:min-w-11">
                   {gettext("Cancel")}
                 </button>
               </form>
@@ -375,7 +387,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
                   class="btn btn-ghost btn-xs btn-circle shrink-0 opacity-60 hover:opacity-100 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                   aria-expanded="false"
                   aria-controls={"pk-agent-chat-actions-#{chat.uuid}"}
-                  aria-label={gettext("Actions")}
+                  aria-label={gettext("Actions: %{title}", title: chat_title(chat))}
                   title={gettext("Actions")}
                 >
                   <.icon name="hero-ellipsis-horizontal" class="w-4 h-4" />
@@ -389,7 +401,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
                   phx-value-uuid={chat.uuid}
                   phx-keydown={close_chat_actions(chat.uuid)}
                   phx-key="Escape"
-                  class="btn btn-ghost btn-xs flex-1 pointer-coarse:min-h-11"
+                  class="btn btn-ghost btn-xs flex-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                 >
                   <.icon name="hero-pencil" class="w-3.5 h-3.5" /> {gettext("Rename")}
                 </button>
@@ -400,7 +412,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
                   phx-value-uuid={chat.uuid}
                   phx-keydown={close_chat_actions(chat.uuid)}
                   phx-key="Escape"
-                  class="btn btn-ghost btn-xs flex-1 pointer-coarse:min-h-11"
+                  class="btn btn-ghost btn-xs flex-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                 >
                   <.icon name="hero-archive-box" class="w-3.5 h-3.5" /> {gettext("Archive")}
                 </button>
@@ -413,7 +425,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             id="pk-agent-more-chats"
             type="button"
             phx-click="more_chats"
-            class="btn btn-ghost btn-xs w-full pointer-coarse:min-h-11"
+            class="btn btn-ghost btn-xs w-full pointer-coarse:min-h-11 pointer-coarse:min-w-11"
           >
             {gettext("More")}
           </button>
@@ -508,7 +520,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             id="pk-agent-stop"
             type="button"
             phx-click="stop"
-            class="btn btn-sm btn-outline btn-error pointer-coarse:min-h-11"
+            class="btn btn-sm btn-outline btn-error pointer-coarse:min-h-11 pointer-coarse:min-w-11"
             disabled={@activity == :stopping}
           >
             <.icon name="hero-stop" class="w-4 h-4" /> {gettext("Stop")}
@@ -517,7 +529,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             :if={!@turn_ref}
             id="pk-agent-send"
             type="submit"
-            class="btn btn-sm btn-primary pointer-coarse:min-h-11"
+            class="btn btn-sm btn-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11"
           >
             <.icon name="hero-paper-airplane" class="w-4 h-4" /> {gettext("Send")}
           </button>
@@ -790,15 +802,17 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             if (event.key !== "Enter" || event.isComposing) return
             // A touch screen's Enter breaks the line (its keyboard has no Shift+Enter
             // to speak of); the button sends. Ctrl/Cmd+Enter send on any screen.
-            const touch = typeof window.matchMedia === "function" &&
-              window.matchMedia("(pointer: coarse) and (hover: none)").matches
-            if (event.ctrlKey || event.metaKey || (!event.shiftKey && !touch)) {
+            if (event.ctrlKey || event.metaKey || (!event.shiftKey && !this.touch())) {
               event.preventDefault()
               if (this.el.form) this.el.form.requestSubmit()
             }
           })
           if (this.el.form) {
             this.el.form.addEventListener("submit", () => {
+              // "Send" gives its place to "Stop": the focus on it goes to the text,
+              // not to <body> (a touch screen keeps it off the text: the keyboard).
+              const send = this.el.form.querySelector("#pk-agent-send")
+              if (send && document.activeElement === send && !this.touch()) this.el.focus()
               const page = this.el.form.querySelector("[data-pk-agent-page]")
               if (page) page.value = window.location.pathname
               // Files the upload manager still holds in the browser are no entry
@@ -821,22 +835,29 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             this.el.focus()
             this.el.setSelectionRange(this.el.value.length, this.el.value.length)
           })
+        },
+        // A touch screen without a mouse, asked each time (a keyboard may come).
+        touch() {
+          return typeof window.matchMedia === "function" &&
+            window.matchMedia("(pointer: coarse) and (hover: none)").matches
         }
       }
     </script>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".Turn" runtime>
       {
         mounted() {
-          this.running = false
+          this.turn = ""
           this.check()
         },
         updated() { this.check() },
-        destroyed() { if (this.running) this.tell("done") },
+        destroyed() { if (this.turn) this.tell("done") },
+        // The turn shown, by its ref: another chat's running turn is another turn.
         check() {
-          const running = this.el.dataset.running === "true"
-          if (running === this.running) return
-          this.running = running
-          this.tell(running ? "start" : "done")
+          const turn = this.el.dataset.running === "true" ? (this.el.dataset.turn || "?") : ""
+          if (turn === this.turn) return
+          if (this.turn) this.tell("done")
+          this.turn = turn
+          if (turn) this.tell("start")
         },
         tell(state) {
           window.dispatchEvent(new CustomEvent("pk-agent:turn", {detail: {state: state}}))
