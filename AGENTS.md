@@ -49,10 +49,9 @@ and `Web.Markdown`) and the optional chat retention
 - **Depends on:** `phoenix_kit` (the writes of a live session:
   `allow: :all`, `Executor.redeem_as/6`, the session functions of
   `API.Confirm`, the `OperationPreview` component,
-  `Executor.tool_availability/1`; the AI journal's cost in dollars, V223 —
-  `~> 2.64` for those — and the chat's file input, core's `UploadManager` and
-  `ResumableUpload`, and the linked Telegram chat as an actor: `>= 3.4.0` in
-  `mix.exs`, the first release with all of them),
+  `Executor.tool_availability/1`; the AI journal's cost in dollars, V223;
+  the chat's file input, core's `UploadManager` and `ResumableUpload`, and
+  the linked Telegram chat as an actor: `>= 3.5.0 and < 4.0.0` in `mix.exs`),
   `phoenix_kit_ai` `~> 0.26` (the AI task guard, tool calling, a call's
   cost from one place, `Request.cost` in dollars; `transcribe/3`, optional,
   for voice), `phoenix_live_view`, and

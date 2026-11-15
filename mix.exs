@@ -90,13 +90,12 @@ defmodule PhoenixKitAgent.MixProject do
       # PhoenixKit provides the Module behaviour, the Settings API, the API
       # Executor (execute_as/visible_for, the writes of a live session:
       # allow: :all, redeem_as/6, tool_availability/1), API.Confirm, the
-      # OperationPreview component, SessionRef and hidden Storage libraries.
-      # 2.64 is the first release with the AI journal's cost in dollars (V223).
-      # 3.4 is the first release with the linked Telegram chat as an actor
-      # (Linking.linked_user/2, SessionRef.scope_for_user/2, Executor's
-      # {:telegram_link, ...} reference, the opt_in flag of a sub-permission),
-      # and with the chat's file input (UploadManager, ResumableUpload).
-      pk_dep(:phoenix_kit, ">= 3.4.0 and < 4.0.0"),
+      # OperationPreview component, SessionRef and hidden Storage libraries,
+      # the linked Telegram chat as an actor and the chat's file input
+      # (UploadManager, ResumableUpload).
+      # Floor 3.5.0, the minimum core every module requires; the ceiling is
+      # open through core 3.x.
+      pk_dep(:phoenix_kit, ">= 3.5.0 and < 4.0.0"),
 
       # Model calls, endpoints, credentials, budget and the request journal
       # come from phoenix_kit_ai; this module only adds the chat layer: the AI

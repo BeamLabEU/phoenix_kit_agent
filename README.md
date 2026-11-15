@@ -273,7 +273,7 @@ a value from the client.
 The chat panel's file input is core's upload manager: files are sent in chunks
 that the server keeps (so a lost connection or a reload goes on from where the
 file stopped), with a pause, retry and cancel for each file. It needs core's
-`UploadManager` and `ResumableUpload`, which `phoenix_kit` carries from 3.4.0.
+`UploadManager` and `ResumableUpload`, which `phoenix_kit` carries (3.5.0 or later is required).
 
 PDF processing needs poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and pictures
 need ImageMagick (`convert`, `identify`) on the host; without them such a file
@@ -504,7 +504,7 @@ The module requires `phoenix_kit_ai` to be enabled (`required_modules/0` is
 `["ai"]`) and is switched on in Admin > Modules; it is off by default
 (setting `agent_enabled`).
 
-It needs `phoenix_kit` 3.4.0 or later (the chat panel's upload manager, the
+It needs `phoenix_kit` 3.5.0 or later (the chat panel's upload manager, the
 linked Telegram chat as an actor) with its migrations run up to
 V223 (`mix phoenix_kit.update`), which keeps the AI journal's cost in dollars (`cost`):
 before V223 every limit check fails on the missing column, and so does every
