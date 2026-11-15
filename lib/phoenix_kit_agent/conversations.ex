@@ -50,9 +50,9 @@ defmodule PhoenixKitAgent.Conversations do
   (`SessionRef.scope_for_user/2`, narrowed to the default role, with the same
   refusals) and holds `agent.telegram` besides `agent` (`{:error,
   :forbidden}`). `impersonated:` is required all the same; a bridge passes
-  `false`, a chat is never an impersonated session. A chat reads, and where the
-  core lets it (`PhoenixKitAgent.Config.writes?/0`) proposes a change that core
-  holds for the user's confirmation, which the buttons of the bot's card give
+  `false`, a chat is never an impersonated session. A chat reads, and proposes
+  a change that core holds for the user's confirmation, which the buttons of
+  the bot's card give
   (`PhoenixKitAgent.Telegram.Press`, `PhoenixKitAgent.Confirmations`); it does
   not attach (`PhoenixKitAgent.Attachments`).
 

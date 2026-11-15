@@ -7,10 +7,6 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
   `PhoenixKitAgent.Test.TelegramClient`: every call to Telegram comes to the
   test as `{:tg, call}`; the model is a `Req.Test` stub; the tools are
   `PhoenixKitAgent.Test.Tools`.
-
-  Where the core at hand does not let a chat hold a write (no
-  `Executor.link_writes?/0`), `PhoenixKitAgent.Test.FakeCore` plays that part
-  on top of the real calls; on a core that does, nothing is stood in for.
   """
 
   use PhoenixKitAgent.DataCase, async: false
@@ -18,7 +14,6 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
   import Ecto.Query, only: [from: 2]
 
   alias PhoenixKit.API.Confirm.Confirmation
-  alias PhoenixKit.API.Executor
   alias PhoenixKit.Integrations.Telegram.Linking
   alias PhoenixKit.ModuleRegistry
   alias PhoenixKit.Settings
@@ -27,7 +22,7 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
   alias PhoenixKitAgent.{Config, Confirmations, Conversations, Prompt, Turns}
   alias PhoenixKitAgent.Schemas.{Conversation, Message}
   alias PhoenixKitAgent.Telegram.{Bridge, Limiter, Texts}
-  alias PhoenixKitAgent.Test.{FakeCore, LogProbe, TelegramClient, Tools}
+  alias PhoenixKitAgent.Test.{LogProbe, TelegramClient, Tools}
   alias PhoenixKitAgent.Turns.Locks
 
   @stub __MODULE__
@@ -66,17 +61,12 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
     {site_ref, _token} = session_fixture(user)
 
     TelegramClient.set(:connection, connection)
-    core(fake?(), user, site_ref)
 
     on_exit(fn ->
       stop_all_turns()
       end_queues()
       TelegramClient.stop()
       ModuleRegistry.unregister(Tools)
-      Application.put_env(:phoenix_kit_agent, :telegram_link_writes, false)
-      Application.delete_env(:phoenix_kit_agent, :api_modules)
-      Application.delete_env(:phoenix_kit_agent, :fake_core_listener)
-      Application.delete_env(:phoenix_kit_agent, :fake_core_sessions)
       Application.delete_env(:phoenix_kit_agent, :test_tool_listener)
       Application.delete_env(:phoenix_kit_ai, :req_options)
       Req.Test.set_req_test_to_private()
@@ -92,21 +82,17 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
     }
   end
 
-  # A core that cannot hold a chat's write gets `FakeCore`; one that can is used as it is.
-  defp fake? do
-    Code.ensure_loaded?(Executor)
-    not function_exported?(Executor, :link_writes?, 0)
+  # The audit labels (`via`) of core's entries for the writes of a confirmation.
+  defp audit_vias(confirmation_uuid) do
+    Repo.all(
+      from(e in PhoenixKit.Activity.Entry,
+        where:
+          e.action == "api.request" and
+            fragment("?->>'confirmation_uuid' = ?", e.metadata, ^confirmation_uuid),
+        select: fragment("?->>'via'", e.metadata)
+      )
+    )
   end
-
-  defp core(true, user, site_ref) do
-    Application.put_env(:phoenix_kit_agent, :telegram_link_writes, true)
-    Application.put_env(:phoenix_kit_agent, :api_modules, executor: FakeCore, confirm: FakeCore)
-    Application.put_env(:phoenix_kit_agent, :fake_core_listener, self())
-    FakeCore.install(user.uuid, site_ref)
-  end
-
-  defp core(false, _user, _site_ref),
-    do: Application.delete_env(:phoenix_kit_agent, :telegram_link_writes)
 
   # ── the model ───────────────────────────────────────────────────────
 
@@ -150,7 +136,7 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
 
   # ── what the bot is asked ───────────────────────────────────────────
 
-  defp send_update(ctx, text, opts \\ []),
+  defp send_update(ctx, text, opts),
     do: Bridge.dispatch(ctx.connection, TelegramClient.update(@chat, text, opts))
 
   defp calls_until(done, timeout \\ 5_000) do
@@ -399,7 +385,8 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
       assert [%Message{tool_outcome: "confirmed"}] = notices(held.chat)
 
       # The audit label is the chat's: "telegram", not the site's "agent".
-      if fake?(), do: assert_received({:fake_core, :redeem, "telegram"})
+      assert "telegram" in audit_vias(held.uuid)
+      refute "agent" in audit_vias(held.uuid)
     end
 
     test "the model is not called after the press and spends nothing", ctx do
@@ -805,7 +792,7 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
       assert [{mid, "✅ Done" <> _, nil}] = edits(drain())
       assert mid == held.message_id
       assert written() == "new"
-      if fake?(), do: assert_received({:fake_core, :redeem, "agent"})
+      assert "agent" in audit_vias(held.uuid)
     end
 
     test "❌ on the site: cancelled", ctx do
@@ -1069,60 +1056,12 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
     end
   end
 
-  # ── a core that does not let a chat write ───────────────────────────
-
-  describe "without writes for a chat (Config.writes?/0 false)" do
-    setup do
-      Application.put_env(:phoenix_kit_agent, :telegram_link_writes, false)
-      :ok
-    end
-
-    test "the model is offered no write tool, and there is no card", ctx do
-      test = self()
-
-      Req.Test.expect(@stub, fn conn ->
-        {:ok, raw, conn} = Plug.Conn.read_body(conn)
-        send(test, {:model_request, Jason.decode!(raw)})
-
-        Req.Test.json(conn, %{
-          "model" => @model,
-          "choices" => [%{"message" => %{"role" => "assistant", "content" => "I can only read."}}],
-          "usage" => usage()
-        })
-      end)
-
-      send_update(ctx, "Rename the item")
-      calls_until(reaction?("👍"))
-
-      assert_received {:model_request, body}
-      names = Enum.map(body["tools"] || [], & &1["function"]["name"])
-      refute @write in names
-      assert "agenttest_list_items" in names
-      assert cards_sent(drain()) == []
-    end
-
-    test "a press is ignored, and the help does not promise buttons", ctx do
-      uuid = UUIDv7.generate()
-      update = TelegramClient.callback_update(@chat, "c:" <> uuid)
-
-      assert Bridge.handle_update(ctx.connection, update) == :ignore
-      assert Texts.static(:help) =~ "I cannot change anything here"
-    end
-
-    test "the system prompt tells the chat it only reads", ctx do
-      prompt = telegram_prompt(ctx)
-      assert prompt =~ "you can only read"
-      refute prompt =~ "[confirmation]"
-    end
-  end
-
   describe "with writes for a chat" do
     test "the system prompt: a change is proposed, the buttons confirm it", ctx do
       prompt = telegram_prompt(ctx)
 
       assert prompt =~ "Confirm and a Cancel button"
       assert prompt =~ "[confirmation] done"
-      refute prompt =~ "you can only read"
       assert Texts.static(:help) =~ "two buttons"
     end
 

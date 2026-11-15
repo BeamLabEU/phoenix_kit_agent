@@ -50,15 +50,9 @@ defmodule PhoenixKitAgent.Telegram.Texts do
     do: gettext("I could not show the buttons. Confirm the change on the site.")
 
   defp help_text do
-    if Config.writes?(),
-      do:
-        gettext(
-          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
-        ),
-      else:
-        gettext(
-          "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. I cannot change anything here: for a change I will point you to the site."
-        )
+    gettext(
+      "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
+    )
   end
 
   # What the bot reads besides text, as far as the core and the settings allow

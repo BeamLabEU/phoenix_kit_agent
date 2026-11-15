@@ -98,10 +98,12 @@ Core 3.5.0, the new floor, has all three, and `link_writes?/0` is `true`. So:
 `transcribe/3` first shipped in 0.28. AGENTS.md said `~> 0.26`; it now says `~> 0.27`, like
 `mix.exs`.
 
-**A follow-up for the owner:** on every supported core a Telegram chat proposes changes, so the
-read-only Telegram path (no `allow: :all`, the read-only help text and prompt rule) is reached only
-in tests. Removing it would shrink `Config.writes?/0`'s callers and the test matrix. It is a larger
-change and was not made here.
+**Follow-up (done, 2026-11-15):** on every supported core a Telegram chat proposes changes, so the
+read-only Telegram path (no `allow: :all`, the read-only help text, prompt rule and Settings text)
+was reached only in tests. At the owner's request it was removed in the next commit:
+`Config.writes?/0`, `Config.core/1` with `:api_modules`, the `:telegram_link_writes` stand-in and
+`test/support/fake_core.ex` are gone. The module calls core's `Executor` and `Confirm` directly,
+and every Telegram test now runs the way production does.
 
 ## What was verified and holds
 

@@ -71,7 +71,7 @@ defmodule PhoenixKitAgent.Telegram.Cards do
   # Called by `Conversations` once a notice is committed.
   @spec notice_added(Message.t()) :: :ok
   def notice_added(%Message{tool_outcome: outcome} = message) do
-    if outcome in Confirmations.outcomes() and Config.writes?() and Config.telegram_enabled?(),
+    if outcome in Confirmations.outcomes() and Config.telegram_enabled?(),
       do: start(message)
 
     :ok

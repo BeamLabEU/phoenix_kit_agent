@@ -154,7 +154,7 @@ defmodule PhoenixKitAgent.Config do
   @doc """
   Whether voice input is on: the AI module can write speech down
   (`PhoenixKitAI.transcribe/3`, which the first releases of `phoenix_kit_ai`
-  lack, so it is feature-detected like `writes?/0`) and a speech model is
+  lack, so it is feature-detected) and a speech model is
   chosen. `config :phoenix_kit_agent, :speech_ai` names another module with
   `transcribe/3` in tests.
   """
@@ -247,46 +247,6 @@ defmodule PhoenixKitAgent.Config do
   """
   @spec telegram_enabled?() :: boolean()
   def telegram_enabled?, do: string_setting("agent_telegram_enabled") == "true"
-
-  @doc """
-  Whether the core this module runs on lets a linked Telegram chat hold a
-  write for the user's confirmation (`PhoenixKit.API.Executor.link_writes?/0`,
-  which the cores that do carry). The one place that asks: `Turns.Runner`
-  (the tools offered to a chat), `Prompt`, the help text, the bridge's button
-  presses, the reader's `allowed_updates`, `Confirmations` and the edits of a
-  card after its outcome all follow it, so on a core without it the module
-  works as before: a chat reads only.
-
-  The check can go when the core requirement of this module is raised to the
-  first release with it. `config :phoenix_kit_agent, :telegram_link_writes`
-  (`true` / `false`) stands in for the core's answer in tests.
-  """
-  @spec writes?() :: boolean()
-  def writes? do
-    case Application.get_env(:phoenix_kit_agent, :telegram_link_writes) do
-      nil ->
-        executor = core(:executor)
-
-        Code.ensure_loaded?(executor) and function_exported?(executor, :link_writes?, 0) and
-          executor.link_writes?() == true
-
-      forced ->
-        forced == true
-    end
-  end
-
-  @doc false
-  # The core module that answers for `:executor` or `:confirm`: core's own,
-  # unless `config :phoenix_kit_agent, :api_modules` names another (a test
-  # stands in for a core that lets a chat hold writes while the core at hand
-  # does not).
-  @spec core(:executor | :confirm) :: module()
-  def core(:executor), do: api_module(:executor, PhoenixKit.API.Executor)
-  def core(:confirm), do: api_module(:confirm, PhoenixKit.API.Confirm)
-
-  defp api_module(key, default) do
-    :phoenix_kit_agent |> Application.get_env(:api_modules, []) |> Keyword.get(key, default)
-  end
 
   @doc """
   The last update id the Telegram reader took from the bot `connection_uuid`,

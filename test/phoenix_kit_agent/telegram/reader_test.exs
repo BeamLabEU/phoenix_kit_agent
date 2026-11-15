@@ -87,19 +87,9 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
       assert [%{timeout: 25, limit: 100}] = polls()
     end
 
-    test "the bot is told to send button presses too, where the core lets a chat write", ctx do
-      Application.put_env(:phoenix_kit_agent, :telegram_link_writes, true)
-      on_exit(fn -> Application.put_env(:phoenix_kit_agent, :telegram_link_writes, false) end)
-
+    test "the bot is told to send the presses of the cards' buttons too", _ctx do
       assert {:reading, 0} = cycle()
       assert [%{allowed_updates: ["message", "callback_query"]}] = polls()
-      assert ctx.connection
-    end
-
-    test "and is not asked for them where it does not", _ctx do
-      assert {:reading, 0} = cycle()
-      assert [poll] = polls()
-      refute Map.has_key?(poll, :allowed_updates)
     end
 
     test "holds? answers for anything that is not a bot, and never calls the process", ctx do
@@ -226,7 +216,7 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
       assert Config.telegram_offset(ctx.connection) == 40
     end
 
-    test "a restarted reader goes on after it: nothing read is answered twice", ctx do
+    test "a restarted reader goes on after it: nothing read is answered twice", _ctx do
       TelegramClient.set(:updates, [{:ok, [stranger_update(10)]}])
       cycle()
       assert_receive {:tg, {:send_message, _, 777, _}}, 5_000
@@ -434,7 +424,7 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
       refute_received {:tg, {:send_message, _, _, _}}
     end
 
-    test "a conflict message about another name changes nothing", ctx do
+    test "a conflict message about another name changes nothing", _ctx do
       assert {:reading, 0} = cycle()
       send(Process.whereis(@reader), {:global_name_conflict, {Reader, "another-bot"}})
 

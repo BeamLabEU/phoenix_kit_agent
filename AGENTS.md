@@ -438,19 +438,13 @@ and `Web.Markdown`) and the optional chat retention
   link now (`Linking.linked_user/2`; gone is `:session_gone`), the session's
   account gate (`SessionRef.scope_for_user/2`, the default role) and the
   sub-permission `agent.telegram` (declared `opt_in: true`; `:forbidden`
-  without it). What a chat may do depends on the core: where it has
-  `PhoenixKit.API.Executor.link_writes?/0` — asked in **one place only**,
-  `Config.writes?/0` (it feature-detects; every core of the 3.5 floor answers
-  yes, so the read-only path below is for the tests and a stand-in core;
-  `config :phoenix_kit_agent,
-  :telegram_link_writes` stands in for it in tests, and `:api_modules`
-  (`executor:`, `confirm:`) for the core's modules, see
-  `test/support/fake_core.ex`) — a chat proposes changes as the site does
-  (below) and everything that follows (`Turns.Runner`'s `allow: :all, via:
-  "telegram"`, the prompt rule, the help text, the button presses of the
-  bridge, `allowed_updates` of the reader, `settle_lapsed_in_turn`, the edits of
-  the cards) follows that one answer; without it a chat reads only (no `allow:
-  :all`, no `via:`, core's own "telegram"). `Prompt` gets `channel: :telegram`
+  without it). A chat reads and proposes changes as the site does (below):
+  `Turns.Runner` calls core with `allow: :all, via: "telegram"`, the reader
+  asks the bot for `callback_query` too, and the bridge takes the presses of
+  the cards' buttons. Every core of the 3.5 floor lets a chat hold a write
+  (`Executor.link_writes?/0` is `true`), so there is no read-only mode, and
+  the module calls core's `Executor` and `Confirm` directly (no stand-in core
+  in the tests either). `Prompt` gets `channel: :telegram`
   (plain text, absolute links, and the chat's rule on changes instead of the
   site's write rule). `Attachments` refuses a chat with `:not_in_telegram` (but for the
   bridge's pictures, below), and so does `Confirmations` for everything but the presses below.
@@ -523,8 +517,7 @@ and `Web.Markdown`) and the optional chat retention
   class and the `update_id`. In the test env the reader does not poll by itself
   (`telegram_reader_autostart: false`); `Reader.cycle/2` is one look and one
   poll, and `PhoenixKitAgent.Test.TelegramClient` plays the bot.
-- **Changes from Telegram** (`Telegram.Card`, `Cards`, `Press`; only where
-  `Config.writes?/0`). The turn ends at the hold as on the site (one waiting
+- **Changes from Telegram** (`Telegram.Card`, `Cards`, `Press`). The turn ends at the hold as on the site (one waiting
   write, no model call after it), and `Telegram.Turn` sends what the assistant
   said, then **the card**: plain text of core's preview
   (`Approvals.View.preview/1`; a `technical` remainder is cut at 1500

@@ -31,7 +31,7 @@ defmodule PhoenixKitAgent.Telegram.Card do
   use Gettext, backend: PhoenixKitAgent.Gettext
 
   alias PhoenixKit.API.Approvals.View
-  alias PhoenixKitAgent.Config
+  alias PhoenixKit.API.Confirm
   alias PhoenixKitAgent.Telegram.Format
 
   # Telegram's limit is 4096 UTF-16 units; a little room is left.
@@ -55,7 +55,7 @@ defmodule PhoenixKitAgent.Telegram.Card do
     do: render(nil, confirmation_uuid, mode)
 
   def build(ref, confirmation_uuid, mode) do
-    read = Config.core(:confirm).get_for_user(confirmation_uuid, ref)
+    read = Confirm.get_for_user(confirmation_uuid, ref)
     render(read, confirmation_uuid, mode)
   end
 

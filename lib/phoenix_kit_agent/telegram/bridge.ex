@@ -5,9 +5,8 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   (`dispatch/3`).
 
   An update is acted on only when it is a `message` in the **private chat of
-  the person who wrote it** (`Linking.chat_for_update/1`) or, where the core
-  lets a chat hold a change (`PhoenixKitAgent.Config.writes?/0`), the press of
-  a button under a card of the bot there; a group, a channel, an edit or a
+  the person who wrote it** (`Linking.chat_for_update/1`) or the press of a
+  button under a card of the bot there; a group, a channel, an edit or a
   service update is `:ignore` (a press from a group is answered empty), as is a message
   older than ten minutes (a backlog after the bot stood idle) and a `/start`
   with a link token, which `Linking.handle_updates/3` has answered already.
@@ -48,7 +47,6 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   alias PhoenixKit.Integrations.Telegram.Linking
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Utils.RecipientLocale
-  alias PhoenixKitAgent.Config
   alias PhoenixKitAgent.Telegram.{ChatQueue, Client, Format, Limiter, Press, Texts}
 
   @max_age_s 600
@@ -101,9 +99,8 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   def handle_update(connection_uuid, update, opts \\ [])
 
   def handle_update(connection_uuid, %{"callback_query" => query} = update, _opts)
-      when is_binary(connection_uuid) do
-    if Config.writes?(), do: press(connection_uuid, update, query), else: :ignore
-  end
+      when is_binary(connection_uuid),
+      do: press(connection_uuid, update, query)
 
   def handle_update(connection_uuid, update, opts) when is_binary(connection_uuid) do
     now = Keyword.get(opts, :now, System.system_time(:second))

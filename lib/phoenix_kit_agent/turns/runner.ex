@@ -13,10 +13,8 @@ defmodule PhoenixKitAgent.Turns.Runner do
     b. lists the session's tools (`Executor.visible_for/3`, `allow: :all`: the
        read tools, and the write tools of the modules that let a session
        write, `api_session_write_modules` in core) and shows them to the model
-       (`PhoenixKitAgent.Turns.Tools`). For a linked Telegram chat the call has
-       `allow: :all` and `via: "telegram"` only when the core lets a chat hold
-       writes (`Config.writes?/0`); else no options, and core lists it the
-       read tools only;
+       (`PhoenixKitAgent.Turns.Tools`). A linked Telegram chat gets the same,
+       with `via: "telegram"`;
     c. sends the system prompt, the history and this turn's messages — of the
        results of earlier rounds of this turn only as many as fit, together
        with the newest round's, in `10 × agent_tool_result_chars` characters
@@ -121,6 +119,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   require Logger
 
   alias PhoenixKit.API.ControlFields
+  alias PhoenixKit.API.Executor
   alias PhoenixKit.API.MCP.Names
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.{Attachments, Config, Confirmations, Conversations}
@@ -384,22 +383,20 @@ defmodule PhoenixKitAgent.Turns.Runner do
   end
 
   defp visible_tools(turn) do
-    case Config.core(:executor).visible_for(turn.session_ref, :admin, tool_access(turn)) do
+    case Executor.visible_for(turn.session_ref, :admin, tool_access(turn)) do
       {:ok, tools, _headers} -> {:ok, tools}
       {:error, :unauthorized, _detail, %{reason: reason}, _headers} -> {:error, reason}
       {:error, code, _detail, _context, _headers} -> {:error, code}
     end
   end
 
-  # A session may be offered the writes too (core holds each for the user's
-  # confirmation). A linked Telegram chat may as well when the core lets it
-  # (`Config.writes?/0`), with the `via` core gives the chat, "telegram"; else
-  # it reads only, which is core's default for it, and `allow: :all` would
-  # raise for it. `via: "agent"` of a site session is the audit label of
-  # `execute_as/5`; `visible_for/3` takes the same options and ignores it.
+  # A session, and a linked Telegram chat, are offered the writes too (core
+  # holds each for the user's confirmation), each with its `via`: "agent" for
+  # a site session (the audit label of `execute_as/5`; `visible_for/3` takes
+  # the same options and ignores it), "telegram", the one core gives a chat.
   defp tool_access(%{session_ref: session_ref}) do
     case Conversations.channel(session_ref) do
-      :telegram -> if Config.writes?(), do: [allow: :all, via: "telegram"], else: []
+      :telegram -> [allow: :all, via: "telegram"]
       :site -> [allow: :all, via: "agent"]
     end
   end
@@ -686,7 +683,7 @@ defmodule PhoenixKitAgent.Turns.Runner do
   defp execute(turn, tool, arguments) do
     case Tools.arguments(arguments) do
       {:ok, input} ->
-        case Config.core(:executor).execute_as(
+        case Executor.execute_as(
                turn.session_ref,
                :admin,
                tool.name,

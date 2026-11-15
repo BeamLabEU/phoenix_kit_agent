@@ -21,8 +21,7 @@ defmodule PhoenixKitAgent.Confirmations do
 
   A linked Telegram chat (the `{:telegram_link, …}` reference) answers cards
   through the buttons of the bot (`confirm_press/3`, `reject_press/3`, with
-  `precheck/2` before them; `PhoenixKitAgent.Telegram.Press`) where the core
-  lets a chat hold a change (`PhoenixKitAgent.Config.writes?/0`). The card is
+  `precheck/2` before them; `PhoenixKitAgent.Telegram.Press`). The card is
   found by its confirmation, and must be the card of a conversation of the
   reference's user that came from the reference's own chat; the click is then
   as a site's, and says `via: "telegram"` to core. A row held by the site is not
@@ -30,8 +29,7 @@ defmodule PhoenixKitAgent.Confirmations do
   written), and `waiting_same?/3` and `settle_lapsed_in_turn/2` treat it
   accordingly (it counts as waiting while unused and not run out, and the chat
   never settles it). Every other function here is `{:error, :not_in_telegram}`
-  for a chat reference (`settle_lapsed_in_turn/2` does nothing without
-  `writes?/0`).
+  for a chat reference: the site's cards are answered on the site.
 
   ## A click
 
@@ -111,8 +109,9 @@ defmodule PhoenixKitAgent.Confirmations do
 
   require Logger
 
+  alias PhoenixKit.API.{Confirm, Executor}
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAgent.{Config, Conversations, Turns}
+  alias PhoenixKitAgent.{Conversations, Turns}
   alias PhoenixKitAgent.Schemas.{Conversation, Message}
   alias PhoenixKitAgent.Turns.{Locks, Tools}
 
@@ -233,8 +232,7 @@ defmodule PhoenixKitAgent.Confirmations do
     do: press(ref, confirmation_uuid, opts, &do_reject/1)
 
   defp press({:telegram_link, _user, _connection, _chat} = ref, confirmation_uuid, opts, action) do
-    with true <- Config.writes?() or {:error, :not_in_telegram},
-         {:ok, %{conversation: conversation, card: card}} <- press_card(ref, confirmation_uuid) do
+    with {:ok, %{conversation: conversation, card: card}} <- press_card(ref, confirmation_uuid) do
       click(ref, false, conversation.uuid, card.uuid, opts, action)
     end
   end
@@ -459,17 +457,7 @@ defmodule PhoenixKitAgent.Confirmations do
   # (`PhoenixKitAgent.Turns`, before it reads the history), with the chat it
   # owns. A notice the chat refuses is logged by its codes, as a click's.
   @spec settle_lapsed_in_turn(Conversations.session_ref(), Conversation.t()) :: :ok
-  def settle_lapsed_in_turn(
-        {:telegram_link, _user, _connection, _chat} = ref,
-        %Conversation{} = conversation
-      ) do
-    if Config.writes?(), do: settle_lapsed_cards(ref, conversation), else: :ok
-  end
-
-  def settle_lapsed_in_turn(session_ref, %Conversation{} = conversation),
-    do: settle_lapsed_cards(session_ref, conversation)
-
-  defp settle_lapsed_cards(session_ref, conversation) do
+  def settle_lapsed_in_turn(session_ref, %Conversation{} = conversation) do
     for {card, outcome} <- lapsed(session_ref, conversation),
         do: settle(%{conversation: conversation, card: card}, outcome)
 
@@ -515,15 +503,13 @@ defmodule PhoenixKitAgent.Confirmations do
     end
   end
 
-  # A linked Telegram chat reads only: it neither sees a card nor answers one
-  # (the card of a conversation it shares with the site is the site's to close).
+  # A linked Telegram chat answers its cards by the bot's buttons only (the
+  # press functions above), never through these (a card of a conversation it
+  # shares with the site is the site's to close).
   defp on_the_site({:telegram_link, _user, _connection, _chat}, _fun),
     do: {:error, :not_in_telegram}
 
   defp on_the_site(_session_ref, fun), do: fun.()
-
-  defp confirm, do: Config.core(:confirm)
-  defp executor, do: Config.core(:executor)
 
   # What the audit log says the change was made through.
   defp via({:telegram_link, _user, _connection, _chat}), do: "telegram"
@@ -639,7 +625,7 @@ defmodule PhoenixKitAgent.Confirmations do
   defp do_confirm(%{outcome: nil} = click) do
     with {:ok, input} <- call_input(click.conversation, click.card) do
       click.session_ref
-      |> executor().redeem_as(
+      |> Executor.redeem_as(
         :admin,
         click.card.confirmation_uuid,
         click.card.tool_name,
@@ -710,7 +696,7 @@ defmodule PhoenixKitAgent.Confirmations do
   end
 
   defp do_reject(%{outcome: nil} = click) do
-    case confirm().reject_for_user(click.card.confirmation_uuid, click.session_ref) do
+    case Confirm.reject_for_user(click.card.confirmation_uuid, click.session_ref) do
       result when result in [:ok, {:error, :rejected}] -> settled(click, "rejected")
       {:error, reason} when reason in [:expired, :unknown] -> settled(click, "expired")
       {:error, :used} -> spent(click)
@@ -744,7 +730,7 @@ defmodule PhoenixKitAgent.Confirmations do
          {:ok, input} <- call_input(click.conversation, click.card),
          :ok <- no_waiting_duplicate(click, input) do
       click.session_ref
-      |> executor().execute_as(:admin, click.card.tool_name, input,
+      |> Executor.execute_as(:admin, click.card.tool_name, input,
         allow: :all,
         via: "agent",
         request_context: click.request_context
@@ -774,7 +760,7 @@ defmodule PhoenixKitAgent.Confirmations do
   defp repeatable(%{outcome: "expired"} = click), do: not_superseded(click)
 
   defp repeatable(%{outcome: nil} = click) do
-    case confirm().get_for_user(click.card.confirmation_uuid, click.session_ref) do
+    case Confirm.get_for_user(click.card.confirmation_uuid, click.session_ref) do
       {:ok, %{status: "expired"}} -> not_superseded(click)
       {:error, :unknown} -> not_superseded(click)
       {:error, :forbidden} -> {:error, {:refused, :forbidden}}
@@ -858,7 +844,7 @@ defmodule PhoenixKitAgent.Confirmations do
 
   # The convention any tool may follow: a top-level `summary` map with the
   # integers `ok` and `failed`. Only those two numbers are kept, never text
-  # of the result.
+  # of the result (always a map: core takes no other from a handler).
   defp counts(result) when is_map(result) do
     with summary when is_map(summary) <- field(result, "summary"),
          ok when is_integer(ok) and ok >= 0 <- field(summary, "ok"),
@@ -868,8 +854,6 @@ defmodule PhoenixKitAgent.Confirmations do
       _no_counts -> nil
     end
   end
-
-  defp counts(_result), do: nil
 
   # The atom keys are literals: `String.to_existing_atom/1` raises when the atom
   # does not exist yet, and a `Map.get/3` default is evaluated even when the
@@ -941,7 +925,7 @@ defmodule PhoenixKitAgent.Confirmations do
       rejectable?: false
     }
 
-    case confirm().get_for_user(row.confirmation_uuid, session_ref) do
+    case Confirm.get_for_user(row.confirmation_uuid, session_ref) do
       {:ok, %{status: "unused"} = held} ->
         %{
           base
@@ -1057,7 +1041,7 @@ defmodule PhoenixKitAgent.Confirmations do
   # (`:forbidden`); the user's own row (`lookup_for_user/2`) still says
   # whether it was spent, turned down or ran out.
   defp row_status(card, session_ref, conversation) do
-    case confirm().get_for_user(card.confirmation_uuid, session_ref) do
+    case Confirm.get_for_user(card.confirmation_uuid, session_ref) do
       {:ok, %{status: status}} -> {:ok, status}
       {:error, :forbidden} -> own_row_status(card, conversation)
       {:error, _unauthorized_or_unknown} = error -> error
@@ -1065,7 +1049,7 @@ defmodule PhoenixKitAgent.Confirmations do
   end
 
   defp own_row_status(card, conversation) do
-    case confirm().lookup_for_user(card.confirmation_uuid, conversation.user_uuid) do
+    case Confirm.lookup_for_user(card.confirmation_uuid, conversation.user_uuid) do
       {:ok, %{status: "unused", expires_at: expires_at}} ->
         if DateTime.compare(expires_at, DateTime.utc_now()) == :gt,
           do: {:error, :forbidden},

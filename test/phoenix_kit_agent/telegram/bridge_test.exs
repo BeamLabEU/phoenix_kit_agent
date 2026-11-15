@@ -210,15 +210,12 @@ defmodule PhoenixKitAgent.Telegram.BridgeTest do
   end
 
   describe "updates that are not for the agent" do
-    test "an edited message, a button, a service update", ctx do
+    # A button's press is a decision of its own (`Telegram.ConfirmTest`).
+    test "an edited message, a service update", ctx do
       message = TelegramClient.update(@chat, "Hi")["message"]
 
       for update <- [
             %{"update_id" => 1, "edited_message" => message},
-            %{
-              "update_id" => 2,
-              "callback_query" => %{"id" => "x", "from" => %{"id" => @chat}, "message" => message}
-            },
             %{"update_id" => 3, "my_chat_member" => %{}},
             %{"update_id" => 4},
             "garbage",

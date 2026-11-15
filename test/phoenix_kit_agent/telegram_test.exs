@@ -662,19 +662,19 @@ defmodule PhoenixKitAgent.TelegramTest do
       )
     end
 
-    test "plain text, short, absolute links, changes only on the site", ctx do
+    test "plain text, short, absolute links; a change is confirmed by the buttons", ctx do
       prompt = build(ctx, %{channel: :telegram})
 
       assert prompt =~ "Telegram"
       assert prompt =~ "plain text"
       assert prompt =~ Routes.url("/admin")
-      assert prompt =~ "on the site"
+      assert prompt =~ "Confirm and a Cancel button"
+      assert prompt =~ "[confirmation] done"
     end
 
-    test "replaces the write rule: no promise of a confirmation in the chat", ctx do
+    test "replaces the site's write rule", ctx do
       prompt = build(ctx, %{channel: :telegram})
 
-      refute prompt =~ "[confirmation]"
       refute prompt =~ "waits for the user to confirm it in the chat"
     end
 
@@ -716,10 +716,11 @@ defmodule PhoenixKitAgent.TelegramTest do
       assert {:error, :not_in_telegram} = Confirmations.settle_lapsed(ctx.ref, false, chat.uuid)
     end
 
-    test "a turn's settling of lapsed cards touches nothing for a chat", ctx do
+    test "a turn of a chat settles its card that core no longer holds", ctx do
       chat = trusted_chat!(ctx)
+      gone = UUIDv7.generate()
 
-      {:ok, card} =
+      {:ok, _card} =
         Conversations.add_turn_message(
           ctx.user.uuid,
           chat.uuid,
@@ -729,13 +730,16 @@ defmodule PhoenixKitAgent.TelegramTest do
             tool_name: "agenttest.write_item",
             tool_outcome: "needs_confirmation"
           },
-          confirmation_uuid: UUIDv7.generate()
+          confirmation_uuid: gone
         )
 
-      before = length(messages(chat))
       assert :ok = Confirmations.settle_lapsed_in_turn(ctx.ref, chat)
-      assert length(messages(chat)) == before
-      assert card.uuid
+
+      assert [%{role: "notice", tool_outcome: "expired"}] =
+               Enum.filter(
+                 messages(chat),
+                 &(&1.confirmation_uuid == gone and &1.role == "notice")
+               )
     end
 
     test "every attachment function is :not_in_telegram", ctx do

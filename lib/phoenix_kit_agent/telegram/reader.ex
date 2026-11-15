@@ -274,11 +274,9 @@ defmodule PhoenixKitAgent.Telegram.Reader do
     end
   end
 
-  # With buttons in play the bot must be sent the presses: a bot set up
+  # The bot must be sent the presses of the cards' buttons: a bot set up
   # earlier may have been told to send messages only.
-  defp allowed_updates do
-    if Config.writes?(), do: [allowed_updates: ["message", "callback_query"]], else: []
-  end
+  defp allowed_updates, do: [allowed_updates: ["message", "callback_query"]]
 
   defp ok(state) do
     put_status(:reading)
