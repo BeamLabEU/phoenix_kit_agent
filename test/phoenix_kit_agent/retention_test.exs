@@ -14,7 +14,7 @@ defmodule PhoenixKitAgent.RetentionTest do
   alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Settings
   alias PhoenixKitAgent.{Config, Library, Retention, RetentionWorker}
-  alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
+  alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message, UserSettings}
   alias PhoenixKitAgent.Test.Files
 
   @key "agent_retention_days"
@@ -257,6 +257,50 @@ defmodule PhoenixKitAgent.RetentionTest do
       assert {:ok, %{conversations: 2}} = Retention.run()
     end
 
+    test "a user whose own lock is held (a click confirming a write) keeps every chat this run",
+         %{user: user} do
+      old = chat!(user, last_message_at: ago(90))
+
+      Repo.insert!(%UserSettings{
+        user_uuid: user.uuid,
+        busy_since: DateTime.utc_now(),
+        busy_turn_ref: "click-1"
+      })
+
+      assert Retention.due_count(30) == 0
+      assert {:ok, %{conversations: 0}} = Retention.run()
+      assert chat?(old)
+
+      stale_since = DateTime.add(DateTime.utc_now(), -PhoenixKitAgent.Turns.lock_ttl_s() - 60)
+
+      Repo.update_all(from(s in UserSettings, where: s.user_uuid == ^user.uuid),
+        set: [busy_since: stale_since]
+      )
+
+      assert {:ok, %{conversations: 1}} = Retention.run()
+    end
+
+    test "a lock is judged by the database's clock, not the node's", %{user: user} do
+      busy = chat!(user, last_message_at: ago(90), busy_since: DateTime.utc_now())
+
+      # A node whose clock runs a day ahead still sees the turn's lock as held.
+      tomorrow = DateTime.add(DateTime.utc_now(), 86_400, :second)
+      assert {:ok, %{conversations: 0}} = Retention.run(now: tomorrow)
+      assert chat?(busy)
+    end
+
+    test "a run that fails after deleting chats still records them, marked interrupted",
+         %{user: user} do
+      old = chat!(user, last_message_at: ago(90))
+
+      # The sweep after the chats fails (here: a grace that is no number).
+      assert_raise ArithmeticError, fn -> Retention.run(grace_s: :not_a_number) end
+      refute chat?(old)
+
+      assert [entry] = Repo.all(from(e in Entry, where: e.action == "agent.retention_purged"))
+      assert %{"conversations" => 1, "interrupted" => true} = entry.metadata
+    end
+
     test "the day count follows the period and `now`", %{user: user} do
       chat = chat!(user, last_message_at: DateTime.add(DateTime.utc_now(), -10 * 86_400))
 
@@ -335,7 +379,8 @@ defmodule PhoenixKitAgent.RetentionTest do
                "messages" => 1,
                "attachments" => 0,
                "files" => 0,
-               "orphan_files" => 0
+               "orphan_files" => 0,
+               "interrupted" => false
              }
 
       refute inspect(entry) =~ "SECRET"

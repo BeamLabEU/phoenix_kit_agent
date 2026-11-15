@@ -122,7 +122,7 @@ defmodule PhoenixKitAgent do
           label: gettext_noop("Agent in Telegram"),
           description:
             gettext_noop(
-              "Use the AI assistant from the Telegram chat linked to the site bot, to read data with the user's own rights"
+              "Use the AI assistant from the Telegram chat linked to the site bot, with the user's own rights: it reads data and proposes changes the user confirms"
             ),
           opt_in: true
         }

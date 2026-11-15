@@ -25,7 +25,9 @@ defmodule PhoenixKitAgent.Telegram.Reader do
   ## The offset
 
   The offset is kept in the setting `agent_telegram_offset` (the last update
-  id taken, with the bot it belongs to), written **before** the batch is
+  id taken, with the bot it belongs to and the time it was written; one
+  older than six days is let go, see `Config.telegram_offset/1`), written
+  **before** the batch is
   handed on, so an update is answered at most once: a crash in between loses
   a message, never answers it twice. A batch goes to `Linking.handle_updates/3`
   first (links by `/start <token>`); `:busy` leaves the offset alone and the
@@ -114,7 +116,8 @@ defmodule PhoenixKitAgent.Telegram.Reader do
        webhook_checked_at: nil,
        backoff_s: @min_backoff_s,
        warned_at: %{},
-       taken: nil
+       taken: nil,
+       taken_at: nil
      }}
   end
 
@@ -258,7 +261,7 @@ defmodule PhoenixKitAgent.Telegram.Reader do
   # read of the setting that failed looks like none, and a poll without the
   # offset would get the last batch again.
   defp poll(state) do
-    offset = later(Config.telegram_offset(state.connection), state.taken)
+    offset = later(Config.telegram_offset(state.connection), taken(state))
 
     options =
       [timeout: @poll_timeout_s, limit: 100] ++
@@ -284,11 +287,15 @@ defmodule PhoenixKitAgent.Telegram.Reader do
 
   # The name may have gone to another reader while this one was in its long
   # poll: the batch is then left to the one that holds it (the offset is not
-  # moved, and no link is made).
+  # moved, and no link is made). So is a batch that came after the switch went
+  # off in the poll: nothing of it is answered (a press would still confirm a
+  # change), and core's own reader takes it with the name released.
   defp handle_batch(state, updates) do
-    if :global.whereis_name(name_of(state.connection)) == self(),
-      do: process_batch(state, updates),
-      else: lost_the_name(state)
+    cond do
+      :global.whereis_name(name_of(state.connection)) != self() -> lost_the_name(state)
+      not Config.telegram_enabled?() -> idle(state, :off)
+      true -> process_batch(state, updates)
+    end
   end
 
   defp lost_the_name(state) do
@@ -299,7 +306,7 @@ defmodule PhoenixKitAgent.Telegram.Reader do
   # An update this process took already (a poll that went without the offset)
   # is not answered again.
   defp process_batch(state, updates) do
-    case Enum.filter(updates, &new_update?(&1, state.taken)) do
+    case Enum.filter(updates, &new_update?(&1, taken(state))) do
       [] -> ok(state)
       fresh -> link_and_take(state, fresh)
     end
@@ -309,6 +316,16 @@ defmodule PhoenixKitAgent.Telegram.Reader do
     do: id > taken
 
   defp new_update?(_update, _taken), do: true
+
+  # The last id this process took, while it is younger than an offset may be
+  # (`Config.telegram_offset_max_age_s/0`): after a quiet week Telegram may
+  # number the next update below it.
+  defp taken(%{taken: nil}), do: nil
+
+  defp taken(%{taken: taken, taken_at: at}) do
+    age_ms = System.monotonic_time(:millisecond) - at
+    if age_ms <= Config.telegram_offset_max_age_s() * 1000, do: taken
+  end
 
   defp later(nil, taken), do: taken
   defp later(stored, nil), do: stored
@@ -332,7 +349,12 @@ defmodule PhoenixKitAgent.Telegram.Reader do
   # The offset first, then the updates: at most once.
   defp take(state, updates) do
     if store_offset(state.connection, updates) == :ok do
-      state = %{state | taken: later(last_id(updates), state.taken)}
+      state = %{
+        state
+        | taken: later(last_id(updates), taken(state)),
+          taken_at: System.monotonic_time(:millisecond)
+      }
+
       Enum.each(updates, &dispatch(state.connection, &1))
       ok(state)
     else

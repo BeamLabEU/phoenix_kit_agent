@@ -55,6 +55,7 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   # The largest size of a photo that is taken (the smallest is, when none is under it).
   @max_picture_bytes 10 * 1_048_576
   @picture_types ~w(image/jpeg image/png image/webp)
+  @picture_ext %{"image/jpeg" => "jpg", "image/png" => "png", "image/webp" => "webp"}
 
   @forwarded ~w(forward_origin forward_date forward_from forward_from_chat forward_sender_name)
 
@@ -312,13 +313,14 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   defp picture(%{"photo" => [_ | _] = sizes} = message) do
     case for(%{"file_id" => id} = size when is_binary(id) <- sizes, do: size) do
       [] -> nil
-      sizes -> sizes |> pick_size() |> picture_of(message)
+      # A photo is always a JPEG.
+      sizes -> sizes |> pick_size() |> picture_of(message, "jpg")
     end
   end
 
   defp picture(%{"document" => %{"file_id" => id, "mime_type" => type} = doc} = message)
        when is_binary(id) and type in @picture_types do
-    picture_of(doc, message)
+    picture_of(doc, message, Map.fetch!(@picture_ext, type))
   end
 
   defp picture(_message), do: nil
@@ -341,10 +343,14 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   defp fits?(%{"file_size" => size}) when is_integer(size), do: size <= @max_picture_bytes
   defp fits?(_size), do: true
 
-  defp picture_of(%{"file_id" => file_id} = file, message) do
+  # `type`: the kind the picture says it is (`Attachments.Detect`'s name), so
+  # one the site does not take is refused before the download; the bytes
+  # decide again when it is added.
+  defp picture_of(%{"file_id" => file_id} = file, message, type) do
     picture = %{
       file_id: file_id,
-      size: integer_or_nil(file["file_size"])
+      size: integer_or_nil(file["file_size"]),
+      type: type
     }
 
     %{
@@ -487,10 +493,16 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
     end
   end
 
+  # A wait longer than the bound is not waited out partly: Telegram would
+  # refuse the early retry too.
   defp retry_after_ms(description) do
     case Regex.run(~r/\Atoo many requests.*retry after (\d+)/i, description) do
-      [_, seconds] -> min(String.to_integer(seconds) * 1_000, max_retry_ms())
-      _other -> nil
+      [_, seconds] ->
+        ms = String.to_integer(seconds) * 1_000
+        if ms <= max_retry_ms(), do: ms
+
+      _other ->
+        nil
     end
   end
 

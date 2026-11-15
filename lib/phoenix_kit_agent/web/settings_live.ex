@@ -268,11 +268,16 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
     uuids = Enum.map(endpoints, & &1.uuid)
 
+    shown = Map.new(current, fn {field, uuid} -> {field, uuid || ""} end)
+
     socket =
       assign(socket,
         models: %{
           endpoints: endpoints,
-          params: Map.new(current, fn {field, uuid} -> {field, uuid || ""} end),
+          params: shown,
+          # What the form opened with: a save writes only what the person
+          # changed from it, and is refused when that changed meanwhile.
+          opened: shown,
           errors: %{},
           tools: %{},
           images: %{},
@@ -328,14 +333,29 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
     shown = Map.merge(models.params, Map.new(params, fn {k, v} -> {k, text_or_blank(v)} end))
 
-    if errors == %{} do
-      chosen
-      |> Enum.reject(fn {field, uuid} -> Map.fetch!(current, field) == uuid end)
-      |> write_models(socket)
-    else
-      socket
-      |> update(:models, &%{&1 | params: Map.take(shown, @model_fields), errors: errors})
-      |> put_flash(:error, gettext("Nothing was saved: check the highlighted fields."))
+    # The fields the person changed (the form sends all of them).
+    changed = Enum.reject(chosen, fn {field, uuid} -> (uuid || "") == models.opened[field] end)
+
+    cond do
+      errors != %{} ->
+        socket
+        |> update(:models, &%{&1 | params: Map.take(shown, @model_fields), errors: errors})
+        |> put_flash(:error, gettext("Nothing was saved: check the highlighted fields."))
+
+      Enum.any?(changed, fn {field, _uuid} -> (current[field] || "") != models.opened[field] end) ->
+        socket
+        |> assign_models()
+        |> put_flash(
+          :error,
+          gettext(
+            "Someone else changed these settings after the form was opened. Nothing was saved: open the form again."
+          )
+        )
+
+      true ->
+        changed
+        |> Enum.reject(fn {field, uuid} -> Map.fetch!(current, field) == uuid end)
+        |> write_models(socket)
     end
   end
 

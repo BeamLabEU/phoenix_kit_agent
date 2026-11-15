@@ -98,6 +98,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         phx-hook=".Turn"
         data-running={to_string(!!@turn_ref)}
         data-turn={@turn_ref}
+        data-restored={@restored}
         hidden
       >
       </span>
@@ -138,7 +139,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       >
         <div
           data-pk-agent-resize
-          class="hidden lg:block absolute left-0 top-0 bottom-0 w-1.5 -ml-0.5 cursor-col-resize hover:bg-primary/20 transition-colors"
+          class="hidden lg:block absolute left-0 top-0 bottom-0 w-1.5 -ml-0.5 cursor-col-resize touch-none hover:bg-primary/20 transition-colors"
           aria-hidden="true"
         >
         </div>
@@ -312,9 +313,12 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       >
         <.icon name="hero-sparkles" class="w-5 h-5" />
       </div>
+      <%!-- Escape here too: Safari does not focus a clicked "⋯", the list gets the focus --%>
       <div
         id="pk-agent-chat-list"
         tabindex="0"
+        phx-keydown={close_all_chat_actions()}
+        phx-key="Escape"
         class="dropdown-content z-[100] mt-3 w-80 max-w-[95vw] card bg-base-100 shadow-xl border border-base-200"
       >
         <div class="p-2">
@@ -472,8 +476,13 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         aria-label={gettext("Message")}
         class="textarea textarea-sm w-full resize-none text-sm"
       ></textarea>
-      <%!-- The manager listens on the element it is placed in, where the file input is --%>
-      <div id="pk-agent-files">
+      <%!-- The manager listens on the element it is placed in, where the file input is.
+           Core's buttons in it (a file's pause, retry and cancel; the recorder's) are
+           small: on a touch screen every button in it takes 44 px both ways --%>
+      <div
+        id="pk-agent-files"
+        class="pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_button]:min-w-11"
+      >
         <.upload_manager
           id="pk-agent-uploads"
           upload={@upload}
@@ -610,13 +619,17 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
             width = this.clamp(window.innerWidth - e.clientX)
             document.body.style.setProperty("--pk-dock-width", width + "px")
           }
+          // A drag ends with the pointer let go, or cancelled by the browser (a
+          // touch taken for a gesture): either way its listeners go.
+          const ends = ["pointerup", "pointercancel", "lostpointercapture"]
           const up = () => {
             handle.removeEventListener("pointermove", move)
-            handle.removeEventListener("pointerup", up)
+            ends.forEach((type) => handle.removeEventListener(type, up))
             if (width) this.write({width: width})
+            width = null
           }
           handle.addEventListener("pointermove", move)
-          handle.addEventListener("pointerup", up)
+          ends.forEach((type) => handle.addEventListener(type, up))
         }
       }
     </script>
@@ -847,10 +860,33 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
       {
         mounted() {
           this.turn = ""
+          this.away = null
           this.check()
         },
-        updated() { this.check() },
-        destroyed() { if (this.turn) this.tell("done") },
+        // A re-join renders the panel afresh, with no chat, before `restore`
+        // brings the chat back: the turn shown is not told done, then started
+        // again. What the panel shows is judged once the answer to `restore`
+        // (a new `data-restored`) is in, or after a few seconds without it.
+        disconnected() { this.away = {restored: null} },
+        reconnected() {
+          if (!this.away) return
+          this.away.restored = this.el.dataset.restored
+          clearTimeout(this.awayTimer)
+          this.awayTimer = setTimeout(() => this.back(), 5000)
+        },
+        updated() {
+          if (this.away && (this.away.restored === null || this.el.dataset.restored === this.away.restored)) return
+          this.back()
+        },
+        destroyed() {
+          clearTimeout(this.awayTimer)
+          if (this.turn) this.tell("done")
+        },
+        back() {
+          clearTimeout(this.awayTimer)
+          this.away = null
+          this.check()
+        },
         // The turn shown, by its ref: another chat's running turn is another turn.
         check() {
           const turn = this.el.dataset.running === "true" ? (this.el.dataset.turn || "?") : ""
@@ -896,6 +932,15 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
     JS.hide(to: "#pk-agent-chat-actions-#{uuid}")
     |> JS.set_attribute({"aria-expanded", "false"}, to: "#pk-agent-chat-more-#{uuid}")
     |> JS.focus(to: "#pk-agent-chat-more-#{uuid}")
+  end
+
+  # Escape on the list itself (where a click on "⋯" leaves the focus in
+  # Safari): every row's actions close.
+  defp close_all_chat_actions do
+    JS.hide(to: "#pk-agent-chat-list [id^='pk-agent-chat-actions-']")
+    |> JS.set_attribute({"aria-expanded", "false"},
+      to: "#pk-agent-chat-list [id^='pk-agent-chat-more-']"
+    )
   end
 
   defp chat_title(%{title: title}) when is_binary(title) and title != "", do: title

@@ -19,9 +19,12 @@ defmodule PhoenixKitAgent.Retention do
       retention gets the chat gone at the first run after the user's
       "Delete", not N days later.
 
-  A chat whose turn holds its lock right now (a turn in flight, or a click
-  that confirms a write; `PhoenixKitAgent.Turns.lock_ttl_s/0`) is left for the
-  next run, and so is a row a transaction of the module holds.
+  A chat whose turn holds its lock right now (a turn in flight;
+  `PhoenixKitAgent.Turns.lock_ttl_s/0`) is left for the next run, and so is
+  every chat of a user whose own lock is held (a turn, or a click that
+  confirms a write: a click takes only the user's lock), and a row a
+  transaction of the module holds. A lock is judged by the database's clock,
+  as `PhoenixKitAgent.Turns.Locks` stamps it, never the node's.
 
   With a chat go, in the one transaction, its messages and its attachment rows
   (the database's `ON DELETE CASCADE`); afterwards the Storage files of its
@@ -69,7 +72,7 @@ defmodule PhoenixKitAgent.Retention do
   alias PhoenixKit.Activity
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.{Config, Migrations, Turns, UserDeletion}
-  alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message}
+  alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message, UserSettings}
 
   @batch 100
   @budget_ms :timer.minutes(5)
@@ -130,9 +133,31 @@ defmodule PhoenixKitAgent.Retention do
         orphan_files: 0
       })
 
-    summary = sweep(summary, now, opts)
+    summary = recording(summary, fn -> sweep(summary, now, opts) end)
     if summary.conversations > 0 or summary.orphan_files > 0, do: log_run(summary)
     summary
+  end
+
+  # Runs `fun`. Should it fail, what was deleted for good so far is still
+  # recorded in the Activity log (marked `interrupted`), then the failure goes
+  # on to the job. A job killed outright (its timeout) records nothing.
+  defp recording(acc, fun) do
+    fun.()
+  rescue
+    exception ->
+      record_interrupted(acc)
+      reraise exception, __STACKTRACE__
+  catch
+    kind, reason ->
+      record_interrupted(acc)
+      :erlang.raise(kind, reason, __STACKTRACE__)
+  end
+
+  defp record_interrupted(acc) do
+    if acc.conversations > 0 or acc.orphan_files > 0,
+      do: log_run(Map.put(acc, :interrupted, true))
+  rescue
+    _logging_failed -> :ok
   end
 
   # After the chats: the files an earlier release left behind.
@@ -150,22 +175,22 @@ defmodule PhoenixKitAgent.Retention do
     if System.monotonic_time(:millisecond) >= deadline do
       acc
     else
-      case purge_batch(now, days, batch) do
+      case recording(acc, fn -> purge_batch(now, days, batch) end) do
         {0, _messages, _attachments, _files} ->
           acc
 
         {chats, messages, attachments, files} ->
-          deleted_files = UserDeletion.release_files(files, deadline: deadline)
-
           acc = %{
             acc
             | conversations: acc.conversations + chats,
               messages: acc.messages + messages,
-              attachments: acc.attachments + attachments,
-              files: acc.files + deleted_files
+              attachments: acc.attachments + attachments
           }
 
-          loop(now, days, batch, deadline, acc)
+          deleted_files =
+            recording(acc, fn -> UserDeletion.release_files(files, deadline: deadline) end)
+
+          loop(now, days, batch, deadline, %{acc | files: acc.files + deleted_files})
       end
     end
   end
@@ -216,13 +241,33 @@ defmodule PhoenixKitAgent.Retention do
     )
   end
 
+  # `now` places the period (a test moves it); whether a lock is still held is
+  # the database's clock against the TTL, as `Turns.Locks` stamps and reads it.
   defp due_query(now, days) do
     cutoff = DateTime.add(now, -days * 86_400, :second)
-    stale = DateTime.add(now, -Turns.lock_ttl_s(), :second)
+    ttl = Turns.lock_ttl_s()
+
+    held_users =
+      from(s in UserSettings,
+        where:
+          not is_nil(s.busy_since) and
+            s.busy_since >=
+              fragment(
+                "(now() AT TIME ZONE 'UTC') - (? * interval '1 second')",
+                type(^ttl, :integer)
+              ),
+        select: s.user_uuid
+      )
 
     from(c in Conversation,
       where:
-        (is_nil(c.busy_since) or c.busy_since < ^stale) and
+        (is_nil(c.busy_since) or
+           c.busy_since <
+             fragment(
+               "(now() AT TIME ZONE 'UTC') - (? * interval '1 second')",
+               type(^ttl, :integer)
+             )) and
+          c.user_uuid not in subquery(held_users) and
           (c.status == "deleted" or
              fragment("coalesce(?, ?)", c.last_message_at, c.inserted_at) < ^cutoff)
     )
@@ -239,7 +284,8 @@ defmodule PhoenixKitAgent.Retention do
         "messages" => summary.messages,
         "attachments" => summary.attachments,
         "files" => summary.files,
-        "orphan_files" => summary.orphan_files
+        "orphan_files" => summary.orphan_files,
+        "interrupted" => Map.get(summary, :interrupted, false)
       }
     )
 

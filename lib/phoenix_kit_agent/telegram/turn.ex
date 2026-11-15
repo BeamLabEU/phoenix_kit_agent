@@ -49,6 +49,7 @@ defmodule PhoenixKitAgent.Telegram.Turn do
 
   alias PhoenixKitAgent.{Attachments, Config, Conversations, Speech, Turns, UserConfig}
   alias PhoenixKitAgent.Attachments.Bounds
+  alias PhoenixKitAgent.Schemas.Conversation
   alias PhoenixKitAgent.Telegram.{Bridge, Cards, ChatQueue, Client, Format, Texts}
 
   @typing_every_ms 4_000
@@ -377,7 +378,13 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     max = Bridge.max_picture_bytes()
 
     with :ok <- if(too?(photo.size, max), do: {:error, :too_large}, else: :ok),
-         :ok <- Attachments.precheck_picture_for_telegram(ref, conversation.uuid, photo.size),
+         :ok <-
+           Attachments.precheck_picture_for_telegram(
+             ref,
+             conversation.uuid,
+             photo.size,
+             Map.get(photo, :type)
+           ),
          {:ok, bytes} <- fetch(connection_uuid, photo.file_id, max) |> picture_error(),
          do: Attachments.add_picture_for_telegram(ref, conversation.uuid, bytes)
   end
@@ -470,15 +477,12 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     [locale: locale, request_context: [language: locale, base_url: Routes.base_url()]]
   end
 
-  defp current_conversation(user_uuid, ref) do
-    case Conversations.latest_telegram_conversation(user_uuid) do
-      %{metadata: %{"chat_id" => stored}} = conversation ->
-        if to_string(stored) == to_string(elem(ref, 3)),
-          do: {:ok, conversation},
-          else: start_conversation(user_uuid, ref)
-
-      _none_or_unmarked ->
-        start_conversation(user_uuid, ref)
+  # The latest conversation of this Telegram chat: one of a chat the user
+  # linked before is never continued here, however recently it was written to.
+  defp current_conversation(user_uuid, {:telegram_link, _user, _connection, chat_id} = ref) do
+    case Conversations.latest_telegram_conversation(user_uuid, chat_id) do
+      %Conversation{} = conversation -> {:ok, conversation}
+      nil -> start_conversation(user_uuid, ref)
     end
   end
 

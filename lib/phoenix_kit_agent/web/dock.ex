@@ -207,7 +207,7 @@ defmodule PhoenixKitAgent.Web.Dock do
   # `image/*` next to the extensions: a camera picture reaches the browser by
   # its MIME type, and its name may carry no listed extension. What the file
   # really is is told by its content (`Attachments.add/4`), not by this list.
-  @accept ~w(image/* .png .jpg .jpeg .webp .heic .heif .pdf .xlsx .csv .txt .md)
+  @accept ~w(image/* .png .jpg .jpeg .webp .heic .heif .pdf .xlsx .csv .txt .md .markdown)
   # What the input offers for each type a site may narrow the list to
   # (`Config.attachment_types/0`); the server checks the type itself.
   @accept_of %{
@@ -219,7 +219,7 @@ defmodule PhoenixKitAgent.Web.Dock do
     "xlsx" => ~w(.xlsx),
     "csv" => ~w(.csv),
     "txt" => ~w(.txt),
-    "md" => ~w(.md)
+    "md" => ~w(.md .markdown)
   }
   # A slow tablet link needs more than LiveView's 10 s between two chunks.
   @chunk_timeout_ms 60_000
@@ -271,6 +271,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         first_uuid: nil,
         earlier?: false,
         turn_ref: nil,
+        turn_sent_at: nil,
         activity: nil,
         unsent: [],
         error: nil,
@@ -514,7 +515,8 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   defp event("stop", _params, socket) do
     with %{uuid: uuid} <- socket.assigns.conversation,
-         turn_ref when is_binary(turn_ref) <- socket.assigns.turn_ref do
+         turn_ref when is_binary(turn_ref) <- socket.assigns.turn_ref,
+         false <- just_sent?(socket) do
       case Turns.stop(socket.assigns.ref, socket.assigns.impersonated?, uuid, turn_ref) do
         :ok -> {:noreply, socket |> assign(activity: :stopping, error: nil) |> await_stop()}
         {:error, :not_running} -> {:noreply, after_lost_stop(socket, uuid, turn_ref)}
@@ -834,6 +836,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         socket
         |> assign(
           turn_ref: turn_ref,
+          turn_sent_at: System.monotonic_time(:millisecond),
           activity: :thinking,
           error: nil,
           fresh_uuid: nil,
@@ -848,6 +851,17 @@ defmodule PhoenixKitAgent.Web.Dock do
         socket |> refused(reason) |> reload_unsent() |> drop_fresh()
     end
   end
+
+  # "Stop" stands where "Send" was: the second click of a double click on
+  # "Send" lands on it once the turn is shown. A Stop that soon after this
+  # panel sent is that click, not a wish to stop, and is let go.
+  defp just_sent?(%{assigns: %{turn_sent_at: at}}) when is_integer(at),
+    do: System.monotonic_time(:millisecond) - at < stop_after_send_ms()
+
+  defp just_sent?(_socket), do: false
+
+  defp stop_after_send_ms,
+    do: Application.get_env(:phoenix_kit_agent, :stop_after_send_ms, 600)
 
   # The chat is busy with a turn this panel did not start (another tab): it is
   # shown as running, so its Stop is there.
@@ -1287,8 +1301,11 @@ defmodule PhoenixKitAgent.Web.Dock do
        )
        when is_binary(data) and is_binary(format) do
     %{ref: ref} = socket.assigns
-    deadline = System.monotonic_time(:millisecond) + speech_wait_ms()
-    opts = Keyword.put(me(socket), :deadline, deadline)
+    # Paid only while the call can still end before the panel gives up (a
+    # clip that waited for the user's other recognitions may not).
+    wait_ms = speech_wait_ms()
+    pay_by = wait_ms - min(Speech.call_timeout_ms(), div(wait_ms, 2))
+    opts = Keyword.put(me(socket), :deadline, System.monotonic_time(:millisecond) + pay_by)
     wait = make_ref()
     timer = Process.send_after(self(), {:pk_agent_speech_timeout, wait}, speech_wait_ms())
 

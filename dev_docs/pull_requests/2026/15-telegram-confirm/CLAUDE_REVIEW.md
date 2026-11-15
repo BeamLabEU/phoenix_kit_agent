@@ -64,3 +64,27 @@ would need them to share a lock; left as is.
 - **Text to Telegram:** plain text, ≤ 4000 UTF-16 units, technical part cut at 1500 chars; toasts
   are fixed gettext strings; no preview or argument reaches `answerCallbackQuery` or the log.
 - **Rate limit:** 10 a minute per chat, counted before any database read.
+
+## Second review — 2026-11-15 (everything since v0.2.0)
+
+### F4 — BUG, LOW — a refusal before the redeem, on a row a lost click spent, was written as `failed` (fixed)
+
+The catch-all `redeemed/2` wrote `failed` for any error code once the row read `used`. Core's
+`redeem_as/6` refuses before it comes to the row for the session, the tool's right, the module's
+writes and the rate (`unauthorized`, `unlinked`, `forbidden`, `module_disabled`,
+`module_write_disabled`, `rate_limited`). Take a click that was lost after core spent the row and
+ran the change, followed by a click core refused that way: it said "The change failed". The spec
+says such a row is `confirmed`.
+
+**Fix:** those codes (`@refused_before_redeem`) read the row. `used` is `confirmed`, as in
+`spent/1`; otherwise the card waits. A handler's own codes (`not_found`, `validation_failed`, …)
+can come after the spend, so they keep `failed`. Test: a row marked used, then a click with the
+module's writes closed, gives `confirmed`; the old code gives `failed`.
+
+### Not changed
+
+- `test/support/fake_core.ex` answers `other_origin` for a row that does not exist, where core
+  answers `invalid` (→ `expired`). On the locked core 3.5.0 `link_writes?/0` exists, so
+  `confirm_test.exs` runs on the real core and FakeCore stands in only in `config_test.exs`.
+- A `changed` card's replacement can be sent twice if the notice task of an older card runs after a
+  newer one was changed. It needs two outcomes of one call in flight at once; left as is.

@@ -85,3 +85,58 @@ confirms it."), translated in all six catalogues, with a test for each mode.
 - **What reaches the agent:** private chats where the sender is the chat; not edited, not older
   than 600 s; `/start <payload>` ignored; forwarded messages refused. 👍 only when sent and no
   write tool was denied.
+
+## Second review — 2026-11-15 (everything since v0.2.0)
+
+### F5 — BUG, MEDIUM — the stored offset never went stale, so a quiet bot could go silent for good (fixed)
+
+`poll/1` always asked from `max(stored, taken) + 1`, and `process_batch/2` dropped every id at or
+below `taken`. Telegram's `Update.update_id` docs: after a week with no update, the next id "will
+be chosen randomly instead of sequentially". A small site's bot that was quiet for 8 days could
+then get ids below its offset. `getUpdates` never returns those, and the offset lives in the
+database, so a restart did not help. The status still showed "reading". The same happened when a
+new bot token was put on the same connection uuid.
+
+**Fix:**
+- The offset is stored as `"<uuid>:<id>:<unix time>"`. One older than six days, or one stored
+  without its time, reads as none (`Config.telegram_offset/1`), and the poll asks without an
+  offset.
+- `taken` carries the monotonic time it was set and is let go after six days too.
+- This is safe: updates live 24 hours, and every poll confirms the ones before its offset, so
+  nothing is answered twice.
+- Tests: a week-old offset is let go and an id below it is answered; a value without a time is
+  stale; an old `taken` is let go.
+
+### F6 — BUG, MEDIUM — idle queues held the 20 places, so a new chat was told "busy" (fixed)
+
+A queue lives 60 s after its last job, and `QueueSupervisor` allows 20 children. Twenty users who
+each wrote once within a minute left the 21st user "The bot is busy right now" while nothing ran.
+
+**Fix:** on `:max_children`, `ChatQueue` asks the first idle queue (no task, nothing waiting, no
+siblings) to stop (`:stop_if_idle`), waits for it to go, and starts once more. A queue with a turn
+keeps its place. It asks only children that are `ChatQueue`s. Tests: 20 idle queues, and a new
+chat is answered; 20 busy ones, and it is told "busy".
+
+### F7 — BUG, LOW — a batch from a long poll that outlived the switch was still acted on (fixed)
+
+The switch was checked only before the 25 s long poll. A batch that came back after an admin
+switched the bot off was stored and dispatched: help and refusal replies went out, and a ✅ press
+(`Press` does not read the switch) confirmed a write. **Fix:** `handle_batch/2` checks the switch;
+if it is off, the reader goes `:off`, releases the name and leaves the batch (no offset, no
+dispatch; core's own reader takes it). Test included.
+
+### F8 — IMPROVEMENT, LOW — a 429 asking more than the bound was retried early (fixed)
+
+"retry after 45" waited the 30 s cap and retried while Telegram still refused, which wasted the
+one retry. Now a wait over the bound is not retried at all. Test included; the existing "waited out
+once" test raises its bound to 1 s.
+
+### F9 — BUG, LOW — a conversation of a chat linked earlier made the current chat start anew (fixed)
+
+`Conversations.latest_telegram_conversation/1` took the user's latest Telegram conversation from
+**any** chat. `Telegram.Turn` compared its `chat_id` and started a new conversation when it
+differed. After a relink from T1 to T2, any write to T1's conversation (a site message, a settled
+card) made it the latest, so T2's next message opened yet another conversation, and that repeated
+each time. **Fix:** `latest_telegram_conversation/2` takes the chat id and filters on
+`metadata->>'chat_id'`, and the turn passes it. Test: an earlier chat's conversation, written to
+later, is not continued, and the old code fails it.

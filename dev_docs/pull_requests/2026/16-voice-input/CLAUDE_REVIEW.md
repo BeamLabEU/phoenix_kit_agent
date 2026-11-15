@@ -73,3 +73,32 @@ panel's entry point) now stores such a file as `telegram-picture (1)`. Test in
   `Code.ensure_loaded?` finds it.
 - **Settings:** a forged speech endpoint is refused without `transcribe/3`; otherwise only an
   offered one, checked with `check_selection("agent.speech")` when new.
+
+## Second review — 2026-11-15 (everything since v0.2.0)
+
+### F3 — BUG, LOW — a stale models form overwrote another admin's choice, voice included (fixed)
+
+`save_models` wrote every field whose submitted value differed from what was stored **at save
+time**. The form always sends all three selects. So an admin who opened the page, while another
+then chose a speech model, and who changed only the default model, switched voice off everywhere
+under "AI assistant models saved." The pattern predates the speech field, but that field made it
+costly.
+
+**Fix:** the page keeps what it opened with (`models.opened`) and writes only the fields the person
+changed from that. If one of those changed in the database since, nothing is saved, the form
+reloads, and the message is the one Users → Configure gives for a stale form (already in all six
+catalogues). Tests: a field another admin set stays when this form changes another one; a field
+both changed is refused. Both fail on the old code.
+
+### F4 — IMPROVEMENT, LOW — a recognition could be paid for after the panel had given up (fixed)
+
+The `deadline:` given to `Speech.transcribe/4` was the moment the panel gives up (2 minutes). A
+clip that waited about 70 s on the user's lock, behind a Telegram voice message, was still paid
+(the call may take 60 s), and its words were thrown away. **Fix:** the panel pays only until
+`wait - min(Speech.call_timeout_ms(), wait / 2)`.
+
+### F5 — NITPICK — the `agent.telegram` description said the chat only reads (fixed)
+
+"…to read data with the user's own rights": on every supported core a chat also proposes changes
+the user confirms. It is now "…with the user's own rights: it reads data and proposes changes the
+user confirms", translated in all six catalogues.

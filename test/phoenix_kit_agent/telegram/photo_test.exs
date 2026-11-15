@@ -502,6 +502,30 @@ defmodule PhoenixKitAgent.Telegram.PhotoTest do
       assert texts(calls) == [Texts.picture(:too_large)]
     end
 
+    test "a type the site does not take is not fetched: a photo without jpg, a png document",
+         ctx do
+      {:ok, _} = PhoenixKitAgent.Config.put_attachment_types(["png", "pdf"], [])
+
+      photo(ctx)
+      calls = calls_until(reaction?("🤷"))
+      assert downloads(calls) == []
+      assert texts(calls) == [Texts.picture(:type_not_allowed)]
+
+      {:ok, _} = PhoenixKitAgent.Config.put_attachment_types(["jpg", "pdf"], [])
+
+      document(ctx, "image/png", caption: "From a file")
+      calls = calls_until(reaction?("🤷"))
+      assert downloads(calls) == []
+    end
+
+    test "with no picture type taken the help says nothing of pictures", _ctx do
+      assert Texts.static(:help) =~ "Pictures work too"
+      {:ok, _} = PhoenixKitAgent.Config.put_attachment_types(["pdf"], [])
+
+      refute Texts.static(:help) =~ "Pictures"
+      refute Texts.static(:text_only) =~ "pictures"
+    end
+
     @tag :imagemagick
     test "the size is taken from the biggest file, not from the order of the list", ctx do
       model_says("Ok.")

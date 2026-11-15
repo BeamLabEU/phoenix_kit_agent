@@ -461,15 +461,16 @@ test("the screen is asked at each key, so a keyboard attached later counts", () 
 
 // `turn`: the ref of the turn shown, or null for none.
 function turn(ref) {
-  environment()
+  const env = environment()
   const events = []
   globalThis.window.dispatchEvent = (event) => events.push(event)
   const def = load("HOOK_TURN")
   const el = {dataset: {}}
-  const show = (next) => {
+  const show = (next, restored) => {
     el.dataset.running = String(next !== null)
     if (next === null) delete el.dataset.turn
     else el.dataset.turn = next
+    if (restored !== undefined) el.dataset.restored = String(restored)
   }
   show(ref)
   const hook = Object.assign(Object.create(def), {el})
@@ -480,9 +481,14 @@ function turn(ref) {
     return event.detail.state
   })
   return {
+    env,
     states,
-    patch(next) { show(next); hook.updated() },
-    destroy() { hook.destroyed() }
+    patch(next, restored) { show(next, restored); hook.updated() },
+    destroy() { hook.destroyed() },
+    disconnect() { hook.disconnected() },
+    // The join's patch (a panel with no chat, `restored` back to 0), then
+    // `reconnected()`, as LiveView does on a re-join.
+    rejoin() { show(null, 0); hook.updated(); hook.reconnected() }
   }
 }
 
@@ -511,6 +517,41 @@ test("a panel that mounts on a running turn says start, and done when it goes aw
   const rig = turn("turn-a")
   assert.deepEqual(rig.states(), ["start"])
   rig.destroy()
+  assert.deepEqual(rig.states(), ["start", "done"])
+})
+
+test("a re-join while a turn runs says nothing when restore brings the same turn back", () => {
+  const rig = turn(null)
+  const env = rig.env
+  rig.patch("turn-a", 3)
+  rig.disconnect()
+  rig.rejoin()
+  assert.deepEqual(rig.states(), ["start"])
+  // The answer to `restore`: the same chat, its turn still running.
+  rig.patch("turn-a", 1)
+  assert.deepEqual(rig.states(), ["start"])
+  assert.equal(env.timers(), 0)
+  rig.patch(null, 1)
+  assert.deepEqual(rig.states(), ["start", "done"])
+})
+
+test("a re-join after the turn ended says done once restore shows none", () => {
+  const rig = turn(null)
+  rig.patch("turn-a", 3)
+  rig.disconnect()
+  rig.rejoin()
+  rig.patch(null, 1)
+  assert.deepEqual(rig.states(), ["start", "done"])
+})
+
+test("a re-join that restore never answers is judged after a while", () => {
+  const rig = turn(null)
+  const env = rig.env
+  rig.patch("turn-a", 3)
+  rig.disconnect()
+  rig.rejoin()
+  assert.deepEqual(rig.states(), ["start"])
+  env.fireTimers()
   assert.deepEqual(rig.states(), ["start", "done"])
 })
 

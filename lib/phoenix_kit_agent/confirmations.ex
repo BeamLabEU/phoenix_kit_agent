@@ -120,6 +120,18 @@ defmodule PhoenixKitAgent.Confirmations do
   # often it is kept while the click runs.
   @hold_s 30
   @keep_ms 10_000
+
+  # The codes of `Executor.redeem_as/6` given before it redeems the row (its
+  # session, tool, permission, write and rate checks). A handler's own codes
+  # (`not_found`, `validation_failed`, …) can come after, so they are not here.
+  @refused_before_redeem [
+    :unauthorized,
+    :unlinked,
+    :forbidden,
+    :module_disabled,
+    :module_write_disabled,
+    :rate_limited
+  ]
   @keep_min_ms 100
 
   # The most of the model's arguments a card shows.
@@ -675,6 +687,19 @@ defmodule PhoenixKitAgent.Confirmations do
   defp redeemed({:error, :confirm_token_invalid, _detail, %{reason: reason}, _headers}, click)
        when reason in ["expired", "invalid"],
        do: settled(click, "expired")
+
+  # Core refused before it came to the row (the session, the tool's right, the
+  # module's writes, the rate): this click spent nothing. A row that reads as
+  # used was spent by a click that was lost, so it is `confirmed`, as in
+  # `spent/1`; never `failed`, which is for a handler that failed after this
+  # click spent the row.
+  defp redeemed({:error, code, _detail, _context, _headers}, click)
+       when code in @refused_before_redeem do
+    case row_status(click.card, click.session_ref, click.conversation) do
+      {:ok, "used"} -> settled(click, "confirmed")
+      _waiting_or_unreadable -> {:error, {:refused, code}}
+    end
+  end
 
   # Spent, then the handler failed: `failed`. Not spent: the card waits.
   defp redeemed({:error, code, _detail, _context, _headers}, click) do

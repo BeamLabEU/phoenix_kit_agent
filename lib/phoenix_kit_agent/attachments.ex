@@ -485,26 +485,49 @@ defmodule PhoenixKitAgent.Attachments do
 
   @doc false
   # What `add_picture_for_telegram/3` can refuse without the bytes — the chat,
-  # the user's size limit (`size`, where Telegram said it) and a model that
-  # could neither see nor describe a picture — so the bridge asks before it
-  # downloads. `:ok`, or the refusal. A trusted entry point of the bridge.
+  # the site's types of file (`type`: the kind Telegram says the picture is,
+  # or `nil`: then any picture type will do), the user's size limit (`size`,
+  # where Telegram said it) and a model that could neither see nor describe a
+  # picture — so the bridge asks before it downloads. `:ok`, or the refusal.
+  # A trusted entry point of the bridge.
   @spec precheck_picture_for_telegram(
           Conversations.session_ref(),
           term(),
-          non_neg_integer() | nil
+          non_neg_integer() | nil,
+          String.t() | nil
         ) :: :ok | {:error, refusal()}
   def precheck_picture_for_telegram(
         {:telegram_link, _user, _connection, _chat} = ref,
         conversation_uuid,
-        size
+        size,
+        type \\ nil
       ) do
     with {:ok, conversation} <-
            Conversations.owned_conversation(ref, conversation_uuid, impersonated: false),
+         :ok <- picture_type_allowed(type),
          settings = UserConfig.effective(conversation.user_uuid),
          :ok <- room_for_one(settings),
          :ok <- if(is_integer(size), do: size_allowed(size, settings), else: :ok) do
       can_be_shown(%{kind: "image"}, settings)
     end
+  end
+
+  @telegram_picture_types ~w(jpg png webp)
+
+  @doc false
+  # The picture types a Telegram chat can send that the site takes
+  # (`Config.attachment_types/0`): `[]` when it takes none, and the bot then
+  # says nothing of pictures.
+  @spec telegram_picture_types() :: [String.t()]
+  def telegram_picture_types,
+    do: Enum.filter(@telegram_picture_types, &(&1 in Config.attachment_types()))
+
+  defp picture_type_allowed(nil) do
+    if telegram_picture_types() == [], do: {:error, :type_not_allowed}, else: :ok
+  end
+
+  defp picture_type_allowed(type) do
+    if type in Config.attachment_types(), do: :ok, else: {:error, :type_not_allowed}
   end
 
   defp room_for_one(settings),

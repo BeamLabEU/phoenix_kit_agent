@@ -210,9 +210,12 @@ defmodule PhoenixKitAgent.Conversations do
 
   @doc false
   # The user's current chat from Telegram: the latest active one that
-  # `create_conversation_for/2` marked `"source" => "telegram"`, or `nil`.
-  @spec latest_telegram_conversation(term()) :: Conversation.t() | nil
-  def latest_telegram_conversation(user_uuid) do
+  # `create_conversation_for/2` marked `"source" => "telegram"` (with
+  # `chat_id`, of that Telegram chat only: a conversation of a chat the user
+  # linked before, written to since, is not this chat's), or `nil`.
+  @spec latest_telegram_conversation(term(), integer() | String.t() | nil) ::
+          Conversation.t() | nil
+  def latest_telegram_conversation(user_uuid, chat_id \\ nil) do
     case Ecto.UUID.cast(user_uuid) do
       {:ok, uuid} ->
         from(c in Conversation,
@@ -225,12 +228,18 @@ defmodule PhoenixKitAgent.Conversations do
           ],
           limit: 1
         )
+        |> of_telegram_chat(chat_id)
         |> repo().one()
 
       :error ->
         nil
     end
   end
+
+  defp of_telegram_chat(query, nil), do: query
+
+  defp of_telegram_chat(query, chat_id),
+    do: from(c in query, where: fragment("?->>'chat_id' = ?", c.metadata, ^to_string(chat_id)))
 
   @doc false
   # How a turn of `turn_ref` in the chat ended, for the bridge: `{:notice,

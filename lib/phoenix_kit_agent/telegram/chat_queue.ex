@@ -6,7 +6,9 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
   (`PhoenixKitAgent.Telegram.Turn`) in a task of its own and keeps up to three
   more waiting. A fourth is `:full`; when the bot already has the most chats
   it serves at once (`PhoenixKitAgent.Telegram.QueueSupervisor`), a message
-  from a new chat is `:busy`. A process with nothing to do for a minute ends.
+  from a new chat is `:busy`. A process with nothing to do for a minute ends;
+  a new chat that finds every place taken first asks one such idle process to
+  end now, so only chats with a turn running or waiting fill the places.
 
   The pictures of one album (`media_group_id`, the job's `group`) are one
   question: the others of the group of a job that runs **or waits** are kept as
@@ -81,21 +83,67 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
   defp process({connection_uuid, _chat_id} = key) do
     case Registry.lookup(@registry, key) do
       [{pid, _}] ->
-        if Process.alive?(pid), do: {:ok, pid}, else: start(key, connection_uuid)
+        if Process.alive?(pid), do: {:ok, pid}, else: start_queue(key, connection_uuid)
 
       [] ->
-        start(key, connection_uuid)
+        start_queue(key, connection_uuid)
     end
   end
 
-  defp start(key, connection_uuid) do
+  defp start_queue(key, connection_uuid, reclaim? \\ true) do
     case DynamicSupervisor.start_child(
            @supervisor,
            {__MODULE__, key: key, connection_uuid: connection_uuid}
          ) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, {:already_started, pid}} -> {:ok, pid}
-      {:error, _max_children_or_other} -> :busy
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} ->
+        {:ok, pid}
+
+      {:error, :max_children} ->
+        if reclaim? and reclaim_idle(), do: start_queue(key, connection_uuid, false), else: :busy
+
+      {:error, _other} ->
+        :busy
+    end
+  end
+
+  # Every place is taken: the first queue with nothing to do ends now (it would
+  # in a minute anyway) and its place is free once it is gone. `true` when one
+  # did.
+  defp reclaim_idle do
+    @supervisor
+    |> DynamicSupervisor.which_children()
+    |> Enum.any?(fn
+      {_, pid, _, [__MODULE__]} when is_pid(pid) -> stopped_idle?(pid)
+      _other -> false
+    end)
+  catch
+    :exit, _ -> false
+  end
+
+  defp stopped_idle?(pid) do
+    monitor = Process.monitor(pid)
+
+    stopping? =
+      try do
+        GenServer.call(pid, :stop_if_idle, 1_000) == true
+      catch
+        # It ended by itself meanwhile: its place is free as well.
+        :exit, {:noproc, _} -> true
+        :exit, _ -> false
+      end
+
+    if stopping? do
+      receive do
+        {:DOWN, ^monitor, :process, ^pid, _reason} -> true
+      after
+        1_000 -> false
+      end
+    else
+      Process.demonitor(monitor, [:flush])
+      false
     end
   end
 
@@ -134,6 +182,14 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
       do: {:reply, state.siblings, %{state | group: nil, siblings: []}},
       else: {:reply, [], state}
   end
+
+  def handle_call(:stop_if_idle, _from, %{task: nil, siblings: []} = state) do
+    if :queue.is_empty(state.waiting),
+      do: {:stop, :normal, true, state},
+      else: {:reply, false, state}
+  end
+
+  def handle_call(:stop_if_idle, _from, state), do: {:reply, false, state}
 
   def handle_call(_other, _from, state), do: {:reply, {:error, :unknown}, state}
 

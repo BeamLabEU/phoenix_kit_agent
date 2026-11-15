@@ -222,6 +222,40 @@ defmodule PhoenixKitAgent.Telegram.FlowTest do
       refute Conversations.latest_telegram_conversation(ctx.user.uuid).uuid == first.uuid
     end
 
+    test "a conversation of a chat the user linked before is not continued, however recent",
+         ctx do
+      model_says("First.")
+      send_update(ctx, "One", message_id: 1)
+      calls_until(reaction?("👍"))
+      this_chat = Conversations.latest_telegram_conversation(ctx.user.uuid, @chat)
+
+      # The user's earlier chat, written to since (a site message, a settled card).
+      {:ok, earlier} =
+        Conversations.create_conversation_for(ctx.user.uuid,
+          metadata: %{"source" => "telegram", "chat_id" => @chat + 7}
+        )
+
+      future = DateTime.add(DateTime.utc_now(), 60, :second) |> DateTime.truncate(:second)
+
+      Repo.update_all(from(c in Conversation, where: c.uuid == ^earlier.uuid),
+        set: [last_message_at: future]
+      )
+
+      assert Conversations.latest_telegram_conversation(ctx.user.uuid).uuid == earlier.uuid
+
+      model_says("Second.")
+      send_update(ctx, "Two", message_id: 2)
+      calls_until(reaction?("👍"))
+
+      assert Conversations.latest_telegram_conversation(ctx.user.uuid, @chat).uuid ==
+               this_chat.uuid
+
+      assert Repo.aggregate(
+               from(m in Message, where: m.conversation_uuid == ^earlier.uuid),
+               :count
+             ) == 0
+    end
+
     test "a chat without the right to the assistant gets no conversation, for /new or a message",
          ctx do
       stranger = user_with(["agent", "dashboard"], "no-telegram")
@@ -486,6 +520,8 @@ defmodule PhoenixKitAgent.Telegram.FlowTest do
 
   describe "Telegram refusing" do
     test "a rate limit is waited out once and the part is sent again", ctx do
+      Application.put_env(:phoenix_kit_agent, :telegram_max_retry_ms, 1_000)
+      on_exit(fn -> Application.put_env(:phoenix_kit_agent, :telegram_max_retry_ms, 50) end)
       counter = :counters.new(1, [])
 
       TelegramClient.set(:send, fn _chat, _text ->
@@ -501,6 +537,18 @@ defmodule PhoenixKitAgent.Telegram.FlowTest do
       calls = calls_until(reaction?("👍"))
 
       assert texts(calls) == ["Answer.", "Answer."]
+    end
+
+    test "a rate limit longer than the bound is not retried early", ctx do
+      TelegramClient.set(:send, fn _chat, _text ->
+        {:error, "Too Many Requests: retry after 45"}
+      end)
+
+      model_says("Answer.")
+      send_update(ctx, "Hi")
+      calls = calls_until(reaction?("🤷"))
+
+      assert texts(calls) == ["Answer."]
     end
 
     test "a reaction on a deleted message changes nothing", ctx do
@@ -671,6 +719,43 @@ defmodule PhoenixKitAgent.Telegram.FlowTest do
       key = {ctx.connection, @chat}
       assert [{_pid, _}] = Registry.lookup(PhoenixKitAgent.Telegram.Registry, key)
       await(fn -> Registry.lookup(PhoenixKitAgent.Telegram.Registry, key) == [] end)
+    end
+
+    test "a new chat takes the place of an idle queue when every place is taken", ctx do
+      others = fill_queue_places(ctx)
+
+      model_says("Done.")
+      send_update(ctx, "Hi")
+      calls = calls_until(reaction?("👍"))
+
+      refute Texts.static(:bot_busy) in texts(calls)
+      # One idle queue gave its place up; the others are still there.
+      assert Enum.count(others, &Process.alive?/1) == 19
+    end
+
+    test "a queue with a turn running keeps its place: the new chat is told 'busy'", ctx do
+      others = fill_queue_places(ctx)
+      Enum.each(others, &:sys.replace_state(&1, fn state -> %{state | task: :running} end))
+
+      send_update(ctx, "Hi")
+      calls = calls_until(reaction?("🤷"))
+
+      assert texts(calls) == [Texts.static(:bot_busy)]
+      assert Enum.all?(others, &Process.alive?/1)
+    end
+  end
+
+  # Every place of the queue supervisor taken by the idle queues of other chats.
+  defp fill_queue_places(ctx) do
+    for n <- 1..20 do
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          PhoenixKitAgent.Telegram.QueueSupervisor,
+          {PhoenixKitAgent.Telegram.ChatQueue,
+           key: {ctx.connection, -n}, connection_uuid: ctx.connection}
+        )
+
+      pid
     end
   end
 

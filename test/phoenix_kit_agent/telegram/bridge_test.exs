@@ -125,7 +125,8 @@ defmodule PhoenixKitAgent.Telegram.BridgeTest do
                decide(ctx, TelegramClient.update(@chat, nil, message_id: 5, extra: extra))
 
       assert ref == ctx.ref
-      assert job.photo == %{file_id: "l", size: 9_000_000}
+      # A photo is always a JPEG.
+      assert job.photo == %{file_id: "l", size: 9_000_000, type: "jpg"}
     end
 
     test "the largest size is the one with the most pixels, whatever the order or a missing size",
@@ -155,10 +156,11 @@ defmodule PhoenixKitAgent.Telegram.BridgeTest do
     end
 
     test "a document that is a jpeg, png or webp is a picture; any other is text only", ctx do
-      for type <- ~w(image/jpeg image/png image/webp) do
+      for {type, ext} <- [{"image/jpeg", "jpg"}, {"image/png", "png"}, {"image/webp", "webp"}] do
         extra = %{"document" => %{"file_id" => "d", "mime_type" => type, "file_name" => "a.img"}}
 
-        assert {:job, _, %{kind: :photo, photo: %{file_id: "d"}}} =
+        # Its type is the document's, so a type the site does not take is refused unfetched.
+        assert {:job, _, %{kind: :photo, photo: %{file_id: "d", type: ^ext}}} =
                  decide(ctx, TelegramClient.update(@chat, nil, extra: extra))
       end
 

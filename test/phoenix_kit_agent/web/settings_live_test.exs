@@ -245,6 +245,40 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert Config.speech_endpoint_uuid() == nil
     end
 
+    test "a form opened before another admin's change saves only what this one changed",
+         ctx do
+      tools = declared(%{name: "Tools", model: "a/tools"}, %{"tools" => "yes"})
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      # Meanwhile another admin chooses the speech model.
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", ctx.hears.uuid)
+
+      # This form still shows none for speech; its person changes only the default.
+      view
+      |> form("#agent-models-form", models: %{default_endpoint_uuid: tools.uuid})
+      |> render_submit()
+
+      assert Config.default_endpoint_uuid() == tools.uuid
+      assert Config.speech_endpoint_uuid() == ctx.hears.uuid
+    end
+
+    test "a field changed both here and by someone else since the form opened is refused",
+         ctx do
+      also_hears = declared(%{name: "Also hears", model: "a/ears-2"}, %{"audio_input" => "yes"})
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", ctx.hears.uuid)
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      # Meanwhile another admin switches voice off; this form chooses another model.
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", "")
+
+      view
+      |> form("#agent-models-form", models: %{speech_endpoint_uuid: also_hears.uuid})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error", "Someone else changed these settings")
+      assert Config.speech_endpoint_uuid() == nil
+    end
+
     test "a model that does not take audio, or nobody knows about, is refused", ctx do
       {:ok, view, _html} = live(ctx.conn, @path)
 

@@ -195,7 +195,9 @@ Which types of file a chat takes is a setting, `agent_attachment_types`
 `webp`, `heic`, `pdf`, `xlsx`, `csv`, `txt`, `md`. Unset, it is all of them, as
 before; a site that wants only pictures keeps the first four. The server holds
 the list, on the content's type, in `Attachments.add/4` (`type_not_allowed`;
-the Telegram bridge's pictures too) and again when a message is sent with a
+the Telegram bridge's pictures too, refused before the download by the type
+Telegram gives them — a photo is a `jpg` — and with no picture type on the list
+the bot's help no longer offers pictures) and again when a message is sent with a
 file added before the list was narrowed (`Turns.start/6`: `type_not_allowed`,
 and the user discards the file); the file input of the chat panel only mirrors
 it, and the refusal names the types the site takes. To take no file at all, set

@@ -810,6 +810,26 @@ defmodule PhoenixKitAgent.Web.DockTest do
         assert ["set_attr", %{"attr" => ["aria-expanded", "false"], "to" => more}] in ops
         assert Enum.any?(ops, &match?(["hide", %{"to" => "#" <> ^actions}], &1))
       end
+
+      # Safari leaves the focus of a clicked "⋯" on the list: Escape there closes every row's.
+      assert has_element?(view, "#pk-agent-chat-list[phx-key='Escape']")
+      ops = js_ops(view, "#pk-agent-chat-list", "phx-keydown")
+
+      assert Enum.any?(
+               ops,
+               &match?(
+                 ["hide", %{"to" => "#pk-agent-chat-list [id^='pk-agent-chat-actions-']"}],
+                 &1
+               )
+             )
+
+      assert [
+               "set_attr",
+               %{
+                 "attr" => ["aria-expanded", "false"],
+                 "to" => "#pk-agent-chat-list [id^='pk-agent-chat-more-']"
+               }
+             ] in ops
     end
 
     test "while a turn is shown Stop stands in Send's place", ctx do
@@ -891,6 +911,12 @@ defmodule PhoenixKitAgent.Web.DockTest do
       assert has_element?(
                view,
                "#pk-agent-stop[class*='pointer-coarse:min-h-11'][class*='pointer-coarse:min-w-11']"
+             )
+
+      # Core's own buttons of the composer (a file's pause, retry, cancel; the recorder's).
+      assert has_element?(
+               view,
+               "#pk-agent-files[class*='pointer-coarse:[&_button]:min-h-11'][class*='pointer-coarse:[&_button]:min-w-11']"
              )
     end
   end
@@ -1232,6 +1258,32 @@ defmodule PhoenixKitAgent.Web.DockTest do
       refute await_turn_end(view, ctx.chat) =~ "pk-agent-waiting"
       assert lock_of(ctx.chat) == {nil, nil}
       refute Enum.any?(messages(ctx.chat), &(&1.role == "assistant"))
+    end
+
+    test "a Stop right after Send is the second click of a double click: the turn goes on",
+         ctx do
+      Application.put_env(:phoenix_kit_agent, :stop_after_send_ms, 60_000)
+      on_exit(fn -> Application.put_env(:phoenix_kit_agent, :stop_after_send_ms, 0) end)
+
+      view = dock(ctx)
+      open_chat(view, ctx.chat)
+      listen(ctx, ctx.chat)
+      hang_next()
+
+      send_text(view, "Take your time")
+      assert_receive {:model_waiting, _}, 3_000
+
+      view |> element("#pk-agent-stop") |> render_click()
+
+      refute has_element?(view, "#pk-agent-waiting[data-activity=stopping]")
+      assert has_element?(view, "#pk-agent-stop:not([disabled])")
+      assert {_since, turn_ref} = lock_of(ctx.chat)
+      assert is_binary(turn_ref)
+
+      # Pressed later, Stop stops.
+      Application.put_env(:phoenix_kit_agent, :stop_after_send_ms, 0)
+      view |> element("#pk-agent-stop") |> render_click()
+      refute await_turn_end(view, ctx.chat) =~ "pk-agent-waiting"
     end
 
     test "nothing of the conversation reaches the log", ctx do
@@ -1898,6 +1950,12 @@ defmodule PhoenixKitAgent.Web.DockTest do
 
       assert has_element?(view, "input[type=file][accept*='image/*']")
       assert has_element?(view, "input[type=file][accept*='.pdf']")
+      # Markdown by either of the names `Detect` reads it by.
+      assert has_element?(view, "input[type=file][accept*='.markdown']")
+
+      {:ok, _} = Config.put_attachment_types(["md"], [])
+      view = dock(ctx)
+      assert has_element?(view, "input[type=file][accept*='.markdown']")
 
       {:ok, _} = Config.put_attachment_types(["png", "heic"], [])
       view = dock(ctx)

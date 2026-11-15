@@ -18,7 +18,9 @@ config :phoenix_kit_agent,
   telegram_link_writes: false,
   telegram_part_pause_ms: 0,
   telegram_quick_reply_ms: 0,
-  telegram_max_retry_ms: 50
+  telegram_max_retry_ms: 50,
+  # A Stop right after Send is let go (a double click); tests click at once.
+  stop_after_send_ms: 0
 
 # `PGDATABASE` lets this suite point at a database the test role isn't
 # allowed to CREATE (e.g. a shared instance) instead of the name Hex CI

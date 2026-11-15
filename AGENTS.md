@@ -52,7 +52,7 @@ and `Web.Markdown`) and the optional chat retention
   `Executor.tool_availability/1`; the AI journal's cost in dollars, V223;
   the chat's file input, core's `UploadManager` and `ResumableUpload`, and
   the linked Telegram chat as an actor: `>= 3.5.0 and < 4.0.0` in `mix.exs`),
-  `phoenix_kit_ai` `~> 0.26` (the AI task guard, tool calling, a call's
+  `phoenix_kit_ai` `~> 0.27` (the AI task guard, tool calling, a call's
   cost from one place, `Request.cost` in dollars; `transcribe/3`, optional,
   for voice), `phoenix_live_view`, and
   `mdex` (already phoenix_kit's) for the markdown of the chat panel.
@@ -155,7 +155,9 @@ and `Web.Markdown`) and the optional chat retention
   days reads as empty, never as a short period. The nightly
   `RetentionWorker` (`oban_crons/0`) reads the period from the database
   (`retention_days_direct/0`, not the cache) and hard-deletes in batches
-  (`FOR UPDATE SKIP LOCKED`, chats whose turn lock is fresh are left): chats
+  (`FOR UPDATE SKIP LOCKED`; chats whose turn lock is fresh are left, and every
+  chat of a user whose own lock is fresh — a turn or a click — judged by the
+  database's `now()` as `Turns.Locks` stamps it, never the node's clock): chats
   whose last message (`last_message_at`, else `inserted_at`) is older than the
   period, and every chat the user deleted (status `deleted`), at the next run.
   Messages and attachment rows go by `ON DELETE CASCADE`; the Storage files by
@@ -172,7 +174,9 @@ and `Web.Markdown`) and the optional chat retention
   the bucket refuses, so no row is left to find — a core follow-up, never
   promise "the photos are deleted" without that caveat.
   Nothing of a chat goes to the log or the Activity entry
-  (`agent.retention_purged`: counts and days). The period is Owner-only to change
+  (`agent.retention_purged`: counts and days; a run that fails after it
+  deleted chats still records them, `interrupted: true`). The period is
+  Owner-only to change
   (`Access.owner?/1` in `save_retention`, like `agent_capture_ai_content`); the
   page previews what a typed value would delete before it is saved.
 - **The chat panel** (`Web.Dock`): the widget's session carries only the
@@ -242,13 +246,21 @@ and `Web.Markdown`) and the optional chat retention
   `data-running`, `data-turn`) tells the page `pk-agent:turn` (`detail.state`
   `start` / `done`) on `window` whenever the panel starts or stops showing a
   turn, told apart by its ref — the host's signal, not a fact about the lock.
+  A re-join says nothing until the answer to `restore` (`data-restored`, or
+  5 s): the same turn back is no event, so a lost connection never tells the
+  host `done` then `start` for one turn.
   Under `pointer-coarse:` every button of the panel is at least 44 px both
   ways (`min-h-11 min-w-11`); a new button gets the same. The compact header's
   show and hide rules are exact opposites
   (`[.pk-dock-open.pk-agent-compact_&]`). "Stop" replaces "Send"
   (one place); a send by Enter while a turn runs is let go by the server, as
-  before. A chat's "Rename" and "Archive" are behind its "⋯", opened and
-  closed by JS commands (kept over a patch of the list).
+  before, and so is a Stop within `:stop_after_send_ms` (600 ms) of this
+  panel's Send (the second click of a double click). Core's buttons in the
+  composer (the upload manager's, the recorder's) get 44 px on touch from
+  `#pk-agent-files` (`pointer-coarse:[&_button]:…`). A chat's "Rename" and
+  "Archive" are behind its "⋯", opened and closed by JS commands (kept over a
+  patch of the list); Escape closes them from "⋯", an action, or the list
+  itself (where Safari leaves the focus of a clicked "⋯").
 - **Prompt input from a browser** (`page:`, `locale:` of `Turns.start/6`) is
   untrusted: `PhoenixKitAgent.Prompt` drops a value with a control character and
   cuts a long one. The host's `page_context: {Mod, :fun}` hook is called as
@@ -357,7 +369,8 @@ and `Web.Markdown`) and the optional chat retention
   download (`Client.download_file/3` → core's `Telegram.download_file/3`,
   `{:error, :unavailable}` on a core without it; `Client.can_download?/0` says
   so up front: such a core's voice and pictures are `text_only` and the help
-  text has no voice line), then sends "🎙 Recognised: …"
+  text has no voice line — every core of the 3.5 floor has it, the check
+  stays for the test client), then sends "🎙 Recognised: …"
   (`typing` is sent every 4 s while it recognises, as in a turn)
   and runs the normal `:turn` with the text; any error is a `Texts.speech/1`
   text and 🤷, no turn. **Panel:** the microphone is core's
@@ -378,7 +391,8 @@ and `Web.Markdown`) and the optional chat retention
   `media_group_id` the job's `group`). `Telegram.Turn` checks the chat as for
   text (`Conversations.authorize_session/2`, before "👀") and, for each
   picture, what can be known without the file
-  (`Attachments.precheck_picture_for_telegram/3`: the size limit, a model that
+  (`Attachments.precheck_picture_for_telegram/4`: the site's types of file —
+  a photo is `jpg`, a document its MIME type's —, the size limit, a model that
   could neither see nor describe), then downloads it
   (`Client.download_file/3`, 10 MB), and adds it with the **only** attachment
   entry point open to a chat: `Attachments.add_picture_for_telegram/3` — the
@@ -426,8 +440,9 @@ and `Web.Markdown`) and the optional chat retention
   sub-permission `agent.telegram` (declared `opt_in: true`; `:forbidden`
   without it). What a chat may do depends on the core: where it has
   `PhoenixKit.API.Executor.link_writes?/0` — asked in **one place only**,
-  `Config.writes?/0` (it feature-detects, since the core requirement of the
-  module is below the first release with it; `config :phoenix_kit_agent,
+  `Config.writes?/0` (it feature-detects; every core of the 3.5 floor answers
+  yes, so the read-only path below is for the tests and a stand-in core;
+  `config :phoenix_kit_agent,
   :telegram_link_writes` stands in for it in tests, and `:api_modules`
   (`executor:`, `confirm:`) for the core's modules, see
   `test/support/fake_core.ex`) — a chat proposes changes as the site does
@@ -462,8 +477,10 @@ and `Web.Markdown`) and the optional chat retention
   poll) stops reading and is `standby`. An exception in a step lets go of every
   name the process holds (the step may have taken one), so the bot is never
   left held by a reader that does not read. The offset
-  (`agent_telegram_offset`, `"<connection uuid>:<update id>"`, written with
-  `history: false`) is stored **before** the batch goes on — also from the
+  (`agent_telegram_offset`, `"<connection uuid>:<update id>:<unix time>"`, written with
+  `history: false`; one older than six days, or stored without its time, is
+  let go — Telegram numbers the update after a quiet week at random, possibly
+  below it — and so is a `taken` that old) is stored **before** the batch goes on — also from the
   `confirm:` of `Linking.handle_updates/3` — so an update is answered at most
   once; `:busy` leaves it alone and the batch is read again in 2 s. The reader
   also keeps the last id it took (`taken`): a poll asks from the later of that
@@ -480,7 +497,9 @@ and `Web.Markdown`) and the optional chat retention
   forwarded messages and anything but text and voice a fixed refusal (voice: see Voice); an edited message
   or a group is ignored. `Bridge.dispatch/3` runs it: a per-chat serial queue
   (`ChatQueue`: a process per `{bot, chat}`, at most 3 waiting, 20 queues in
-  all, overflow texts "wait" / "busy"; a job whose place comes while the switch
+  all — a new chat finding them taken asks one idle queue to end first —,
+  overflow texts "wait" / "busy"; a batch that came after the switch went off
+  in the long poll is left alone (no offset, no reply, no press); a job whose place comes while the switch
   is off is let go unanswered, `Telegram.Turn.run/3`) and the turns in
   `PhoenixKitAgent.Telegram.TaskSupervisor`; the replies that need no turn run
   under their own `ReplySupervisor` and come to a linked chat once in 3 s at

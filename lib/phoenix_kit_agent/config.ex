@@ -290,20 +290,35 @@ defmodule PhoenixKitAgent.Config do
 
   @doc """
   The last update id the Telegram reader took from the bot `connection_uuid`,
-  or `nil` (none, or kept for another bot). Read from the database, not the
-  cache: a node that takes the bot over must see the last node's write.
+  or `nil` (none, kept for another bot, or older than
+  `telegram_offset_max_age_s/0`). Read from the database, not the cache: a
+  node that takes the bot over must see the last node's write.
+
+  An offset goes stale: after a week with no update Telegram numbers the next
+  one at random, possibly below the offset, and a poll from the offset would
+  never see it again. Updates live 24 hours and every poll confirms the ones
+  before its offset, so an offset not written for six days is let go and the
+  next poll asks without one. A value stored without its time (written before
+  the time was kept) counts as stale.
   """
   @spec telegram_offset(String.t()) :: integer() | nil
   def telegram_offset(connection_uuid) when is_binary(connection_uuid) do
     with %{@telegram_offset_key => stored} when is_binary(stored) <-
            Settings.get_settings_direct([@telegram_offset_key]),
-         [^connection_uuid, id] <- String.split(stored, ":", parts: 2),
-         {offset, ""} <- Integer.parse(id) do
+         [^connection_uuid, id, at] <- String.split(stored, ":"),
+         {offset, ""} <- Integer.parse(id),
+         {at, ""} <- Integer.parse(at),
+         true <- System.os_time(:second) - at <= telegram_offset_max_age_s() do
       offset
     else
-      _none_or_another_bot -> nil
+      _none_another_bot_or_stale -> nil
     end
   end
+
+  @doc false
+  # How long the reader trusts an offset (stored, or the last id it took).
+  @spec telegram_offset_max_age_s() :: pos_integer()
+  def telegram_offset_max_age_s, do: 6 * 86_400
 
   # ── Writers ───────────────────────────────────────────────────────────
 
@@ -325,7 +340,7 @@ defmodule PhoenixKitAgent.Config do
       when is_binary(connection_uuid) and is_integer(update_id) do
     Settings.update_setting_with_module(
       @telegram_offset_key,
-      "#{connection_uuid}:#{update_id}",
+      "#{connection_uuid}:#{update_id}:#{System.os_time(:second)}",
       @module,
       history: false
     )

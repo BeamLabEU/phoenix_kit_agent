@@ -64,6 +64,15 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
     end
   end
 
+  defp put_raw_offset(nil),
+    do:
+      Repo.delete_all(from(s in "phoenix_kit_settings", where: s.key == "agent_telegram_offset"))
+
+  defp put_raw_offset(value) do
+    put_raw_offset(nil)
+    {:ok, _} = PhoenixKit.Settings.update_setting("agent_telegram_offset", value)
+  end
+
   defp stranger_update(id, opts \\ []), do: TelegramClient.update(777, "Hello", [id: id] ++ opts)
 
   describe "when it reads" do
@@ -175,6 +184,46 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
 
       cycle()
       assert [%{offset: 13, timeout: 25, limit: 100}] = polls()
+    end
+
+    test "one not written for six days is let go: Telegram may number the next update below it",
+         ctx do
+      week_ago = System.os_time(:second) - 7 * 86_400
+      put_raw_offset("#{ctx.connection}:500:#{week_ago}")
+      assert Config.telegram_offset(ctx.connection) == nil
+
+      # The new numbering starts below the old offset, and is answered.
+      TelegramClient.set(:updates, [{:ok, [stranger_update(40)]}])
+      cycle()
+      assert [%{timeout: 25} = first] = polls()
+      refute Map.has_key?(first, :offset)
+      assert Config.telegram_offset(ctx.connection) == 40
+      settle_jobs()
+      assert_received {:tg, {:send_message, _, 777, _}}
+
+      cycle()
+      assert [%{offset: 41}] = polls()
+    end
+
+    test "one stored without its time counts as stale", ctx do
+      put_raw_offset("#{ctx.connection}:500")
+      assert Config.telegram_offset(ctx.connection) == nil
+    end
+
+    test "the last id the reader took is let go after six days as well", ctx do
+      TelegramClient.set(:updates, [{:ok, [stranger_update(500)]}])
+      cycle()
+      put_raw_offset(nil)
+      _ = polls()
+
+      long_ago = System.monotonic_time(:millisecond) - 7 * 86_400 * 1000
+      :sys.replace_state(Process.whereis(@reader), &%{&1 | taken_at: long_ago})
+
+      TelegramClient.set(:updates, [{:ok, [stranger_update(40)]}])
+      cycle()
+      assert [first] = polls()
+      refute Map.has_key?(first, :offset)
+      assert Config.telegram_offset(ctx.connection) == 40
     end
 
     test "a restarted reader goes on after it: nothing read is answered twice", ctx do
@@ -367,6 +416,22 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
       refute_received {:tg, {:send_message, _, _, _}}
 
       send(winner, :stop)
+    end
+
+    test "a batch that comes after the switch went off in the long poll is left alone", ctx do
+      # While the reader waits for Telegram, an admin switches the bot off.
+      TelegramClient.set(:updates, [
+        fn ->
+          {:ok, _} = Config.put_telegram_enabled(false, [])
+          {:ok, [stranger_update(62)]}
+        end
+      ])
+
+      assert {:off, 30_000} = cycle()
+      assert Config.telegram_offset(ctx.connection) == nil
+      refute Reader.holds?(ctx.connection)
+      settle_jobs()
+      refute_received {:tg, {:send_message, _, _, _}}
     end
 
     test "a conflict message about another name changes nothing", ctx do

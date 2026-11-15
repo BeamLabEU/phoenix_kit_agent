@@ -9,7 +9,7 @@ defmodule PhoenixKitAgent.Telegram.Texts do
 
   use Gettext, backend: PhoenixKitAgent.Gettext
 
-  alias PhoenixKitAgent.Config
+  alias PhoenixKitAgent.{Attachments, Config}
   alias PhoenixKitAgent.Telegram.Client
   alias PhoenixKitAgent.Web.Dock.Texts, as: Panel
 
@@ -33,10 +33,11 @@ defmodule PhoenixKitAgent.Telegram.Texts do
   def static(:wait), do: gettext("Wait a little: I am still answering your previous message.")
 
   def static(:text_only) do
-    cond do
-      not Client.impl().can_download?() -> gettext("I understand text only for now.")
-      Config.speech?() -> gettext("I understand text, voice messages and pictures for now.")
-      true -> gettext("I understand text and pictures for now.")
+    case {Client.impl().can_download?() and Config.speech?(), pictures?()} do
+      {true, true} -> gettext("I understand text, voice messages and pictures for now.")
+      {true, false} -> gettext("I understand text and voice messages for now.")
+      {false, true} -> gettext("I understand text and pictures for now.")
+      {false, false} -> gettext("I understand text only for now.")
     end
   end
 
@@ -60,21 +61,27 @@ defmodule PhoenixKitAgent.Telegram.Texts do
         )
   end
 
-  # What the bot reads besides text, as far as the core and the settings allow.
+  # What the bot reads besides text, as far as the core and the settings allow
+  # (pictures only of a type the site takes).
   defp reads do
-    cond do
-      not Client.impl().can_download?() ->
-        gettext("I read text only.")
+    pictures =
+      if pictures?(),
+        do: [gettext("Pictures work too: send one, with a question if you like.")],
+        else: []
 
-      Config.speech?() ->
-        gettext("Pictures work too: send one, with a question if you like.") <>
-          " " <>
-          gettext("Voice messages work too: I write down what you said and answer it.")
+    voice =
+      if Client.impl().can_download?() and Config.speech?(),
+        do: [gettext("Voice messages work too: I write down what you said and answer it.")],
+        else: []
 
-      true ->
-        gettext("Pictures work too: send one, with a question if you like.")
+    case pictures ++ voice do
+      [] -> gettext("I read text only.")
+      lines -> Enum.join(lines, " ")
     end
   end
+
+  defp pictures?,
+    do: Client.impl().can_download?() and Attachments.telegram_picture_types() != []
 
   @doc """
   The text for the error of a voice message (`PhoenixKitAgent.Speech`, or

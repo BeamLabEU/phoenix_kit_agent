@@ -767,6 +767,21 @@ defmodule PhoenixKitAgent.ConfirmationsTest do
       assert {:ok, :confirmed} = confirm(ctx, card)
     end
 
+    test "a row a lost click spent, then a refusal before redeeming: confirmed, never failed",
+         ctx do
+      card = card!(ctx)
+
+      # Core spent the row and ran the change; the click's answer was lost.
+      Repo.update_all(from(c in Confirmation, where: c.uuid == ^card.confirmation_uuid),
+        set: [status: "used"]
+      )
+
+      # The next click is refused before core comes to the row.
+      open_writes(false)
+      assert {:ok, :confirmed} = confirm(ctx, card)
+      assert [%Message{tool_outcome: "confirmed"}] = outcome_notices(ctx.chat)
+    end
+
     test "a handler that refuses its dry run now leaves the card waiting", ctx do
       card = card!(ctx)
       {:ok, _} = Settings.update_setting("agenttest_locked", "yes")

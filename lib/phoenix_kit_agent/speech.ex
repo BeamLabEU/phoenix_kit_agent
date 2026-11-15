@@ -156,6 +156,12 @@ defmodule PhoenixKitAgent.Speech do
     end
   end
 
+  @doc false
+  # How long one recognition call may take: a caller that waits a given time
+  # for the words passes a `deadline:` that leaves that much of it.
+  @spec call_timeout_ms() :: pos_integer()
+  def call_timeout_ms, do: @timeout_ms
+
   defp not_abandoned(nil), do: :ok
 
   defp not_abandoned(deadline),
