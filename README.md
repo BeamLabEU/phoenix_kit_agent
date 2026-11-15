@@ -112,9 +112,10 @@ window.addEventListener("pk-agent:turn", (event) => {
 ```
 
 An answer is told apart by its turn: opening a chat whose own answer is being
-written tells `done` for the last one and `start` for it. A connection lost
-and found again may tell `done` and `start` once more for the same answer. A
-page that starts listening late reads the state now from
+written tells `done` for the last one and `start` for it. A reconnect waits for
+the restored chat before reporting a change, so the same answer coming back
+does not produce another `done` and `start`. A page that starts listening late
+reads the state now from
 `#pk-agent-turn[data-running]` (`"true"` / `"false"`; `data-turn` is the turn).
 
 The tools called from the panel get the user's locale and the endpoint's URL as
@@ -280,6 +281,34 @@ file stopped), with a pause, retry and cancel for each file. It needs core's
 PDF processing needs poppler (`pdfinfo`, `pdftotext`, `pdftoppm`) and pictures
 need ImageMagick (`convert`, `identify`) on the host; without them such a file
 fails with `pdf_tools_missing` / `image_tools_missing`, nothing else breaks.
+
+## Telegram
+
+The assistant can answer private chats linked to the website's Telegram bot.
+Configure the website notification bot in PhoenixKit's Telegram integration,
+and let the agent coordinate polling with core's account-linking flow:
+
+```elixir
+config :phoenix_kit,
+  telegram_updates_reader: {PhoenixKitAgent.Telegram.Reader, :holds?, []}
+```
+
+The bot must have no webhook. Enable **Settings → AI Agent → Answer in Telegram**
+(`agent_telegram_enabled`, off by default). Grant the user's role both `agent`
+and `agent.telegram`; the Telegram permission is opt-in, including for Admins.
+The user links their private chat under **Profile → Telegram**, then writes to
+the bot. `/help` explains what it accepts; `/new` starts a new conversation.
+
+Telegram uses the user's own model, instructions, limits and spending, with
+their default role's rights. Changes allowed by core's `api_session_write_modules`
+setting wait for confirmation: the bot shows a preview and ✅ / ❌ buttons, and
+only a confirmation carries out the change. The same conversation and its
+confirmation cards are also available in the site's chat panel.
+
+The link and rights are checked again after a model call or speech recognition,
+and before each outgoing answer part, confirmation card and retry. If the chat
+was unlinked or linked to someone else, pending private text is withheld.
+Forwarded messages, group chats and edited messages do not start turns.
 
 ## Pictures from Telegram
 
@@ -458,9 +487,11 @@ days from 1 to 3650; empty is the default) to have them deleted for good:
 
 With each chat go its messages and attachment rows, and the Storage files of its
 attachments from the hidden library, unless another row still uses the file
-(`PhoenixKitAgent.Retention`). A chat whose turn holds its lock is left for the
-next night. The job is `PhoenixKitAgent.RetentionWorker`, in core's `default`
-queue, scheduled once a night (03:43) by the module's `oban_crons/0`, which
+(`PhoenixKitAgent.Retention`). A user whose turn or confirmation click holds its
+lock keeps their chats for the next run. The purge also skips a user whose lock
+is being acquired by another transaction. The job is
+`PhoenixKitAgent.RetentionWorker`, in core's `default` queue, scheduled once
+a night (03:43) by the module's `oban_crons/0`, which
 core writes into the host's crontab on `mix phoenix_kit.update`. It runs
 whether or not the module is switched on, and does nothing while the period
 is empty. An unreadable stored value is read as empty, never as a short period.

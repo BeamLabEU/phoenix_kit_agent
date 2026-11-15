@@ -1,7 +1,7 @@
 defmodule PhoenixKitAgent.Migrations do
   @moduledoc """
   Module-owned versioned migrations for `phoenix_kit_agent` — the protocol core's
-  `mix phoenix_kit.update` discovers through `PhoenixKitAgent.migration_module/0`
+  `mix phoenix_kit.update` discovers through `PhoenixKitAgent`'s `migration_module()`
   (`current_version/0`, `migrated_version_runtime/1`, `up/1`, `down/1`). Same
   shape as `PhoenixKitDashboards.Migrations`: two version readers, `up/1`
   re-reading the version before it changes anything, the SQL kept as data

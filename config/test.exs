@@ -1,5 +1,9 @@
 import Config
 
+# Authentication is exercised throughout the integration suite; a production
+# password-hashing cost adds minutes without changing what these tests cover.
+config :bcrypt_elixir, log_rounds: 4
+
 # Integration tests need a real PostgreSQL database. Create it with:
 #   createdb phoenix_kit_agent_test
 config :phoenix_kit_agent, ecto_repos: [PhoenixKitAgent.Test.Repo]

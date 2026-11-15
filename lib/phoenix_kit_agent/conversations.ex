@@ -65,7 +65,7 @@ defmodule PhoenixKitAgent.Conversations do
   delete a chat, add a message through `add_message/4`, or write the personal
   instructions (`{:error, :not_in_telegram}`).
 
-  `create_conversation_for/2`, `latest_telegram_conversation/1`,
+  `create_conversation_for/2`, `latest_telegram_conversation/2`,
   `turn_result/2`, `turn_error/2`, `turn_denied?/2`, `put_telegram_card/6` and
   `telegram_card/2` are the bridge's own, trusted: they take no session and are
   never to be called from a client's event.
@@ -186,7 +186,7 @@ defmodule PhoenixKitAgent.Conversations do
   # (see the moduledoc). `metadata` tells the source (`"source" => "telegram"`).
   # The module's switches are checked when a turn starts, not here.
   # A user that is not a UUID (or a map without one) is `{:error, :not_found}`,
-  # as `latest_telegram_conversation/1` finds nothing for it.
+  # as `latest_telegram_conversation/2` finds nothing for it.
   @spec create_conversation_for(User.t() | map() | String.t(), keyword()) ::
           {:ok, Conversation.t()} | {:error, :not_found | Ecto.Changeset.t()}
   def create_conversation_for(user, opts \\ [])

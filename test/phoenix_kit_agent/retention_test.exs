@@ -13,9 +13,10 @@ defmodule PhoenixKitAgent.RetentionTest do
   alias PhoenixKit.Activity.Entry
   alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Settings
-  alias PhoenixKitAgent.{Config, Library, Retention, RetentionWorker}
+  alias PhoenixKitAgent.{Config, Library, Retention, RetentionWorker, Turns}
   alias PhoenixKitAgent.Schemas.{Attachment, Conversation, Message, UserSettings}
   alias PhoenixKitAgent.Test.Files
+  alias PhoenixKitAgent.Turns.Locks
 
   @key "agent_retention_days"
 
@@ -467,6 +468,68 @@ defmodule PhoenixKitAgent.RetentionTest do
       assert {:ok, %{conversations: 0}} = result
       assert Retention.due_count(30) == 1
       assert Repo.get(Conversation, chat_uuid)
+    end
+
+    test "a click acquiring the user's lock keeps the chat before its update commits",
+         %{lock_repo: lock_repo} do
+      test_pid = self()
+
+      holder =
+        Task.async(fn ->
+          Repo.put_dynamic_repo(lock_repo)
+
+          user =
+            Repo.insert!(%PhoenixKit.Users.Auth.User{
+              email: "click-#{System.unique_integer([:positive])}@example.com",
+              hashed_password: "x"
+            })
+
+          chat = Repo.insert!(%Conversation{user_uuid: user.uuid, last_message_at: ago(90)})
+          Repo.insert!(%UserSettings{user_uuid: user.uuid})
+
+          Repo.transaction(fn ->
+            :ok =
+              Locks.acquire_user(
+                user.uuid,
+                Locks.click_ref(),
+                Turns.lock_ttl_s(),
+                30
+              )
+
+            send(test_pid, {:click_acquiring, user.uuid, chat.uuid})
+
+            receive do
+              :release -> :ok
+            after
+              10_000 -> :timeout
+            end
+          end)
+        end)
+
+      assert_receive {:click_acquiring, user_uuid, chat_uuid}, 5_000
+      on_exit(fn -> delete_committed(lock_repo, user_uuid) end)
+
+      # Roll back the run's transaction so sandbox-held row locks are released
+      # before cleanup deletes the committed fixture rows. Its summary still
+      # proves whether the purge attempted to delete the chat.
+      run =
+        Task.async(fn ->
+          {:error, result} = Repo.transaction(fn -> Repo.rollback(Retention.run()) end)
+          result
+        end)
+
+      result =
+        case Task.yield(run, 3_000) || Task.shutdown(run, :brutal_kill) do
+          {:ok, result} -> result
+          other -> other
+        end
+
+      send(holder.pid, :release)
+      Task.await(holder, 15_000)
+
+      assert {:ok, %{conversations: 0}} = result
+      assert Repo.get(Conversation, chat_uuid)
+      assert Retention.due_count(30) == 0
     end
 
     defp delete_committed(lock_repo, user_uuid) do

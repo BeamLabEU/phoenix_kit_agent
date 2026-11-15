@@ -20,7 +20,7 @@ defmodule PhoenixKitAgent.Retention do
       "Delete", not N days later.
 
   A chat whose turn holds its lock right now (a turn in flight;
-  `PhoenixKitAgent.Turns.lock_ttl_s/0`) is left for the next run, and so is
+  `PhoenixKitAgent.Turns`'s `lock_ttl_s()`) is left for the next run, and so is
   every chat of a user whose own lock is held (a turn, or a click that
   confirms a write: a click takes only the user's lock), and a row a
   transaction of the module holds. A lock is judged by the database's clock,
@@ -29,7 +29,7 @@ defmodule PhoenixKitAgent.Retention do
   With a chat go, in the one transaction, its messages and its attachment rows
   (the database's `ON DELETE CASCADE`); afterwards the Storage files of its
   attachments are deleted completely from the hidden library
-  (`PhoenixKitAgent.UserDeletion.release_files/1`) — only a file that lies in
+  (`PhoenixKitAgent.UserDeletion`'s `release_files(files)`) — only a file that lies in
   the module's library and that nothing else refers to; a file something else
   uses is left alone.
 
@@ -37,7 +37,7 @@ defmodule PhoenixKitAgent.Retention do
   gone once the transaction commits, so a file whose release failed (the job
   or the node stopped between the commit and the release, or Storage or the
   database refused the delete) is no longer found through them. Each run
-  therefore ends with a sweep (`PhoenixKitAgent.UserDeletion.release_orphans/1`):
+  therefore ends with a sweep (`PhoenixKitAgent.UserDeletion`'s `release_orphans(opts)`):
   every file of the hidden library that no attachment row refers to and that is
   older than a day (a file a request is storing now is never met) is released
   the same way. A failure is logged as its class, and the file is met again the
@@ -58,7 +58,7 @@ defmodule PhoenixKitAgent.Retention do
   text of requests; the spending the journal counts; the user's settings, their
   personal instructions and the notices of limits.
 
-  The period is read from the database each run (`Config.retention_days_direct/0`),
+  The period is read from the database each run (`PhoenixKitAgent.Config`'s `retention_days_direct()`),
   not from the cache. Work is done in batches within a time budget; what is
   left waits for the next night. The run is recorded in the Activity log as
   `agent.retention_purged` — counts (chats, messages, attachment rows, Storage
@@ -205,6 +205,7 @@ defmodule PhoenixKitAgent.Retention do
           from(c in due_query(now, days), select: c.uuid, order_by: c.uuid, limit: ^batch)
           |> lock_skipping()
           |> repo().all()
+          |> lock_users(now, days)
 
         case uuids do
           [] ->
@@ -223,6 +224,39 @@ defmodule PhoenixKitAgent.Retention do
   end
 
   defp lock_skipping(query), do: from(c in query, lock: "FOR UPDATE SKIP LOCKED")
+
+  defp lock_users([], _now, _days), do: []
+
+  # A click takes only the user's lock. Its update may still be uncommitted
+  # when the due query reads the old, idle value. Hold the settings rows too,
+  # skipping any another transaction holds, then read eligibility again.
+  # A click that starts afterwards waits for this batch and finds its card
+  # gone before it can redeem anything. Turns lock the chat before the user,
+  # as we do here; SKIP LOCKED avoids waiting on either path.
+  defp lock_users(uuids, now, days) do
+    users = from(c in Conversation, where: c.uuid in ^uuids, select: c.user_uuid)
+
+    locked =
+      from(s in UserSettings,
+        where: s.user_uuid in subquery(users),
+        order_by: s.user_uuid,
+        select: s.user_uuid
+      )
+      |> lock_skipping()
+      |> repo().all()
+
+    unlocked =
+      from(s in UserSettings,
+        where: s.user_uuid in subquery(users) and s.user_uuid not in ^locked,
+        select: s.user_uuid
+      )
+
+    from(c in due_query(now, days),
+      where: c.uuid in ^uuids and c.user_uuid not in subquery(unlocked),
+      select: c.uuid
+    )
+    |> repo().all()
+  end
 
   defp count(schema, conversation_uuids) do
     repo().aggregate(

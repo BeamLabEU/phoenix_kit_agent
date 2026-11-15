@@ -21,7 +21,7 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
   alias PhoenixKit.Users.Roles
   alias PhoenixKitAgent.{Config, Confirmations, Conversations, Prompt, Turns}
   alias PhoenixKitAgent.Schemas.{Conversation, Message}
-  alias PhoenixKitAgent.Telegram.{Bridge, Limiter, Texts}
+  alias PhoenixKitAgent.Telegram.{Bridge, Cards, Limiter, Texts}
   alias PhoenixKitAgent.Test.{LogProbe, TelegramClient, Tools}
   alias PhoenixKitAgent.Turns.Locks
 
@@ -782,6 +782,20 @@ defmodule PhoenixKitAgent.Telegram.ConfirmTest do
   # ── what the site settles ───────────────────────────────────────────
 
   describe "an outcome written elsewhere" do
+    test "a card send is not retried after its chat is unlinked", ctx do
+      held = hold!(ctx)
+
+      TelegramClient.set(:send, fn _chat_id, _text, _opts ->
+        :ok = Linking.drop_links(ctx.user.uuid)
+        {:error, "Too Many Requests: retry after 0"}
+      end)
+
+      assert :error = Cards.deliver(ctx.connection, ctx.ref, held.chat.uuid, held.card)
+      assert [_first_attempt] = cards_sent(drain())
+      assert row(held.uuid).status == "unused"
+      assert written() == nil
+    end
+
     test "✅ on the site: the card in Telegram says done, without buttons", ctx do
       held = hold!(ctx)
 

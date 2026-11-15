@@ -10,6 +10,7 @@ defmodule PhoenixKitAgent.Telegram.VoiceTest do
 
   import Ecto.Query, only: [from: 2]
 
+  alias PhoenixKit.Integrations.Telegram.Linking
   alias PhoenixKit.ModuleRegistry
   alias PhoenixKit.Settings
   alias PhoenixKitAgent.{Config, Conversations, Speech}
@@ -423,6 +424,30 @@ defmodule PhoenixKitAgent.Telegram.VoiceTest do
   end
 
   describe "while it is being written down" do
+    test "a chat unlinked during recognition receives none of the recognised text", ctx do
+      Req.Test.expect(@stub, fn conn ->
+        :ok = Linking.drop_links(ctx.user.uuid)
+
+        Req.Test.json(conn, %{
+          "model" => @ears,
+          "choices" => [
+            %{
+              "message" => %{
+                "role" => "assistant",
+                "content" => Jason.encode!(%{"text" => "Private dictation", "language" => "en"})
+              }
+            }
+          ],
+          "usage" => %{"prompt_tokens" => 30, "completion_tokens" => 8, "total_tokens" => 38}
+        })
+      end)
+
+      voice(ctx)
+      calls = calls_until(reaction?("🤷"))
+      assert texts(calls) == [Texts.static(:unlinked)]
+      assert user_messages(ctx.user) == []
+    end
+
     test "the bot shows typing again and again", ctx do
       Application.put_env(:phoenix_kit_agent, :telegram_typing_every_ms, 40)
       on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :telegram_typing_every_ms) end)

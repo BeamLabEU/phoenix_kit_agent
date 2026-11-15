@@ -1,7 +1,7 @@
 defmodule PhoenixKitAgent.Turns.Supervisor do
   @moduledoc """
   The processes of the turn loop, started by the host through
-  `PhoenixKitAgent.children/0`:
+  `PhoenixKitAgent`'s `children()` callback:
 
     * `PhoenixKitAgent.Turns.Registry` — a running turn's task under its
       `turn_ref` (what "Stop" finds it by);

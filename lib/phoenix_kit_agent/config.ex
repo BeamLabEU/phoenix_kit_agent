@@ -25,7 +25,7 @@ defmodule PhoenixKitAgent.Config do
   | `agent_retention_days` | none — chats are kept without a time limit (`PhoenixKitAgent.Retention`) |
   | `agent_attachment_types` | none — every type the module reads: png, jpg, webp, heic, pdf, xlsx, csv, txt, md |
   | `agent_telegram_enabled` | `false` — answer the linked chats of the site's Telegram bot |
-  | `agent_telegram_offset` | none — `"<bot connection uuid>:<last update id>"`, kept by the reader |
+  | `agent_telegram_offset` | none — `"<bot connection uuid>:<last update id>:<unix seconds>"`, kept by the reader |
 
   Money is in micro-dollars ($1 = 1_000_000); the AI journal keeps dollars
   (`phoenix_kit_ai_requests.cost`), read through `cost_to_micro/1`. A stored
@@ -68,7 +68,7 @@ defmodule PhoenixKitAgent.Config do
   alias PhoenixKit.Activity
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Settings
-  alias PhoenixKit.Settings.History
+  alias PhoenixKit.Settings.{History, Queries}
   alias PhoenixKit.Utils.Number
   alias PhoenixKitAgent.Attachments.Detect
   alias PhoenixKitAgent.Schemas.Message
@@ -252,26 +252,61 @@ defmodule PhoenixKitAgent.Config do
   The last update id the Telegram reader took from the bot `connection_uuid`,
   or `nil` (none, kept for another bot, or older than
   `telegram_offset_max_age_s/0`). Read from the database, not the cache: a
-  node that takes the bot over must see the last node's write.
+  node that takes the bot over must see the last node's write. A database
+  failure propagates to the reader, which backs off without polling: treating
+  it as no offset could answer the last batch twice after a restart.
 
   An offset goes stale: after a week with no update Telegram numbers the next
   one at random, possibly below the offset, and a poll from the offset would
   never see it again. Updates live 24 hours and every poll confirms the ones
   before its offset, so an offset not written for six days is let go and the
   next poll asks without one. A value stored without its time (written before
-  the time was kept) counts as stale.
+  the time was kept) is trusted and stamped: the last batch is still
+  unconfirmed until the next poll, and dropping the offset would answer it
+  again. The six-day clock then starts at that stamp.
   """
   @spec telegram_offset(String.t()) :: integer() | nil
   def telegram_offset(connection_uuid) when is_binary(connection_uuid) do
-    with %{@telegram_offset_key => stored} when is_binary(stored) <-
-           Settings.get_settings_direct([@telegram_offset_key]),
-         [^connection_uuid, id, at] <- String.split(stored, ":"),
-         {offset, ""} <- Integer.parse(id),
-         {at, ""} <- Integer.parse(at),
-         true <- System.os_time(:second) - at <= telegram_offset_max_age_s() do
+    # `get_settings_direct/1` hides failures as an empty map. The underlying
+    # query distinguishes a missing setting from an unavailable database.
+    case Queries.get_setting_by_key(@telegram_offset_key) do
+      %{value: stored} when is_binary(stored) ->
+        decode_telegram_offset(connection_uuid, stored)
+
+      _none ->
+        nil
+    end
+  end
+
+  defp decode_telegram_offset(connection_uuid, stored) do
+    case String.split(stored, ":") do
+      [^connection_uuid, id, at] -> fresh_offset(id, at)
+      [^connection_uuid, id] -> legacy_offset(connection_uuid, id)
+      _other_bot -> nil
+    end
+  end
+
+  defp fresh_offset(id, at) do
+    with {offset, ""} <- Integer.parse(id),
+         {written, ""} <- Integer.parse(at),
+         true <- System.os_time(:second) - written <= telegram_offset_max_age_s() do
       offset
     else
-      _none_another_bot_or_stale -> nil
+      _stale -> nil
+    end
+  end
+
+  # The id is kept, and rewritten with the time, even when the write fails:
+  # the next read tries the stamp again, and a poll without the offset would
+  # take the last batch a second time.
+  defp legacy_offset(connection_uuid, id) do
+    case Integer.parse(id) do
+      {offset, ""} ->
+        _ = put_telegram_offset(connection_uuid, offset)
+        offset
+
+      _bad ->
+        nil
     end
   end
 

@@ -412,6 +412,46 @@ defmodule PhoenixKitAgent.Telegram.FlowTest do
       refute text =~ "Stop"
     end
 
+    test "a link dropped during the final model call gets no private answer", ctx do
+      Req.Test.expect(@stub, fn conn ->
+        :ok = Linking.drop_links(ctx.user.uuid)
+        Req.Test.json(conn, answer("Private account details."))
+      end)
+
+      send_update(ctx, "Read my account")
+      calls = calls_until(reaction?("🤷"))
+      assert texts(calls) == [Texts.static(:unlinked)]
+    end
+
+    test "relinking the chat during a long answer stops its remaining parts", ctx do
+      stranger = user_with(["agent", "agent.telegram"], "new-recipient")
+      model_says(String.duplicate("Private details. ", 600))
+
+      TelegramClient.set(:send, fn chat_id, _text ->
+        :ok = Linking.drop_links(ctx.user.uuid)
+        telegram_link_fixture(stranger, ctx.connection, chat_id)
+        {:ok, %{"message_id" => 1}}
+      end)
+
+      send_update(ctx, "Read my account")
+      calls = calls_until(&match?({:react, _, _, _, emoji} when emoji in ["👍", "🤷"], &1))
+      assert [_first_part] = texts(calls)
+      assert List.last(emojis(calls)) == "🤷"
+    end
+
+    test "a retry does not send an answer after the link was dropped", ctx do
+      model_says("Private account details.")
+
+      TelegramClient.set(:send, fn _chat_id, _text ->
+        :ok = Linking.drop_links(ctx.user.uuid)
+        {:error, "Too Many Requests: retry after 0"}
+      end)
+
+      send_update(ctx, "Read my account")
+      calls = calls_until(reaction?("🤷"))
+      assert ["Private account details."] = texts(calls)
+    end
+
     test "a link dropped while the turn runs is told as 'not linked'", ctx do
       Req.Test.expect(@stub, fn conn ->
         calls = [

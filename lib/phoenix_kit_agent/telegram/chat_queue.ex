@@ -139,7 +139,9 @@ defmodule PhoenixKitAgent.Telegram.ChatQueue do
       receive do
         {:DOWN, ^monitor, :process, ^pid, _reason} -> true
       after
-        1_000 -> false
+        1_000 ->
+          Process.demonitor(monitor, [:flush])
+          false
       end
     else
       Process.demonitor(monitor, [:flush])

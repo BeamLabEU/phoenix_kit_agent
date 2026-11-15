@@ -163,6 +163,17 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
   end
 
   describe "the offset" do
+    test "a database failure is never read as an absent offset", ctx do
+      previous_repo = Repo.get_dynamic_repo()
+      Repo.put_dynamic_repo(:agent_offset_repo_not_running)
+
+      try do
+        assert_raise RuntimeError, fn -> Config.telegram_offset(ctx.connection) end
+      after
+        Repo.put_dynamic_repo(previous_repo)
+      end
+    end
+
     test "is the last update id taken, and the next poll asks for the one after it", ctx do
       TelegramClient.set(:updates, [
         {:ok, [stranger_update(10), stranger_update(12), stranger_update(11)]}
@@ -195,9 +206,32 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
       assert [%{offset: 41}] = polls()
     end
 
-    test "one stored without its time counts as stale", ctx do
+    test "one stored without its time is kept and stamped, so the next poll does not reread it",
+         ctx do
       put_raw_offset("#{ctx.connection}:500")
-      assert Config.telegram_offset(ctx.connection) == nil
+      # The raw write goes through the public settings API, so it has a history
+      # line. The stamp must not add one (`history: false`).
+      before = History.list("agent_telegram_offset")
+      refute before == []
+
+      assert Config.telegram_offset(ctx.connection) == 500
+      assert History.list("agent_telegram_offset") == before
+
+      stored =
+        PhoenixKit.Settings.get_settings_direct(["agent_telegram_offset"])[
+          "agent_telegram_offset"
+        ]
+
+      assert [connection, "500", at] = String.split(stored, ":")
+      assert connection == ctx.connection
+      assert {written, ""} = Integer.parse(at)
+      assert_in_delta written, System.os_time(:second), 5
+
+      # An id below the stored one is what a poll without an offset would be
+      # given again. The poll asks past 500, so it is not that poll.
+      TelegramClient.set(:updates, [{:ok, []}])
+      cycle()
+      assert [%{offset: 501, timeout: 25, limit: 100}] = polls()
     end
 
     test "the last id the reader took is let go after six days as well", ctx do
@@ -246,13 +280,13 @@ defmodule PhoenixKitAgent.Telegram.ReaderTest do
       assert_receive {:offset_at_send, 31}, 5_000
     end
 
-    test "a read of it that fails is no reason to read the last batch again", ctx do
+    test "a setting removed during a running reader does not replay the last batch", ctx do
       TelegramClient.set(:updates, [{:ok, [stranger_update(10)]}, {:ok, [stranger_update(10)]}])
       cycle()
       assert_receive {:tg, {:send_message, _, 777, _}}, 5_000
       _ = polls()
 
-      # What a failed read of the setting gives (`get_settings_direct/1`: `%{}`).
+      # The in-memory offset also protects against an accidentally removed setting.
       Repo.delete_all(from(s in "phoenix_kit_settings", where: s.key == "agent_telegram_offset"))
       assert Config.telegram_offset(ctx.connection) == nil
 

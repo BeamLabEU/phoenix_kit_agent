@@ -47,6 +47,7 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   alias PhoenixKit.Integrations.Telegram.Linking
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Utils.RecipientLocale
+  alias PhoenixKitAgent.Conversations
   alias PhoenixKitAgent.Telegram.{ChatQueue, Client, Format, Limiter, Press, Texts}
 
   @max_age_s 600
@@ -70,7 +71,7 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   an album, the `group`.
   """
   @type job :: %{
-          required(:kind) => :turn | :new | :voice,
+          required(:kind) => :turn | :new | :voice | :photo,
           required(:message_id) => integer(),
           required(:text) => String.t() | nil,
           optional(:group) => String.t(),
@@ -322,7 +323,7 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
 
   defp picture(_message), do: nil
 
-  # The largest that fits (by its size in bytes, not by its place in the list);
+  # The largest that fits (by pixel area, not by its place in the list);
   # else the smallest (the job refuses it as too large).
   defp pick_size(sizes) do
     case Enum.filter(sizes, &fits?/1) do
@@ -438,16 +439,18 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
 
   @doc false
   # Sends `text` (cut into messages), with one more try when Telegram says to
-  # wait. Only the kind of a failure is logged.
-  @spec say(String.t(), integer(), String.t()) :: :ok | :error
-  def say(connection_uuid, chat_id, text) do
+  # wait. Private text takes the actor reference: its link and rights are
+  # checked before every part and retry, including after a pause. An integer
+  # destination is for fixed replies that contain no account data.
+  @spec say(String.t(), integer() | ref(), String.t()) :: :ok | :error
+  def say(connection_uuid, recipient, text) do
     text
     |> Format.chunks()
     |> Enum.with_index()
     |> Enum.reduce_while(:ok, fn {part, index}, :ok ->
       if index > 0, do: Process.sleep(part_pause_ms())
 
-      case send_part(connection_uuid, chat_id, part, []) do
+      case send_part(connection_uuid, recipient, part, []) do
         {:ok, _message} -> {:cont, :ok}
         :error -> {:halt, :error}
       end
@@ -458,19 +461,36 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
   # Sends a card (`text` under the inline keyboard `markup`, or without one) the
   # way `say/3` sends a text: `{:ok, message_id}` (`nil` when Telegram's answer
   # names none) or `:error`.
-  @spec send_card(String.t(), integer(), String.t(), map() | nil) ::
+  @spec send_card(String.t(), ref(), String.t(), map() | nil) ::
           {:ok, integer() | nil} | :error
-  def send_card(connection_uuid, chat_id, text, markup) do
+  def send_card(connection_uuid, ref, text, markup) do
     opts = if markup, do: [reply_markup: markup], else: []
 
-    case send_part(connection_uuid, chat_id, text, opts) do
+    case send_part(connection_uuid, ref, text, opts) do
       {:ok, %{"message_id" => message_id}} when is_integer(message_id) -> {:ok, message_id}
       {:ok, _other} -> {:ok, nil}
       :error -> :error
     end
   end
 
-  defp send_part(connection_uuid, chat_id, part, opts, retried? \\ false) do
+  defp send_part(connection_uuid, recipient, part, opts, retried? \\ false) do
+    case recipient_chat(connection_uuid, recipient) do
+      {:ok, chat_id} -> deliver_part(connection_uuid, chat_id, recipient, part, opts, retried?)
+      :error -> :error
+    end
+  end
+
+  defp recipient_chat(connection, {:telegram_link, user, connection, chat_id} = ref) do
+    case Conversations.authorize_session(ref, impersonated: false) do
+      {:ok, ^user} -> {:ok, chat_id}
+      {:error, _refused} -> :error
+    end
+  end
+
+  defp recipient_chat(_connection, chat_id) when is_integer(chat_id), do: {:ok, chat_id}
+  defp recipient_chat(_connection, _other), do: :error
+
+  defp deliver_part(connection_uuid, chat_id, recipient, part, opts, retried?) do
     case Client.impl().send_message(connection_uuid, chat_id, part, opts) do
       {:ok, message} ->
         {:ok, message}
@@ -482,7 +502,7 @@ defmodule PhoenixKitAgent.Telegram.Bridge do
 
           ms ->
             Process.sleep(ms)
-            send_part(connection_uuid, chat_id, part, opts, true)
+            send_part(connection_uuid, recipient, part, opts, true)
         end
 
       {:error, reason} ->

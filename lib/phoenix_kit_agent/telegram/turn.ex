@@ -27,7 +27,7 @@ defmodule PhoenixKitAgent.Telegram.Turn do
 
   A picture (`:photo` job: a photo, or a document that is a jpeg, png or webp)
   is added to the person's Telegram conversation as the chat panel's upload is
-  (`PhoenixKitAgent.Attachments.add_picture_for_telegram/3`: the same checks,
+  (`PhoenixKitAgent.Attachments`'s `add_picture_for_telegram(ref, chat, bytes)`: the same checks,
   storage, processing and limits; the model sees pixels or a description as
   `Processor.picture_mode/1` says, and a person whose model cannot see and who
   has no vision model is told so). The turn waits, for a bounded time, for the
@@ -104,19 +104,19 @@ defmodule PhoenixKitAgent.Telegram.Turn do
              do: Speech.transcribe(ref, bytes, job.voice.format, impersonated: false)
       end)
 
-    case recognised do
-      {:ok, text} ->
-        Bridge.say(connection_uuid, chat_id, Texts.recognised(text))
+    with {:ok, text} <- recognised,
+         {:ok, _user_uuid} <- authorize(ref) do
+      Bridge.say(connection_uuid, ref, Texts.recognised(text))
 
-        converse(
-          connection_uuid,
-          ref,
-          %{job | kind: :turn, text: text},
-          user_uuid,
-          chat_id,
-          locale
-        )
-
+      converse(
+        connection_uuid,
+        ref,
+        %{job | kind: :turn, text: text},
+        user_uuid,
+        chat_id,
+        locale
+      )
+    else
       {:error, reason} ->
         refuse_with(connection_uuid, chat_id, job.message_id, Texts.speech(reason))
     end
@@ -501,11 +501,35 @@ defmodule PhoenixKitAgent.Telegram.Turn do
        ) do
     await(connection_uuid, chat_id, conversation.uuid, turn_ref)
 
+    case authorize(ref) do
+      {:ok, _user_uuid} ->
+        deliver_outcome(connection_uuid, ref, message_id, conversation, turn_ref)
+
+      {:error, reason} ->
+        refuse(connection_uuid, chat_id, message_id, reason)
+    end
+  end
+
+  defp outcome(
+         connection_uuid,
+         {:telegram_link, _user, _connection, chat_id},
+         message_id,
+         _conversation,
+         {:error, reason}
+       ),
+       do: refuse(connection_uuid, chat_id, message_id, reason)
+
+  # The model may have been working while the chat was unlinked or its rights
+  # changed. The check after the wait covers the result; the bridge checks
+  # again for each part and retry of private text.
+  defp deliver_outcome(connection_uuid, ref, message_id, conversation, turn_ref) do
+    chat_id = elem(ref, 3)
+
     case Conversations.turn_result(conversation.uuid, turn_ref) do
       {:answer, text} ->
         answer(
           connection_uuid,
-          chat_id,
+          ref,
           message_id,
           text,
           not Conversations.turn_denied?(conversation.uuid, turn_ref)
@@ -522,22 +546,13 @@ defmodule PhoenixKitAgent.Telegram.Turn do
     end
   end
 
-  defp outcome(
-         connection_uuid,
-         {:telegram_link, _user, _connection, chat_id},
-         message_id,
-         _conversation,
-         {:error, reason}
-       ),
-       do: refuse(connection_uuid, chat_id, message_id, reason)
-
   # The turn ended with a change held for the user: what the assistant said,
   # then the card with its buttons, and 👍. A card Telegram would not take is
   # one message that sends the person to the site (🤷); the change waits there.
   # An error that ended the turn after the hold is told in a message of its own.
   defp held(connection_uuid, ref, message_id, conversation, turn_ref, {text, card}) do
     {:telegram_link, _user, _connection, chat_id} = ref
-    if text, do: say_plain(connection_uuid, chat_id, text)
+    if text, do: say_plain(connection_uuid, ref, text)
 
     emoji =
       case Cards.deliver(connection_uuid, ref, conversation.uuid, card) do
@@ -591,17 +606,18 @@ defmodule PhoenixKitAgent.Telegram.Turn do
   # 👍 only for an answer that was sent, and that is not "I cannot do that
   # here" (the turn asked for a change the chat is not allowed): that is 🤷,
   # with the text the model said (it points to the site).
-  defp answer(connection_uuid, chat_id, message_id, text, fulfilled?) do
+  defp answer(connection_uuid, ref, message_id, text, fulfilled?) do
     case Format.plain(text) do
-      "" -> refuse_with(connection_uuid, chat_id, message_id, Texts.notice("empty_answer"))
-      plain -> reply(connection_uuid, chat_id, message_id, plain, fulfilled?)
+      "" -> refuse_with(connection_uuid, elem(ref, 3), message_id, Texts.notice("empty_answer"))
+      plain -> reply(connection_uuid, ref, message_id, plain, fulfilled?)
     end
   end
 
-  defp reply(connection_uuid, chat_id, message_id, text, fulfilled? \\ true) do
+  defp reply(connection_uuid, recipient, message_id, text, fulfilled? \\ true) do
     emoji =
-      if Bridge.say(connection_uuid, chat_id, text) == :ok and fulfilled?, do: "👍", else: "🤷"
+      if Bridge.say(connection_uuid, recipient, text) == :ok and fulfilled?, do: "👍", else: "🤷"
 
+    chat_id = if is_integer(recipient), do: recipient, else: elem(recipient, 3)
     Bridge.react(connection_uuid, chat_id, message_id, emoji)
   end
 

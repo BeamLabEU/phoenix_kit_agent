@@ -18,7 +18,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
 
     * the model is known to take images: the row stays without text — the turn
       sends the pixels, in its own message only
-      (`PhoenixKitAgent.Attachments.pictures/1`); later turns carry a line that
+      (`PhoenixKitAgent.Attachments`'s `pictures(attachment)`); later turns carry a line that
       names the file, and the assistant's own answer about it;
     * it is known not to, or its abilities are not known (a provider without a
       model listing, a model that declares nothing): it is taken for a blind

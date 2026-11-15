@@ -26,7 +26,8 @@ defmodule PhoenixKitAgent.Telegram.Reader do
 
   The offset is kept in the setting `agent_telegram_offset` (the last update
   id taken, with the bot it belongs to and the time it was written; one
-  older than six days is let go, see `Config.telegram_offset/1`), written
+  older than six days is let go, and one stored without its time is stamped
+  and kept, see `PhoenixKitAgent.Config.telegram_offset/1`), written
   **before** the batch is
   handed on, so an update is answered at most once: a crash in between loses
   a message, never answers it twice. A batch goes to `Linking.handle_updates/3`
@@ -257,9 +258,9 @@ defmodule PhoenixKitAgent.Telegram.Reader do
 
   # ── reading ───────────────────────────────────────────────────────
 
-  # The stored offset, or the last id this process took when that is later: a
-  # read of the setting that failed looks like none, and a poll without the
-  # offset would get the last batch again.
+  # The stored offset, or the last id this process took when that is later.
+  # A failed database read raises into `step/1` before any poll, including on
+  # a fresh reader with no in-memory offset to fall back to.
   defp poll(state) do
     offset = later(Config.telegram_offset(state.connection), taken(state))
 

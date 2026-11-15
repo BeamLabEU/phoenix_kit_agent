@@ -1,7 +1,7 @@
 defmodule PhoenixKitAgent.Telegram.Supervisor do
   @moduledoc """
   The processes of the Telegram bridge, started by the host through
-  `PhoenixKitAgent.children/0`:
+  `PhoenixKitAgent`'s `children()` callback:
 
     * `PhoenixKitAgent.Telegram.Registry` and
       `PhoenixKitAgent.Telegram.QueueSupervisor` — the queue of each active

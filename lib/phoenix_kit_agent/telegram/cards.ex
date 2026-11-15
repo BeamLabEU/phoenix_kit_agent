@@ -48,7 +48,7 @@ defmodule PhoenixKitAgent.Telegram.Cards do
 
     %{text: text, markup: markup} = Card.build(ref, card.confirmation_uuid, mode)
 
-    case Bridge.send_card(connection_uuid, chat_id, text, markup) do
+    case Bridge.send_card(connection_uuid, ref, text, markup) do
       {:ok, message_id} ->
         if is_integer(message_id) do
           Conversations.put_telegram_card(

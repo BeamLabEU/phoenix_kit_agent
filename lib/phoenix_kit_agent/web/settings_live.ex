@@ -20,7 +20,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   until an admin marks what it can do on its AI endpoint. The watchers are chosen among the people who hold
   `agent.manage`, the Owners and the watchers there are; nobody chosen means
   every Owner. The prompt's change is recorded in the Activity log as a field
-  name, never its text (`Config.put_system_prompt/2`); the other values go to
+  name, never its text (`PhoenixKitAgent.Config.put_system_prompt/2`); the other values go to
   the settings history with who changed them.
 
   Needs `agent.manage`. The tab is registered under that key; the page checks
@@ -57,7 +57,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
   The retention period is the one of the two that deletes data for good, so
   only an **Owner** changes it (the same check as `agent_capture_ai_content`,
-  `Access.owner?/1` in the `save_retention` handler on every event; anyone with
+  `PhoenixKitAgent.Web.Access.owner?/1` in the `save_retention` handler on every event; anyone with
   `agent.manage` sees the saved period). While an Owner types, the page says
   how many chats that value would delete at the next run, before anything is
   saved.

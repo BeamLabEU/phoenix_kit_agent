@@ -157,7 +157,10 @@ and `Web.Markdown`) and the optional chat retention
   (`retention_days_direct/0`, not the cache) and hard-deletes in batches
   (`FOR UPDATE SKIP LOCKED`; chats whose turn lock is fresh are left, and every
   chat of a user whose own lock is fresh — a turn or a click — judged by the
-  database's `now()` as `Turns.Locks` stamps it, never the node's clock): chats
+  database's `now()` as `Turns.Locks` stamps it, never the node's clock). A batch
+  locks the chats, then their existing user settings rows with `SKIP LOCKED`,
+  and rechecks eligibility before deleting: an uncommitted click-lock update
+  must protect its chats too. It deletes chats
   whose last message (`last_message_at`, else `inserted_at`) is older than the
   period, and every chat the user deleted (status `deleted`), at the next run.
   Messages and attachment rows go by `ON DELETE CASCADE`; the Storage files by
@@ -384,8 +387,9 @@ and `Web.Markdown`) and the optional chat retention
   (2 minutes), then frees the microphone and a late answer is let go; the words reach the composer as the push event
   `pk-agent:dictated` (the textarea is `phx-update="ignore"`) and nothing is
   sent by itself.
-- **Pictures from Telegram:** a `photo` (the largest size of up to 10 MB, by
-  its `file_size`, not its place in the list), or a
+- **Pictures from Telegram:** a `photo` (among the sizes of at most 10 MB, the
+  largest by pixels, with `file_size` only as a tie-break; when none fits, the
+  smallest — never by its place in the list), or a
   `document` whose type is image/jpeg, png or webp, of a linked, fresh,
   private, non-forwarded chat is a `:photo` job (the caption is its text; its
   `media_group_id` the job's `group`). `Telegram.Turn` checks the chat as for
@@ -452,7 +456,8 @@ and `Web.Markdown`) and the optional chat retention
   own model, instructions and spending are the user's, as for the panel. The
   trusted entry points of a bridge, which take no session and are never for a
   client's event: `Conversations.create_conversation_for/2`,
-  `latest_telegram_conversation/1`, `turn_result/2` (a notice with an error
+  `latest_telegram_conversation/2` (the user's latest Telegram chat, and only
+  that `chat_id` when one is given), `turn_result/2` (a notice with an error
   code of the turn outranks any text it said; a turn that ended with a change
   held is `{:needs_confirmation, text, card}`, and `turn_error/2` is the error
   that followed the hold), `turn_denied?/2` (the turn asked for a write tool
@@ -472,13 +477,16 @@ and `Web.Markdown`) and the optional chat retention
   name the process holds (the step may have taken one), so the bot is never
   left held by a reader that does not read. The offset
   (`agent_telegram_offset`, `"<connection uuid>:<update id>:<unix time>"`, written with
-  `history: false`; one older than six days, or stored without its time, is
-  let go — Telegram numbers the update after a quiet week at random, possibly
-  below it — and so is a `taken` that old) is stored **before** the batch goes on — also from the
+  `history: false`; one older than six days is let go — Telegram numbers the
+  update after a quiet week at random, possibly below it — and so is a `taken`
+  that old; one stored without its time, from before the time was kept, is
+  trusted and stamped so the next poll does not answer the last batch again)
+  is stored **before** the batch goes on — also from the
   `confirm:` of `Linking.handle_updates/3` — so an update is answered at most
   once; `:busy` leaves it alone and the batch is read again in 2 s. The reader
   also keeps the last id it took (`taken`): a poll asks from the later of that
-  and the stored offset (a failed read of the setting is `nil`), and an update
+  and the stored offset (a failed read backs off before polling, including
+  after a restart), and an update
   at or below it is not handed on again. A 409
   "Conflict" pauses 60 s (status, one warning per 10 minutes); other errors
   back off 5 → 60 s. `Bridge.handle_update/3` decides (it reads the link and remembers an unlinked
@@ -507,7 +515,11 @@ and `Web.Markdown`) and the optional chat retention
   when it was sent and no write tool of the turn was denied (a request to change
   something, `Conversations.turn_denied?/2`; a made-up or refused read tool is
   not one) — or a notice / refusal in the
-  user's language (`Telegram.Texts`, `RecipientLocale`) with 🤷. A chat nobody
+  user's language (`Telegram.Texts`, `RecipientLocale`) with 🤷. Private answers,
+  recognised speech and cards use the actor reference as the destination of
+  `Bridge.say/3` / `send_card/4`: the link and rights are checked after a paid
+  call and before every outgoing part and retry. An integer destination is
+  for fixed replies without account data only. A chat nobody
   linked is remembered for 60 s (`Limiter`) and told once per 10 minutes,
   20 such replies a minute per bot. Nothing of an update's text or the bot's
   token lives in a process state (the reader and the queues are
