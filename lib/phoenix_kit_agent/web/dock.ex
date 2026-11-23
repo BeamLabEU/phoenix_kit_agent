@@ -575,6 +575,14 @@ defmodule PhoenixKitAgent.Web.Dock do
       else: {:noreply, socket}
   end
 
+  # Back to the default for one field, whatever the list holds: a blank value is
+  # all this writes.
+  defp event("use_default", %{"field" => field}, socket) when is_binary(field) do
+    if socket.assigns.my_assistant && field in MyAssistant.submit_keys(),
+      do: {:noreply, save_models(socket, %{field => ""})},
+      else: {:noreply, socket}
+  end
+
   # Only text: anything else (a forged map or list) would come back into the
   # form and could not be rendered.
   defp event(
@@ -1633,19 +1641,22 @@ defmodule PhoenixKitAgent.Web.Dock do
         )
 
       {:error, {field, reason}} when is_atom(field) ->
-        shown_with_error(socket, %{field => MyAssistant.refusal_text(reason)})
+        shown_refused(socket, attrs, {field, reason})
 
       {:error, %Ecto.Changeset{}} ->
-        shown_with_error(socket, %{endpoint_uuid: MyAssistant.refusal_text(:not_allowed)})
+        shown_refused(socket, attrs, {:endpoint_uuid, :not_allowed})
 
       {:error, reason} ->
         refused(socket, reason)
     end
   end
 
-  defp shown_with_error(socket, errors) do
+  # What the user chose stays in the selects, every field that cannot be saved
+  # is marked.
+  defp shown_refused(socket, attrs, refusal) do
     assign(socket,
-      my_assistant: %{MyAssistant.load(socket.assigns.user_uuid) | errors: errors},
+      my_assistant:
+        socket.assigns.user_uuid |> MyAssistant.load() |> MyAssistant.refused(attrs, refusal),
       error: nil
     )
   end

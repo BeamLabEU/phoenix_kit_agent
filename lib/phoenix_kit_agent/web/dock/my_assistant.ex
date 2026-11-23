@@ -20,6 +20,10 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
   among them and stays selected, so keeping it is never a change. The speech
   model is shown only where the AI module can write speech down.
 
+  A user can always go back to the default for a field that holds a model of his
+  own, also while the list is empty (`use_default` in the dock): clearing is never
+  refused, and it is the only thing that button does.
+
   The limits are the ones in effect for the user; the administrator sets them.
   """
 
@@ -93,6 +97,47 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
       else: listed
   end
 
+  @doc """
+  The region after a refused save: each field holds what the user chose (also
+  when it is no longer among the choices), and every field whose choice cannot
+  be saved is marked, not only the one the write named. `refusal` is that
+  first `{field, reason}`.
+  """
+  @spec refused(t(), map(), {atom(), term()}) :: t()
+  def refused(data, attrs, {field, reason}) do
+    submitted =
+      for f <- data.fields, is_binary(attrs[f.name]), into: %{}, do: {f.field, attrs[f.name]}
+
+    fields = Enum.map(data.fields, &with_submitted(&1, submitted, data.editable?))
+
+    errors =
+      for f <- data.fields,
+          value = submitted[f.field],
+          value not in ["", f.value],
+          {:error, why} <- [Models.selection_check(f.task, value)],
+          into: %{},
+          do: {f.field, refusal_text(why)}
+
+    %{data | fields: fields, errors: Map.put(errors, field, refusal_text(reason))}
+  end
+
+  defp with_submitted(field, submitted, true) do
+    case Map.fetch(submitted, field.field) do
+      {:ok, value} -> %{field | value: value, choices: with_choice(field.choices, value)}
+      :error -> field
+    end
+  end
+
+  defp with_submitted(field, _submitted, false), do: field
+
+  defp with_choice(choices, ""), do: choices
+
+  defp with_choice(choices, uuid) do
+    if Enum.any?(choices, &(&1.uuid == uuid)),
+      do: choices,
+      else: choices ++ Map.values(Models.summaries([uuid]))
+  end
+
   @doc "The fields of the form that a submit may carry, as they are named in it."
   @spec submit_keys() :: [String.t()]
   def submit_keys, do: Enum.map(@fields, fn {_task, field} -> Atom.to_string(field) end)
@@ -129,9 +174,6 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
         class="space-y-3"
       >
         <.model_field :for={field <- @data.fields} field={field} error={@data.errors[field.field]} />
-        <p :if={@data.saved?} id="pk-agent-models-saved" role="status" class="text-xs text-success">
-          {gettext("Settings saved.")}
-        </p>
         <div class="flex justify-end">
           <button
             id="pk-agent-models-save"
@@ -146,6 +188,10 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
       <div :if={!@data.editable?} id="pk-agent-models" class="space-y-3">
         <.model_field :for={field <- @data.fields} field={field} />
       </div>
+
+      <p :if={@data.saved?} id="pk-agent-models-saved" role="status" class="text-xs text-success">
+        {gettext("Settings saved.")}
+      </p>
     </section>
 
     <section id="pk-agent-limits" class="border-b border-base-300 p-3 space-y-1 text-xs">
@@ -188,17 +234,29 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
         <p class="text-xs font-medium">{label(@field.task)}</p>
         <p id={@dom <> "-model"} class="text-sm break-words">
           {priced_name(@field.model, @field.task)}
+          <span
+            id={@dom <> "-effective"}
+            data-source={@field.source}
+            class={["badge badge-sm ml-1", tag_class(@field.source)]}
+          >
+            {tag_text(@field.source)}
+          </span>
         </p>
       </div>
       <p
+        :if={editing?(@field)}
         id={@dom <> "-effective"}
         data-source={@field.source}
-        class={[
-          "text-xs break-words",
-          if(@field.source == :fallback, do: "text-warning", else: "opacity-70")
-        ]}
+        class={["text-xs break-words", if(@field.source == :fallback, do: "text-warning", else: "opacity-70")]}
       >
-        {in_effect_text(@field)}
+        {note_text(@field)}
+      </p>
+      <p
+        :if={!editing?(@field) and @field.source == :fallback}
+        id={@dom <> "-fallback-note"}
+        class="text-xs text-warning break-words"
+      >
+        {fallback_note(@field)}
       </p>
       <p
         :if={@field.source == :own and @field.outside_list?}
@@ -207,6 +265,16 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
       >
         {gettext("This model is outside the list of models users may choose.")}
       </p>
+      <button
+        :if={!editing?(@field) and @field.value != ""}
+        id={@dom <> "-use-default"}
+        type="button"
+        phx-click="use_default"
+        phx-value-field={@field.name}
+        class="btn btn-ghost btn-xs pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+      >
+        {gettext("Use the default")}
+      </button>
     </div>
     """
   end
@@ -242,22 +310,38 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
 
   defp priced_name(nil, _task), do: name(nil)
 
-  defp in_effect_text(%{source: :own} = field),
-    do: gettext("In effect: own model — %{name}", name: name(field.model))
+  # Under a select, which already shows the chosen model: only the state, and
+  # what is in effect where that is not what is chosen.
+  defp note_text(%{source: :own}), do: tag_text(:own)
+  defp note_text(%{source: :default}), do: tag_text(:default)
+  defp note_text(%{source: :fallback} = field), do: fallback_in_effect(field)
 
-  defp in_effect_text(%{source: :default} = field),
-    do: gettext("In effect: default — %{name}", name: name(field.model))
+  defp tag_text(:own), do: gettext("own model")
+  defp tag_text(:default), do: gettext("default")
+  defp tag_text(:fallback), do: gettext("default — the own model cannot be used")
 
-  defp in_effect_text(%{source: :fallback, model: nil}),
+  defp tag_class(:own), do: "badge-primary badge-soft"
+  defp tag_class(:default), do: "badge-ghost"
+  defp tag_class(:fallback), do: "badge-warning badge-soft"
+
+  defp fallback_in_effect(%{model: nil}),
     do:
       gettext(
         "The own model cannot be used (switched off, without credentials or no longer a chat model) and no default is set."
       )
 
-  defp in_effect_text(%{source: :fallback} = field),
+  defp fallback_in_effect(field),
     do:
       gettext(
         "The own model cannot be used (switched off, without credentials or no longer a chat model), so the default is in effect — %{name}",
         name: name(field.model)
+      )
+
+  defp fallback_note(%{model: nil}), do: fallback_in_effect(%{model: nil})
+
+  defp fallback_note(_field),
+    do:
+      gettext(
+        "The own model cannot be used (switched off, without credentials or no longer a chat model), so the default is used."
       )
 end

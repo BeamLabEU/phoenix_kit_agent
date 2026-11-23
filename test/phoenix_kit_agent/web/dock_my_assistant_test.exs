@@ -200,6 +200,170 @@ defmodule PhoenixKitAgent.Web.DockMyAssistantTest do
     end
   end
 
+  describe "the model is named once" do
+    defp occurrences(view, id, text) do
+      length(String.split(view |> element(id) |> render(), text)) - 1
+    end
+
+    test "read-only: the name once, with a tag of where it comes from", ctx do
+      view = open_settings(ctx)
+
+      assert occurrences(view, "#pk-agent-model-chat-field", "SiteDefault") == 1
+
+      assert has_element?(
+               view,
+               "#pk-agent-model-chat-effective[data-source='default']",
+               "default"
+             )
+
+      refute has_element?(view, "#pk-agent-model-chat-field", "In effect")
+
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: ctx.chat.uuid})
+      view = open_settings(ctx)
+
+      assert occurrences(view, "#pk-agent-model-chat-field", "Chatty") == 1
+      assert has_element?(view, "#pk-agent-model-chat-effective[data-source='own']", "own model")
+      assert has_element?(view, "#pk-agent-model-chat-outside-list")
+    end
+
+    test "read-only, fallback: the model in effect once, the reason without a name", ctx do
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, vision_endpoint_uuid: ctx.seer.uuid})
+      switch_off!(ctx.seer)
+      view = open_settings(ctx)
+
+      assert has_element?(view, "#pk-agent-model-vision-effective[data-source='fallback']")
+      assert has_element?(view, "#pk-agent-model-vision-fallback-note")
+      assert occurrences(view, "#pk-agent-model-vision-field", "Seer") == 0
+    end
+
+    test "choosing: the note under a select does not repeat the selected name", ctx do
+      allow!([ctx.chat, ctx.seer])
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: ctx.chat.uuid})
+      view = open_settings(ctx)
+
+      refute has_element?(view, "#pk-agent-model-chat-effective", "Chatty")
+      assert has_element?(view, "#pk-agent-model-chat-effective[data-source='own']", "own model")
+      refute has_element?(view, "#pk-agent-model-vision-effective", "SiteDefault")
+      assert has_element?(view, "#pk-agent-model-vision-effective[data-source='default']")
+    end
+
+    test "choosing, fallback: the note names what is in effect, as it differs from the selected",
+         ctx do
+      allow!([ctx.chat, ctx.seer])
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", ctx.default.uuid)
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, vision_endpoint_uuid: ctx.seer.uuid})
+      switch_off!(ctx.seer)
+      view = open_settings(ctx)
+
+      assert has_element?(
+               view,
+               "#pk-agent-model-vision-effective[data-source='fallback']",
+               "SiteDefault"
+             )
+    end
+  end
+
+  describe "going back to the default" do
+    setup ctx do
+      Repo.insert!(%UserSettings{
+        user_uuid: ctx.user.uuid,
+        endpoint_uuid: ctx.chat.uuid,
+        vision_endpoint_uuid: ctx.seer.uuid,
+        system_prompt: "admin's"
+      })
+
+      :ok
+    end
+
+    test "with the list empty a field holding an own model has a button, the others have none",
+         ctx do
+      Repo.update_all(from(s in UserSettings, where: s.user_uuid == ^ctx.user.uuid),
+        set: [vision_endpoint_uuid: nil]
+      )
+
+      view = open_settings(ctx)
+
+      assert has_element?(view, "#pk-agent-model-chat-use-default")
+      refute has_element?(view, "#pk-agent-model-vision-use-default")
+      refute has_element?(view, "#pk-agent-model-speech-use-default")
+    end
+
+    test "the button clears that field and nothing else", ctx do
+      view = open_settings(ctx)
+      view |> element("#pk-agent-model-chat-use-default") |> render_click()
+
+      row = row(ctx)
+      assert row.endpoint_uuid == nil
+      assert row.vision_endpoint_uuid == ctx.seer.uuid
+      assert row.system_prompt == "admin's"
+      assert has_element?(view, "#pk-agent-model-chat-effective[data-source='default']")
+      refute has_element?(view, "#pk-agent-model-chat-use-default")
+      assert has_element?(view, "#pk-agent-models-saved")
+    end
+
+    test "it still cannot set a model, nor touch another field", ctx do
+      view = open_settings(ctx)
+
+      for field <- ["system_prompt", "daily_turn_limit", "user_uuid", "enabled", "nonsense"] do
+        render_hook(view, "use_default", %{"field" => field})
+      end
+
+      render_hook(view, "use_default", %{"field" => ["endpoint_uuid"]})
+      render_hook(view, "save_models", %{"models" => %{"endpoint_uuid" => ctx.seer.uuid}})
+
+      row = row(ctx)
+
+      assert {row.endpoint_uuid, row.vision_endpoint_uuid, row.system_prompt} ==
+               {ctx.chat.uuid, ctx.seer.uuid, "admin's"}
+    end
+
+    test "it is not offered while the list is open (the select has the default)", ctx do
+      allow!([ctx.chat, ctx.seer])
+      view = open_settings(ctx)
+
+      refute has_element?(view, "#pk-agent-model-chat-use-default")
+    end
+
+    test "before the region is open it writes nothing", ctx do
+      view = dock(ctx)
+      render_hook(view, "use_default", %{"field" => "endpoint_uuid"})
+
+      assert row(ctx).endpoint_uuid == ctx.chat.uuid
+    end
+  end
+
+  describe "a refused save keeps the choices and marks every failing field" do
+    setup ctx do
+      allow!([ctx.chat, ctx.seer, ctx.ear])
+      :ok
+    end
+
+    test "two bad fields are both marked, the good one keeps what was selected", ctx do
+      view = open_settings(ctx)
+      allow!([ctx.chat])
+
+      render_hook(view, "save_models", %{
+        "models" => %{
+          "endpoint_uuid" => ctx.chat.uuid,
+          "vision_endpoint_uuid" => ctx.seer.uuid,
+          "speech_endpoint_uuid" => ctx.ear.uuid
+        }
+      })
+
+      assert row(ctx) == nil
+      assert has_element?(view, "#pk-agent-model-vision-field p.text-error")
+      assert has_element?(view, "#pk-agent-model-speech-field p.text-error")
+      refute has_element?(view, "#pk-agent-model-chat-field p.text-error")
+
+      for {dom, endpoint} <- [chat: ctx.chat, vision: ctx.seer, speech: ctx.ear] do
+        assert has_element?(
+                 view,
+                 "#pk-agent-model-#{dom} option[value='#{endpoint.uuid}'][selected]"
+               )
+      end
+    end
+  end
+
   describe "choosing among the allowed models" do
     setup ctx do
       allow!([ctx.chat, ctx.seer, ctx.ear, ctx.blind])
@@ -276,8 +440,8 @@ defmodule PhoenixKitAgent.Web.DockMyAssistantTest do
                {ctx.chat.uuid, ctx.seer.uuid, ctx.ear.uuid}
 
       assert has_element?(view, "#pk-agent-models-saved")
-      assert has_element?(view, "#pk-agent-model-chat-effective[data-source='own']", "Chatty")
-      assert has_element?(view, "#pk-agent-model-vision-effective[data-source='own']", "Seer")
+      assert has_element?(view, "#pk-agent-model-chat-effective[data-source='own']")
+      assert has_element?(view, "#pk-agent-model-vision-effective[data-source='own']")
       assert has_element?(view, "#pk-agent-model-chat option[value='#{ctx.chat.uuid}'][selected]")
       refute has_element?(view, "#pk-agent-model-chat-outside-list")
     end
