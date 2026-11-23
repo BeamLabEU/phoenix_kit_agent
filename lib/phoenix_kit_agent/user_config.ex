@@ -484,10 +484,10 @@ defmodule PhoenixKitAgent.UserConfig do
   written). A newly chosen model must fit the AI task of its field
   (`PhoenixKitAI.Tasks.check_selection/2`; `agent.chat`, `agent.attachment` for
   the pictures, `agent.speech`): one known not to fit is `{:error,
-  {:model_unfit, missing}}`, one nobody knows fits `{:error, {:model_unverified,
-  unclear}}`, and nothing is written. The chat model's refusal is those
-  two-element tuples; that of the pictures' or the speech model has the field
-  as a third element (`{:model_unfit, missing, :vision_endpoint_uuid}`). None
+  {:model_unfit, missing, field}}`, one nobody knows fits `{:error,
+  {:model_unverified, unclear, field}}`, and nothing is written; `field` is the
+  one that was refused (`:endpoint_uuid`, `:vision_endpoint_uuid` or
+  `:speech_endpoint_uuid`), the same shape for the three. None
   (the module default) and the model already saved are not checked; whether the
   users' list holds the model is no concern of an administrator's.
   """
@@ -497,7 +497,6 @@ defmodule PhoenixKitAgent.UserConfig do
              :forbidden
              | :not_found
              | :stale
-             | {:model_unfit | :model_unverified, [atom()]}
              | {:model_unfit | :model_unverified, [atom()], atom()}
              | Ecto.Changeset.t()}
   def admin_update(actor_scope, target_user_uuid, attrs, opts \\ []) when is_map(attrs) do
@@ -592,12 +591,6 @@ defmodule PhoenixKitAgent.UserConfig do
       {:error, :stale} = error ->
         error
 
-      {:error, {:model_unfit, _missing}} = error ->
-        error
-
-      {:error, {:model_unverified, _unclear}} = error ->
-        error
-
       {:error, {reason, _needs, _field}} = error
       when reason in [:model_unfit, :model_unverified] ->
         error
@@ -607,23 +600,19 @@ defmodule PhoenixKitAgent.UserConfig do
   # A newly chosen model must fit the AI task of its field (`agent.chat`,
   # `agent.attachment`, `agent.speech`), whether or not users may choose it.
   # None (the module default) and the model already saved are not checked; an
-  # endpoint that does not exist is the changeset's foreign key error. The
-  # refusal of the chat model is `{reason, needs}`, as it always was; that of
-  # another is `{reason, needs, field}`.
+  # endpoint that does not exist is the changeset's foreign key error. A refusal
+  # is `{reason, needs, field}`, the field being the one refused.
   defp check_models(changeset) do
     Enum.find_value(@model_fields, :ok, fn {task, field} ->
       with uuid when is_binary(uuid) <- Ecto.Changeset.get_change(changeset, field),
            {:error, {reason, needs}} when reason in [:model_unfit, :model_unverified] <-
              PhoenixKitAI.Tasks.check_selection(Models.task_of(task), uuid) do
-        {:error, refusal_of(task, reason, needs, field)}
+        {:error, {reason, needs, field}}
       else
         _fit_none_or_kept -> nil
       end
     end)
   end
-
-  defp refusal_of(:chat, reason, needs, _field), do: {reason, needs}
-  defp refusal_of(_task, reason, needs, field), do: {reason, needs, field}
 
   defp unchanged?(_row, nil), do: true
 

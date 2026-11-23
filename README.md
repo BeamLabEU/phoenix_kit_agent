@@ -482,6 +482,14 @@ may only choose among the endpoints the administrator listed for that
 (`agent_selectable_endpoint_uuids`, empty until filled), and only one that fits
 the task (`PhoenixKitAgent.UserConfig.put_personal_models/3`).
 
+On Settings → AI Agent the models card is titled as the defaults for everyone
+and says of each that a user's own choice replaces it; the same card holds the
+list of the models users may choose themselves. On Users → Configure each of the
+three fields offers "Default: <name>" and every endpoint that chats (the ones
+known not to fit the task marked), and says what is in effect for that user: his
+own model, the default, the default because his own cannot be used, or an own
+model outside the list.
+
 The Settings page has two settings only an Owner can change. One is
 `agent_capture_ai_content`: when on, the bodies of the assistant's requests are
 written to the AI request journal and every holder of the `ai` permission reads

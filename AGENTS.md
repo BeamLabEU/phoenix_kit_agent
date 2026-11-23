@@ -121,7 +121,12 @@ and `Web.Markdown`) and the optional chat retention
   admin's `admin_update/4` takes any model that fits. A picture model of his own
   that can be used describes all of his pictures, also for a chat model that
   sees (`Processor.picture_mode/1`). The AI tasks' `endpoints` list the
-  defaults and every user's own model (`UserConfig.endpoint_uuids/1`).
+  defaults and every user's own model (`UserConfig.endpoint_uuids/1`). In the
+  admin pages the Settings models card is the defaults plus its own form for
+  the list of models users may choose; Users → Configure has the three fields,
+  the refusal of `admin_update/4` is `{reason, needs, field}` for all three and
+  is shown at its field, and "in effect" there and the model column of the
+  list read `effective/1`'s `models` source, never `own`.
 - **Attachments:** session-bound like `Conversations` (`impersonated:` in the
   options); only the owner adds, reads, discards or gets the address of a
   file, an Owner/Admin of the site included. Bytes live in the hidden library

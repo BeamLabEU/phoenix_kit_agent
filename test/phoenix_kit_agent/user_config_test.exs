@@ -483,7 +483,7 @@ defmodule PhoenixKitAgent.UserConfigTest do
     test "a model known to take no tools is refused and nothing is written", %{user: user} do
       unfit = declared(%{name: "Plain", model: "a/no-tools"}, "no")
 
-      assert {:error, {:model_unfit, [:tools]}} =
+      assert {:error, {:model_unfit, [:tools], :endpoint_uuid}} =
                UserConfig.admin_update(manager_scope(), user.uuid, %{
                  "endpoint_uuid" => unfit.uuid,
                  "daily_turn_limit" => "4"
@@ -496,7 +496,7 @@ defmodule PhoenixKitAgent.UserConfigTest do
     test "a model nobody knows takes tools is refused and nothing is written", %{user: user} do
       unknown = endpoint_fixture(%{model: "a/never-heard-of"})
 
-      assert {:error, {:model_unverified, [:tools]}} =
+      assert {:error, {:model_unverified, [:tools], :endpoint_uuid}} =
                UserConfig.admin_update(manager_scope(), user.uuid, %{
                  "endpoint_uuid" => unknown.uuid
                })
@@ -1238,10 +1238,10 @@ defmodule PhoenixKitAgent.UserConfigTest do
       assert activity("agent.user_settings_updated") == []
     end
 
-    test "the chat model's refusal keeps its two-element shape", %{user: user} do
+    test "the chat model's refusal has the same shape, with its field", %{user: user} do
       plain = capable(%{"tools" => "no"})
 
-      assert {:error, {:model_unfit, [:tools]}} =
+      assert {:error, {:model_unfit, [:tools], :endpoint_uuid}} =
                UserConfig.admin_update(manager_scope(), user.uuid, %{
                  "endpoint_uuid" => plain.uuid
                })

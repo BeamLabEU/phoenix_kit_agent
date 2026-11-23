@@ -38,12 +38,12 @@ msgstr[1] "%{count} found"
 msgid "A file is not ready or not in this chat. Remove it and try again."
 msgstr "A file is not ready or not in this chat. Remove it and try again."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:437
+#: lib/phoenix_kit_agent/web/settings_live.ex:485
 #, elixir-autogen, elixir-format
 msgid "A model could not be saved: it is no longer available. Choose again."
 msgstr "A model could not be saved: it is no longer available. Choose again."
 
-#: lib/phoenix_kit_agent/web/dock.ex:479
+#: lib/phoenix_kit_agent/web/dock.ex:480
 #, elixir-autogen, elixir-format
 msgid "A title cannot be empty or longer than 200 characters."
 msgstr "A title cannot be empty or longer than 200 characters."
@@ -56,9 +56,9 @@ msgstr "A user"
 #: lib/phoenix_kit_agent.ex:104
 #: lib/phoenix_kit_agent.ex:138
 #: lib/phoenix_kit_agent.ex:206
-#: lib/phoenix_kit_agent/web/settings_live.ex:108
+#: lib/phoenix_kit_agent/web/settings_live.ex:117
 #: lib/phoenix_kit_agent/web/spending_live.ex:35
-#: lib/phoenix_kit_agent/web/users_live.ex:103
+#: lib/phoenix_kit_agent/web/users_live.ex:128
 #, elixir-autogen, elixir-format
 msgid "AI Agent"
 msgstr "AI Agent"
@@ -72,32 +72,32 @@ msgstr "AI Agent"
 msgid "AI assistant"
 msgstr "AI assistant"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:658
+#: lib/phoenix_kit_agent/web/settings_live.ex:706
 #, elixir-autogen, elixir-format
 msgid "AI assistant defaults saved."
 msgstr "AI assistant defaults saved."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:432
+#: lib/phoenix_kit_agent/web/settings_live.ex:480
 #, elixir-autogen, elixir-format
 msgid "AI assistant models saved."
 msgstr "AI assistant models saved."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:683
+#: lib/phoenix_kit_agent/web/settings_live.ex:731
 #, elixir-autogen, elixir-format
 msgid "AI request journal setting saved."
 msgstr "AI request journal setting saved."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:708
+#: lib/phoenix_kit_agent/web/users_live.ex:891
 #, elixir-autogen, elixir-format
 msgid "Active"
 msgstr "Active"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:577
+#: lib/phoenix_kit_agent/web/users_live.ex:748
 #, elixir-autogen, elixir-format
 msgid "Allowed"
 msgstr "Allowed"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:850
+#: lib/phoenix_kit_agent/web/settings_live.ex:958
 #, elixir-autogen, elixir-format
 msgid "Apply to every user without limits of their own. Money is counted from the AI request journal, in US dollars, for endpoints that report a cost."
 msgstr "Apply to every user without limits of their own. Money is counted from the AI request journal, in US dollars, for endpoints that report a cost."
@@ -112,7 +112,7 @@ msgstr "Archive"
 msgid "Ask about anything you can see in the system."
 msgstr "Ask about anything you can see in the system."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:575
+#: lib/phoenix_kit_agent/web/users_live.ex:746
 #, elixir-autogen, elixir-format
 msgid "Assistant"
 msgstr "Assistant"
@@ -123,8 +123,8 @@ msgstr "Assistant"
 msgid "Attach a file"
 msgstr "Attach a file"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:878
-#: lib/phoenix_kit_agent/web/users_live.ex:649
+#: lib/phoenix_kit_agent/web/settings_live.ex:986
+#: lib/phoenix_kit_agent/web/users_live.ex:832
 #, elixir-autogen, elixir-format
 msgid "Attachments per message"
 msgstr "Attachments per message"
@@ -140,20 +140,16 @@ msgid "Calling a tool…"
 msgstr "Calling a tool…"
 
 #: lib/phoenix_kit_agent/web/dock/panel.ex:359
-#: lib/phoenix_kit_agent/web/users_live.ex:665
+#: lib/phoenix_kit_agent/web/users_live.ex:848
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr "Cancel"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:834
+#: lib/phoenix_kit_agent/web/settings_live.ex:902
+#: lib/phoenix_kit_agent/web/users_live.ex:775
 #, elixir-autogen, elixir-format
 msgid "Checking what the models take…"
 msgstr "Checking what the models take…"
-
-#: lib/phoenix_kit_agent/web/users_live.ex:590
-#, elixir-autogen, elixir-format
-msgid "Checking which models take tools…"
-msgstr "Checking which models take tools…"
 
 #: lib/phoenix_kit_agent/web/dock/panel.ex:190
 #: lib/phoenix_kit_agent/web/dock/panel.ex:287
@@ -162,7 +158,7 @@ msgstr "Checking which models take tools…"
 msgid "Close"
 msgstr "Close"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:782
+#: lib/phoenix_kit_agent/web/users_live.ex:972
 #, elixir-autogen, elixir-format
 msgid "Configure"
 msgstr "Configure"
@@ -172,17 +168,17 @@ msgstr "Configure"
 msgid "Confirm your email address to use the assistant."
 msgstr "Confirm your email address to use the assistant."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:848
+#: lib/phoenix_kit_agent/web/settings_live.ex:956
 #, elixir-autogen, elixir-format
 msgid "Default limits per user"
 msgstr "Default limits per user"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:795
+#: lib/phoenix_kit_agent/web/settings_live.ex:844
 #, elixir-autogen, elixir-format
 msgid "Default model"
 msgstr "Default model"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:109
+#: lib/phoenix_kit_agent/web/settings_live.ex:118
 #, elixir-autogen, elixir-format
 msgid "Defaults of the AI assistant"
 msgstr "Defaults of the AI assistant"
@@ -197,12 +193,12 @@ msgstr "Earlier messages"
 msgid "Edit the module defaults and other users' assistant settings, and see everyone's spending"
 msgstr "Edit the module defaults and other users' assistant settings, and see everyone's spending"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:921
+#: lib/phoenix_kit_agent/web/settings_live.ex:1029
 #, elixir-autogen, elixir-format
 msgid "Goes first into every request of every user, before the site's own part, the prompt an administrator sets for a user and the user's own instructions."
 msgstr "Goes first into every request of every user, before the site's own part, the prompt an administrator sets for a user and the user's own instructions."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:899
+#: lib/phoenix_kit_agent/web/settings_live.ex:1007
 #, elixir-autogen, elixir-format
 msgid "History sent to the model, characters"
 msgstr "History sent to the model, characters"
@@ -217,13 +213,13 @@ msgstr "How the assistant should answer you. It follows the site's own rules fir
 msgid "It could not be read."
 msgstr "It could not be read."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:873
-#: lib/phoenix_kit_agent/web/users_live.ex:640
+#: lib/phoenix_kit_agent/web/settings_live.ex:981
+#: lib/phoenix_kit_agent/web/users_live.ex:823
 #, elixir-autogen, elixir-format
 msgid "Largest attachment"
 msgstr "Largest attachment"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:689
+#: lib/phoenix_kit_agent/web/users_live.ex:872
 #, elixir-autogen, elixir-format
 msgid "Limits"
 msgstr "Limits"
@@ -238,26 +234,11 @@ msgstr "Manage the AI assistant"
 msgid "Message"
 msgstr "Message"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:584
-#: lib/phoenix_kit_agent/web/users_live.ex:688
+#: lib/phoenix_kit_agent/web/users_live.ex:756
+#: lib/phoenix_kit_agent/web/users_live.ex:871
 #, elixir-autogen, elixir-format
 msgid "Model"
 msgstr "Model"
-
-#: lib/phoenix_kit_agent/web/settings_live.ex:785
-#, elixir-autogen, elixir-format
-msgid "Models"
-msgstr "Models"
-
-#: lib/phoenix_kit_agent/web/users_live.ex:545
-#, elixir-autogen, elixir-format
-msgid "Module default (%{name})"
-msgstr "Module default (%{name})"
-
-#: lib/phoenix_kit_agent/web/users_live.ex:546
-#, elixir-autogen, elixir-format
-msgid "Module default (none set)"
-msgstr "Module default (none set)"
 
 #: lib/phoenix_kit_agent/web/dock/panel.ex:434
 #, elixir-autogen, elixir-format
@@ -270,7 +251,7 @@ msgstr "More"
 msgid "New chat"
 msgstr "New chat"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:760
+#: lib/phoenix_kit_agent/web/users_live.ex:950
 #, elixir-autogen, elixir-format
 msgid "No"
 msgstr "No"
@@ -300,7 +281,7 @@ msgstr "No model that sees images is set up to read it."
 msgid "No result."
 msgstr "No result."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:952
+#: lib/phoenix_kit_agent/web/settings_live.ex:1060
 #, elixir-autogen, elixir-format
 msgid "Nobody is chosen: every Owner is told."
 msgstr "Nobody is chosen: every Owner is told."
@@ -310,9 +291,9 @@ msgstr "Nobody is chosen: every Owner is told."
 msgid "Nobody used the assistant this month."
 msgstr "Nobody used the assistant this month."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:459
-#: lib/phoenix_kit_agent/web/settings_live.ex:469
-#: lib/phoenix_kit_agent/web/settings_live.ex:483
+#: lib/phoenix_kit_agent/web/settings_live.ex:507
+#: lib/phoenix_kit_agent/web/settings_live.ex:517
+#: lib/phoenix_kit_agent/web/settings_live.ex:531
 #, elixir-autogen, elixir-format
 msgid "None"
 msgstr "None"
@@ -327,59 +308,59 @@ msgstr "Not allowed: the tool was not run."
 msgid "Nothing is running in this chat."
 msgstr "Nothing is running in this chat."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:541
+#: lib/phoenix_kit_agent/web/settings_live.ex:589
 #, elixir-autogen, elixir-format
 msgid "Nothing was saved. Choose again."
 msgstr "Nothing was saved. Choose again."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:343
-#: lib/phoenix_kit_agent/web/settings_live.ex:512
-#: lib/phoenix_kit_agent/web/settings_live.ex:603
-#: lib/phoenix_kit_agent/web/settings_live.ex:664
-#: lib/phoenix_kit_agent/web/users_live.ex:400
+#: lib/phoenix_kit_agent/web/settings_live.ex:391
+#: lib/phoenix_kit_agent/web/settings_live.ex:560
+#: lib/phoenix_kit_agent/web/settings_live.ex:651
+#: lib/phoenix_kit_agent/web/settings_live.ex:712
+#: lib/phoenix_kit_agent/web/users_live.ex:467
 #, elixir-autogen, elixir-format
 msgid "Nothing was saved: check the highlighted fields."
 msgstr "Nothing was saved: check the highlighted fields."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:546
+#: lib/phoenix_kit_agent/web/settings_live.ex:594
 #, elixir-autogen, elixir-format
 msgid "Nothing was saved: someone chosen is not on the list."
 msgstr "Nothing was saved: someone chosen is not on the list."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:692
+#: lib/phoenix_kit_agent/web/users_live.ex:875
 #, elixir-autogen, elixir-format
 msgid "Notify"
 msgstr "Notify"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1116
+#: lib/phoenix_kit_agent/web/settings_live.ex:1224
 #, elixir-autogen, elixir-format
 msgid "Off"
 msgstr "Off"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1116
+#: lib/phoenix_kit_agent/web/settings_live.ex:1224
 #, elixir-autogen, elixir-format
 msgid "On"
 msgstr "On"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:903
+#: lib/phoenix_kit_agent/web/settings_live.ex:1011
 #, elixir-autogen, elixir-format
 msgid "One tool result, characters"
 msgstr "One tool result, characters"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:886
+#: lib/phoenix_kit_agent/web/settings_live.ex:994
 #, elixir-autogen, elixir-format
 msgid "One turn"
 msgstr "One turn"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:407
+#: lib/phoenix_kit_agent/web/users_live.ex:474
 #, elixir-autogen, elixir-format
 msgid "Only an Owner can change an Owner's assistant."
 msgstr "Only an Owner can change an Owner's assistant."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:152
-#: lib/phoenix_kit_agent/web/settings_live.ex:194
-#: lib/phoenix_kit_agent/web/settings_live.ex:1042
-#: lib/phoenix_kit_agent/web/settings_live.ex:1118
+#: lib/phoenix_kit_agent/web/settings_live.ex:162
+#: lib/phoenix_kit_agent/web/settings_live.ex:211
+#: lib/phoenix_kit_agent/web/settings_live.ex:1150
+#: lib/phoenix_kit_agent/web/settings_live.ex:1226
 #, elixir-autogen, elixir-format
 msgid "Only an Owner can change this setting."
 msgstr "Only an Owner can change this setting."
@@ -395,7 +376,7 @@ msgstr "Personal instructions"
 msgid "Pictures cannot be read: no model that sees images is set up."
 msgstr "Pictures cannot be read: no model that sees images is set up."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:598
+#: lib/phoenix_kit_agent/web/users_live.ex:781
 #, elixir-autogen, elixir-format
 msgid "Prompt for this user"
 msgstr "Prompt for this user"
@@ -416,22 +397,23 @@ msgstr "Remove the file"
 msgid "Rename"
 msgstr "Rename"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1089
+#: lib/phoenix_kit_agent/web/settings_live.ex:1197
 #, elixir-autogen, elixir-format
 msgid "Request content in the AI journal"
 msgstr "Request content in the AI journal"
 
 #: lib/phoenix_kit_agent/web/dock/panel.ex:174
 #: lib/phoenix_kit_agent/web/dock/panel.ex:356
-#: lib/phoenix_kit_agent/web/settings_live.ex:838
-#: lib/phoenix_kit_agent/web/settings_live.ex:911
-#: lib/phoenix_kit_agent/web/settings_live.ex:935
-#: lib/phoenix_kit_agent/web/settings_live.ex:972
-#: lib/phoenix_kit_agent/web/settings_live.ex:1023
+#: lib/phoenix_kit_agent/web/settings_live.ex:906
+#: lib/phoenix_kit_agent/web/settings_live.ex:946
+#: lib/phoenix_kit_agent/web/settings_live.ex:1019
+#: lib/phoenix_kit_agent/web/settings_live.ex:1043
 #: lib/phoenix_kit_agent/web/settings_live.ex:1080
-#: lib/phoenix_kit_agent/web/settings_live.ex:1111
-#: lib/phoenix_kit_agent/web/settings_live.ex:1146
-#: lib/phoenix_kit_agent/web/users_live.ex:668
+#: lib/phoenix_kit_agent/web/settings_live.ex:1131
+#: lib/phoenix_kit_agent/web/settings_live.ex:1188
+#: lib/phoenix_kit_agent/web/settings_live.ex:1219
+#: lib/phoenix_kit_agent/web/settings_live.ex:1254
+#: lib/phoenix_kit_agent/web/users_live.ex:851
 #, elixir-autogen, elixir-format
 msgid "Save"
 msgstr "Save"
@@ -441,23 +423,23 @@ msgstr "Save"
 msgid "Send"
 msgstr "Send"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:110
+#: lib/phoenix_kit_agent/web/settings_live.ex:119
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr "Settings"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:568
+#: lib/phoenix_kit_agent/web/users_live.ex:739
 #, elixir-autogen, elixir-format
 msgid "Settings of %{user}"
 msgstr "Settings of %{user}"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:367
+#: lib/phoenix_kit_agent/web/users_live.ex:434
 #, elixir-autogen, elixir-format
 msgid "Settings saved."
 msgstr "Settings saved."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:350
-#: lib/phoenix_kit_agent/web/users_live.ex:385
+#: lib/phoenix_kit_agent/web/settings_live.ex:398
+#: lib/phoenix_kit_agent/web/users_live.ex:452
 #, elixir-autogen, elixir-format
 msgid "Someone else changed these settings after the form was opened. Nothing was saved: open the form again."
 msgstr "Someone else changed these settings after the form was opened. Nothing was saved: open the form again."
@@ -473,14 +455,14 @@ msgstr "Something went wrong. Try again in a moment."
 msgid "Spending"
 msgstr "Spending"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:862
-#: lib/phoenix_kit_agent/web/users_live.ex:614
+#: lib/phoenix_kit_agent/web/settings_live.ex:970
+#: lib/phoenix_kit_agent/web/users_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Spending per day"
 msgstr "Spending per day"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:867
-#: lib/phoenix_kit_agent/web/users_live.ex:623
+#: lib/phoenix_kit_agent/web/settings_live.ex:975
+#: lib/phoenix_kit_agent/web/users_live.ex:806
 #, elixir-autogen, elixir-format
 msgid "Spending per month"
 msgstr "Spending per month"
@@ -495,13 +477,13 @@ msgstr "Stop"
 msgid "Stopping…"
 msgstr "Stopping…"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:577
-#: lib/phoenix_kit_agent/web/users_live.ex:708
+#: lib/phoenix_kit_agent/web/users_live.ex:748
+#: lib/phoenix_kit_agent/web/users_live.ex:891
 #, elixir-autogen, elixir-format
 msgid "Switched off"
 msgstr "Switched off"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:660
+#: lib/phoenix_kit_agent/web/users_live.ex:843
 #, elixir-autogen, elixir-format
 msgid "Tell the watchers when this user reaches a limit"
 msgstr "Tell the watchers when this user reaches a limit"
@@ -515,11 +497,6 @@ msgstr "The AI budget is used up, so it was not read."
 #, elixir-autogen, elixir-format
 msgid "The AI budget is used up."
 msgstr "The AI budget is used up."
-
-#: lib/phoenix_kit_agent/web/settings_live.ex:787
-#, elixir-autogen, elixir-format
-msgid "The AI endpoints of the AI module. A user without a model of their own uses the default one; without it the assistant does not answer. The vision model describes pictures for a model that does not take them."
-msgstr "The AI endpoints of the AI module. A user without a model of their own uses the default one; without it the assistant does not answer. The vision model describes pictures for a model that does not take them."
 
 #: lib/phoenix_kit_agent/web/dock/texts.ex:137
 #, elixir-autogen, elixir-format
@@ -572,22 +549,22 @@ msgstr "The assistant is still answering in this chat. Wait for it or press Stop
 msgid "The assistant used all its tool rounds for this turn."
 msgstr "The assistant used all its tool rounds for this turn."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:919
+#: lib/phoenix_kit_agent/web/settings_live.ex:1027
 #, elixir-autogen, elixir-format
 msgid "The assistant's prompt"
 msgstr "The assistant's prompt"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:505
+#: lib/phoenix_kit_agent/web/settings_live.ex:553
 #, elixir-autogen, elixir-format
 msgid "The assistant's prompt saved."
 msgstr "The assistant's prompt saved."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:855
+#: lib/phoenix_kit_agent/web/settings_live.ex:963
 #, elixir-autogen, elixir-format
 msgid "The default model does not report what a call costs: money is not counted, only the turn limit applies."
 msgstr "The default model does not report what a call costs: money is not counted, only the turn limit applies."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:670
+#: lib/phoenix_kit_agent/web/settings_live.ex:718
 #, elixir-autogen, elixir-format
 msgid "The defaults could not be saved. Nothing was changed."
 msgstr "The defaults could not be saved. Nothing was changed."
@@ -663,10 +640,10 @@ msgstr "The result was cut to fit."
 msgid "The server was too busy to read it. Add it again."
 msgstr "The server was too busy to read it. Add it again."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:608
-#: lib/phoenix_kit_agent/web/settings_live.ex:643
-#: lib/phoenix_kit_agent/web/settings_live.ex:689
-#: lib/phoenix_kit_agent/web/settings_live.ex:704
+#: lib/phoenix_kit_agent/web/settings_live.ex:656
+#: lib/phoenix_kit_agent/web/settings_live.ex:691
+#: lib/phoenix_kit_agent/web/settings_live.ex:737
+#: lib/phoenix_kit_agent/web/settings_live.ex:752
 #, elixir-autogen, elixir-format
 msgid "The setting could not be saved. Nothing was changed."
 msgstr "The setting could not be saved. Nothing was changed."
@@ -716,22 +693,22 @@ msgstr "This kind of file cannot be read on this server."
 msgid "This kind of file is not supported. Send a picture, a PDF, an xlsx or csv sheet, or a txt or md text."
 msgstr "This kind of file is not supported. Send a picture, a PDF, an xlsx or csv sheet, or a txt or md text."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:605
+#: lib/phoenix_kit_agent/web/users_live.ex:788
 #, elixir-autogen, elixir-format
 msgid "This model does not report what a call costs: money is not counted, only the turn limit applies."
 msgstr "This model does not report what a call costs: money is not counted, only the turn limit applies."
 
 #: lib/phoenix_kit_agent/web/spending_live.ex:97
 #: lib/phoenix_kit_agent/web/spending_live.ex:113
-#: lib/phoenix_kit_agent/web/users_live.ex:691
+#: lib/phoenix_kit_agent/web/users_live.ex:874
 #, elixir-autogen, elixir-format
 msgid "This month"
 msgstr "This month"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:125
-#: lib/phoenix_kit_agent/web/users_live.ex:252
-#: lib/phoenix_kit_agent/web/users_live.ex:349
-#: lib/phoenix_kit_agent/web/users_live.ex:393
+#: lib/phoenix_kit_agent/web/users_live.ex:150
+#: lib/phoenix_kit_agent/web/users_live.ex:278
+#: lib/phoenix_kit_agent/web/users_live.ex:416
+#: lib/phoenix_kit_agent/web/users_live.ex:460
 #, elixir-autogen, elixir-format
 msgid "This user does not use the assistant."
 msgstr "This user does not use the assistant."
@@ -743,7 +720,7 @@ msgstr "Title"
 
 #: lib/phoenix_kit_agent/web/spending_live.ex:87
 #: lib/phoenix_kit_agent/web/spending_live.ex:112
-#: lib/phoenix_kit_agent/web/users_live.ex:690
+#: lib/phoenix_kit_agent/web/users_live.ex:873
 #, elixir-autogen, elixir-format
 msgid "Today"
 msgstr "Today"
@@ -769,18 +746,18 @@ msgstr "Too many files for one message. Remove some of them."
 msgid "Too many requests at once; try again in a minute."
 msgstr "Too many requests at once; try again in a minute."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:890
+#: lib/phoenix_kit_agent/web/settings_live.ex:998
 #, elixir-autogen, elixir-format
 msgid "Tool rounds per turn"
 msgstr "Tool rounds per turn"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:894
+#: lib/phoenix_kit_agent/web/settings_live.ex:1002
 #, elixir-autogen, elixir-format
 msgid "Turn deadline"
 msgstr "Turn deadline"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:870
-#: lib/phoenix_kit_agent/web/users_live.ex:632
+#: lib/phoenix_kit_agent/web/settings_live.ex:978
+#: lib/phoenix_kit_agent/web/users_live.ex:815
 #, elixir-autogen, elixir-format
 msgid "Turns per day"
 msgstr "Turns per day"
@@ -796,18 +773,19 @@ msgid "Use the AI assistant, with the rights of one's own session"
 msgstr "Use the AI assistant, with the rights of one's own session"
 
 #: lib/phoenix_kit_agent/web/spending_live.ex:111
-#: lib/phoenix_kit_agent/web/users_live.ex:687
+#: lib/phoenix_kit_agent/web/users_live.ex:870
 #, elixir-autogen, elixir-format
 msgid "User"
 msgstr "User"
 
 #: lib/phoenix_kit_agent.ex:155
-#: lib/phoenix_kit_agent/web/users_live.ex:101
+#: lib/phoenix_kit_agent/web/users_live.ex:126
 #, elixir-autogen, elixir-format
 msgid "Users"
 msgstr "Users"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:803
+#: lib/phoenix_kit_agent/web/settings_live.ex:859
+#: lib/phoenix_kit_agent/web/users_live.ex:763
 #, elixir-autogen, elixir-format
 msgid "Vision model"
 msgstr "Vision model"
@@ -817,27 +795,27 @@ msgstr "Vision model"
 msgid "What the AI assistant cost, by user"
 msgstr "What the AI assistant cost, by user"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:947
+#: lib/phoenix_kit_agent/web/settings_live.ex:1055
 #, elixir-autogen, elixir-format
 msgid "When a user reaches a limit and their settings say to tell someone, and when the AI budget is used up."
 msgstr "When a user reaches a limit and their settings say to tell someone, and when the AI budget is used up."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1091
+#: lib/phoenix_kit_agent/web/settings_live.ex:1199
 #, elixir-autogen, elixir-format
 msgid "When on, the full text of the assistant's requests and answers, with the data its tools returned, is written to the AI request journal, where everyone who holds the AI permission can read it on the AI usage page (/admin/ai/usage). When off, the journal keeps only the counts and the cost."
 msgstr "When on, the full text of the assistant's requests and answers, with the data its tools returned, is written to the AI request journal, where everyone who holds the AI permission can read it on the AI usage page (/admin/ai/usage). When off, the journal keeps only the counts and the cost."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:945
+#: lib/phoenix_kit_agent/web/settings_live.ex:1053
 #, elixir-autogen, elixir-format
 msgid "Who is told about limits"
 msgstr "Who is told about limits"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:538
+#: lib/phoenix_kit_agent/web/settings_live.ex:586
 #, elixir-autogen, elixir-format
 msgid "Who is told about limits saved."
 msgstr "Who is told about limits saved."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:102
+#: lib/phoenix_kit_agent/web/users_live.ex:127
 #, elixir-autogen, elixir-format
 msgid "Who uses the AI assistant, and with which limits"
 msgstr "Who uses the AI assistant, and with which limits"
@@ -852,18 +830,18 @@ msgstr "Write a message first."
 msgid "Write a message…"
 msgstr "Write a message…"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1108
+#: lib/phoenix_kit_agent/web/settings_live.ex:1216
 #, elixir-autogen, elixir-format
 msgid "Write request content to the AI journal"
 msgstr "Write request content to the AI journal"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:760
+#: lib/phoenix_kit_agent/web/users_live.ex:950
 #, elixir-autogen, elixir-format
 msgid "Yes"
 msgstr "Yes"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:130
-#: lib/phoenix_kit_agent/web/settings_live.ex:254
+#: lib/phoenix_kit_agent/web/settings_live.ex:140
+#: lib/phoenix_kit_agent/web/settings_live.ex:272
 #, elixir-autogen, elixir-format
 msgid "You do not have access to the AI assistant settings."
 msgstr "You do not have access to the AI assistant settings."
@@ -873,8 +851,8 @@ msgstr "You do not have access to the AI assistant settings."
 msgid "You do not have access to the AI assistant spending."
 msgstr "You do not have access to the AI assistant spending."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:111
-#: lib/phoenix_kit_agent/web/users_live.ex:404
+#: lib/phoenix_kit_agent/web/users_live.ex:136
+#: lib/phoenix_kit_agent/web/users_live.ex:471
 #, elixir-autogen, elixir-format
 msgid "You do not have access to the AI assistant users."
 msgstr "You do not have access to the AI assistant users."
@@ -979,13 +957,14 @@ msgstr "Your session has ended. Sign in again to use the assistant."
 msgid "a tool"
 msgstr "a tool"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:734
-#: lib/phoenix_kit_agent/web/users_live.ex:740
+#: lib/phoenix_kit_agent/web/users_live.ex:924
+#: lib/phoenix_kit_agent/web/users_live.ex:930
 #, elixir-autogen, elixir-format
 msgid "day"
 msgstr "day"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:474
+#: lib/phoenix_kit_agent/web/settings_live.ex:522
+#: lib/phoenix_kit_agent/web/users_live.ex:655
 #, elixir-autogen, elixir-format
 msgid "does not take pictures"
 msgstr "does not take pictures"
@@ -995,73 +974,75 @@ msgstr "does not take pictures"
 msgid "done"
 msgstr "done"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:439
+#: lib/phoenix_kit_agent/web/users_live.ex:506
 #, elixir-autogen, elixir-format
 msgid "is finer than a millionth of a dollar"
 msgstr "is finer than a millionth of a dollar"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:442
+#: lib/phoenix_kit_agent/web/users_live.ex:509
 #, elixir-autogen, elixir-format
 msgid "is not a valid amount"
 msgstr "is not a valid amount"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:461
+#: lib/phoenix_kit_agent/web/users_live.ex:528
 #, elixir-autogen, elixir-format
 msgid "is not a whole number"
 msgstr "is not a whole number"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:321
-#: lib/phoenix_kit_agent/web/settings_live.ex:330
-#: lib/phoenix_kit_agent/web/settings_live.ex:409
-#: lib/phoenix_kit_agent/web/users_live.ex:484
-#: lib/phoenix_kit_agent/web/users_live.ex:506
+#: lib/phoenix_kit_agent/web/settings_live.ex:369
+#: lib/phoenix_kit_agent/web/settings_live.ex:378
+#: lib/phoenix_kit_agent/web/settings_live.ex:457
+#: lib/phoenix_kit_agent/web/users_live.ex:554
+#: lib/phoenix_kit_agent/web/users_live.ex:560
+#: lib/phoenix_kit_agent/web/users_live.ex:568
 #, elixir-autogen, elixir-format
 msgid "is not available"
 msgstr "is not available"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:618
-#: lib/phoenix_kit_agent/web/users_live.ex:627
-#: lib/phoenix_kit_agent/web/users_live.ex:635
-#: lib/phoenix_kit_agent/web/users_live.ex:644
-#: lib/phoenix_kit_agent/web/users_live.ex:652
-#: lib/phoenix_kit_agent/web/users_live.ex:726
+#: lib/phoenix_kit_agent/web/users_live.ex:801
+#: lib/phoenix_kit_agent/web/users_live.ex:810
+#: lib/phoenix_kit_agent/web/users_live.ex:818
+#: lib/phoenix_kit_agent/web/users_live.ex:827
+#: lib/phoenix_kit_agent/web/users_live.ex:835
+#: lib/phoenix_kit_agent/web/users_live.ex:909
 #, elixir-autogen, elixir-format
 msgid "module default"
 msgstr "module default"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:747
+#: lib/phoenix_kit_agent/web/users_live.ex:937
 #, elixir-autogen, elixir-format
 msgid "money is not counted — only the turn limit applies"
 msgstr "money is not counted — only the turn limit applies"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:737
+#: lib/phoenix_kit_agent/web/users_live.ex:927
 #, elixir-autogen, elixir-format
 msgid "month"
 msgstr "month"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:461
-#: lib/phoenix_kit_agent/web/users_live.ex:536
+#: lib/phoenix_kit_agent/web/settings_live.ex:509
+#: lib/phoenix_kit_agent/web/users_live.ex:648
 #, elixir-autogen, elixir-format
 msgid "no tools"
 msgstr "no tools"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:729
+#: lib/phoenix_kit_agent/web/users_live.ex:919
 #, elixir-autogen, elixir-format
 msgid "not set"
 msgstr "not set"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:475
+#: lib/phoenix_kit_agent/web/settings_live.ex:523
+#: lib/phoenix_kit_agent/web/users_live.ex:656
 #, elixir-autogen, elixir-format
 msgid "pictures unknown"
 msgstr "pictures unknown"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:461
-#: lib/phoenix_kit_agent/web/users_live.ex:537
+#: lib/phoenix_kit_agent/web/settings_live.ex:509
+#: lib/phoenix_kit_agent/web/users_live.ex:648
 #, elixir-autogen, elixir-format
 msgid "tools unknown"
 msgstr "tools unknown"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:740
+#: lib/phoenix_kit_agent/web/users_live.ex:930
 #, elixir-autogen, elixir-format
 msgid "turns"
 msgstr "turns"
@@ -1071,14 +1052,14 @@ msgstr "turns"
 msgid "AI assistant limits"
 msgstr "AI assistant limits"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:874
-#: lib/phoenix_kit_agent/web/users_live.ex:641
+#: lib/phoenix_kit_agent/web/settings_live.ex:982
+#: lib/phoenix_kit_agent/web/users_live.ex:824
 #, elixir-autogen, elixir-format
 msgctxt "unit"
 msgid "MB"
 msgstr "MB"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:895
+#: lib/phoenix_kit_agent/web/settings_live.ex:1003
 #, elixir-autogen, elixir-format
 msgctxt "unit"
 msgid "s"
@@ -1295,7 +1276,7 @@ msgstr "AI assistant chat"
 msgid "AI assistant pictures"
 msgstr "AI assistant pictures"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:711
+#: lib/phoenix_kit_agent/web/users_live.ex:894
 #, elixir-autogen, elixir-format
 msgid "Blocked"
 msgstr "Blocked"
@@ -1305,17 +1286,17 @@ msgstr "Blocked"
 msgid "Describe a picture or a scanned page that a user attached to a message to the AI assistant."
 msgstr "Describe a picture or a scanned page that a user attached to a message to the AI assistant."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:772
+#: lib/phoenix_kit_agent/web/users_live.ex:962
 #, elixir-autogen, elixir-format
 msgid "Lift the block"
 msgstr "Lift the block"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:228
+#: lib/phoenix_kit_agent/web/users_live.ex:254
 #, elixir-autogen, elixir-format
 msgid "Nobody but an Owner lifts their own block."
 msgstr "Nobody but an Owner lifts their own block."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:231
+#: lib/phoenix_kit_agent/web/users_live.ex:257
 #, elixir-autogen, elixir-format
 msgid "Only an Owner can lift an Owner's block."
 msgstr "Only an Owner can lift an Owner's block."
@@ -1325,34 +1306,36 @@ msgstr "Only an Owner can lift an Owner's block."
 msgid "Someone reached a spending or turn limit of the AI assistant"
 msgstr "Someone reached a spending or turn limit of the AI assistant"
 
-#: lib/phoenix_kit_agent/web/users_live.ex:225
+#: lib/phoenix_kit_agent/web/users_live.ex:251
 #, elixir-autogen, elixir-format
 msgid "The block is lifted."
 msgstr "The block is lifted."
 
-#: lib/phoenix_kit_agent/web/users_live.ex:237
+#: lib/phoenix_kit_agent/web/users_live.ex:263
 #, elixir-autogen, elixir-format
 msgid "This user is not blocked now."
 msgstr "This user is not blocked now."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:396
+#: lib/phoenix_kit_agent/web/settings_live.ex:444
+#: lib/phoenix_kit_agent/web/users_live.ex:587
 #, elixir-autogen, elixir-format
 msgid "cannot be used yet: nobody knows whether its model takes pictures. Mark what it can do on its AI endpoint first"
 msgstr "cannot be used yet: nobody knows whether its model takes pictures. Mark what it can do on its AI endpoint first"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:387
-#: lib/phoenix_kit_agent/web/users_live.ex:502
+#: lib/phoenix_kit_agent/web/settings_live.ex:435
+#: lib/phoenix_kit_agent/web/users_live.ex:578
 #, elixir-autogen, elixir-format
 msgid "cannot be used yet: nobody knows whether its model takes tools. Mark what it can do on its AI endpoint first"
 msgstr "cannot be used yet: nobody knows whether its model takes tools. Mark what it can do on its AI endpoint first"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:392
+#: lib/phoenix_kit_agent/web/settings_live.ex:440
+#: lib/phoenix_kit_agent/web/users_live.ex:583
 #, elixir-autogen, elixir-format
 msgid "cannot be used: its model does not take pictures"
 msgstr "cannot be used: its model does not take pictures"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:383
-#: lib/phoenix_kit_agent/web/users_live.ex:498
+#: lib/phoenix_kit_agent/web/settings_live.ex:431
+#: lib/phoenix_kit_agent/web/users_live.ex:574
 #, elixir-autogen, elixir-format
 msgid "cannot be used: its model does not take tools, which the assistant needs"
 msgstr "cannot be used: its model does not take tools, which the assistant needs"
@@ -1522,17 +1505,17 @@ msgstr "Agent in Telegram"
 msgid "Telegram"
 msgstr "Telegram"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1143
+#: lib/phoenix_kit_agent/web/settings_live.ex:1251
 #, elixir-autogen, elixir-format
 msgid "Answer in Telegram"
 msgstr "Answer in Telegram"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1125
+#: lib/phoenix_kit_agent/web/settings_live.ex:1233
 #, elixir-autogen, elixir-format
 msgid "Assistant in Telegram"
 msgstr "Assistant in Telegram"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:736
+#: lib/phoenix_kit_agent/web/settings_live.ex:784
 #, elixir-autogen, elixir-format
 msgid "Conflict: the bot is read by someone else (another reader or a webhook). The reader waits and tries again."
 msgstr "Conflict: the bot is read by someone else (another reader or a webhook). The reader waits and tries again."
@@ -1547,22 +1530,22 @@ msgstr "I do not read forwarded messages. Put it in your own words."
 msgid "I understand text only for now."
 msgstr "I understand text only for now."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:742
+#: lib/phoenix_kit_agent/web/settings_live.ex:790
 #, elixir-autogen, elixir-format
 msgid "No default model is chosen, so only users with a model of their own are answered."
 msgstr "No default model is chosen, so only users with a model of their own are answered."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:727
+#: lib/phoenix_kit_agent/web/settings_live.ex:775
 #, elixir-autogen, elixir-format
 msgid "No website bot is chosen for user notifications, so there is no chat to answer. Choose one in the Telegram integration."
 msgstr "No website bot is chosen for user notifications, so there is no chat to answer. Choose one in the Telegram integration."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:723
+#: lib/phoenix_kit_agent/web/settings_live.ex:771
 #, elixir-autogen, elixir-format
 msgid "Off: the assistant does not answer in Telegram."
 msgstr "Off: the assistant does not answer in Telegram."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:744
+#: lib/phoenix_kit_agent/web/settings_live.ex:792
 #, elixir-autogen, elixir-format
 msgid "Reading the bot's messages."
 msgstr "Reading the bot's messages."
@@ -1572,22 +1555,22 @@ msgstr "Reading the bot's messages."
 msgid "Started a new conversation."
 msgstr "Started a new conversation."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1151
+#: lib/phoenix_kit_agent/web/settings_live.ex:1259
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr "Status"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:747
+#: lib/phoenix_kit_agent/web/settings_live.ex:795
 #, elixir-autogen, elixir-format
 msgid "Switched on. The reader starts within half a minute."
 msgstr "Switched on. The reader starts within half a minute."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:699
+#: lib/phoenix_kit_agent/web/settings_live.ex:747
 #, elixir-autogen, elixir-format
 msgid "Telegram setting saved."
 msgstr "Telegram setting saved."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:732
+#: lib/phoenix_kit_agent/web/settings_live.ex:780
 #, elixir-autogen, elixir-format
 msgid "The bot has a webhook set, so its messages cannot be read. Remove the webhook."
 msgstr "The bot has a webhook set, so its messages cannot be read. Remove the webhook."
@@ -1802,32 +1785,37 @@ msgstr "Write down a voice message or a recording that a user made for the AI as
 msgid "🎙 Recognised: %{text}"
 msgstr "🎙 Recognised: %{text}"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:812
+#: lib/phoenix_kit_agent/web/settings_live.ex:874
+#: lib/phoenix_kit_agent/web/users_live.ex:771
 #, elixir-autogen, elixir-format
 msgid "Speech recognition model"
 msgstr "Speech recognition model"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:824
+#: lib/phoenix_kit_agent/web/settings_live.ex:892
 #, elixir-autogen, elixir-format
 msgid "The speech recognition model writes down the voice messages of the Telegram bot and the recordings of the chat panel's microphone. Choose a model that takes audio, for example Gemini Flash. Without it, voice input is off."
 msgstr "The speech recognition model writes down the voice messages of the Telegram bot and the recordings of the chat panel's microphone. Choose a model that takes audio, for example Gemini Flash. Without it, voice input is off."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:489
+#: lib/phoenix_kit_agent/web/settings_live.ex:537
+#: lib/phoenix_kit_agent/web/users_live.ex:660
 #, elixir-autogen, elixir-format
 msgid "audio unknown"
 msgstr "audio unknown"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:405
+#: lib/phoenix_kit_agent/web/settings_live.ex:453
+#: lib/phoenix_kit_agent/web/users_live.ex:596
 #, elixir-autogen, elixir-format
 msgid "cannot be used yet: nobody knows whether its model takes audio. Mark what it can do on its AI endpoint first"
 msgstr "cannot be used yet: nobody knows whether its model takes audio. Mark what it can do on its AI endpoint first"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:401
+#: lib/phoenix_kit_agent/web/settings_live.ex:449
+#: lib/phoenix_kit_agent/web/users_live.ex:592
 #, elixir-autogen, elixir-format
 msgid "cannot be used: its model does not take audio"
 msgstr "cannot be used: its model does not take audio"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:488
+#: lib/phoenix_kit_agent/web/settings_live.ex:536
+#: lib/phoenix_kit_agent/web/users_live.ex:660
 #, elixir-autogen, elixir-format
 msgid "does not take audio"
 msgstr "does not take audio"
@@ -1867,7 +1855,7 @@ msgstr "What is in this picture?"
 msgid "The model's answer could not be read as the words. Try again."
 msgstr "The model's answer could not be read as the words. Try again."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:819
+#: lib/phoenix_kit_agent/web/settings_live.ex:887
 #, elixir-autogen, elixir-format
 msgid "Voice input needs a newer version of the AI module: it cannot write speech down yet."
 msgstr "Voice input needs a newer version of the AI module: it cannot write speech down yet."
@@ -1907,7 +1895,7 @@ msgstr "That file is not a picture I can read. Send a photo, or a png, jpeg or w
 msgid "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
 msgstr "Write to me in plain text and I will answer using your data on the site. /new starts a new conversation. When you ask for a change, I will show a card with its details and two buttons: confirm it or cancel it."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:829
+#: lib/phoenix_kit_agent/web/settings_live.ex:897
 #, elixir-autogen, elixir-format
 msgid "The speech recognition model does not report what a call costs: what it spends is not counted, and nothing limits voice input by money."
 msgstr "The speech recognition model does not report what a call costs: what it spends is not counted, and nothing limits voice input by money."
@@ -1927,53 +1915,53 @@ msgstr "Pictures taken: %{taken} of %{total} (a message takes at most %{max})."
 msgid "Wait until the files are uploaded and read; a paused file has to be resumed or removed first."
 msgstr "Wait until the files are uploaded and read; a paused file has to be resumed or removed first."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1127
+#: lib/phoenix_kit_agent/web/settings_live.ex:1235
 #, elixir-autogen, elixir-format
 msgid "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. A change is shown as a card with two buttons, and is made only when the person confirms it."
 msgstr "When on, a person who linked their Telegram chat to the website bot (Profile → Telegram) and whose role has the right \"Agent in Telegram\" can write to the bot, and the assistant answers there with that person's own rights, model and limits. A change is shown as a card with two buttons, and is made only when the person confirms it."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:628
+#: lib/phoenix_kit_agent/web/settings_live.ex:676
 #, elixir-autogen, elixir-format
 msgid "Accepted file types saved."
 msgstr "Accepted file types saved."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:594
+#: lib/phoenix_kit_agent/web/settings_live.ex:642
 #, elixir-autogen, elixir-format
 msgid "Chat retention saved."
 msgstr "Chat retention saved."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1017
-#: lib/phoenix_kit_agent/web/settings_live.ex:1037
+#: lib/phoenix_kit_agent/web/settings_live.ex:1125
+#: lib/phoenix_kit_agent/web/settings_live.ex:1145
 #, elixir-autogen, elixir-format
 msgid "Chats the next nightly run would delete: %{count}."
 msgstr "Chats the next nightly run would delete: %{count}."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:599
+#: lib/phoenix_kit_agent/web/settings_live.ex:647
 #, elixir-autogen, elixir-format
 msgid "Enter a whole number of days from 1 to %{max}, or leave it empty."
 msgstr "Enter a whole number of days from 1 to %{max}, or leave it empty."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:983
+#: lib/phoenix_kit_agent/web/settings_live.ex:1091
 #, elixir-autogen, elixir-format
 msgid "How many days a chat is kept after its last message. Older chats, with their messages and attached files, are deleted for good by a nightly job, and so is a chat a user deleted. Leave it empty to keep chats without a time limit: nothing is deleted then. The AI request journal has its own retention, on the pages of the AI module."
 msgstr "How many days a chat is kept after its last message. Older chats, with their messages and attached files, are deleted for good by a nightly job, and so is a chat a user deleted. Leave it empty to keep chats without a time limit: nothing is deleted then. The AI request journal has its own retention, on the pages of the AI module."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1000
+#: lib/phoenix_kit_agent/web/settings_live.ex:1108
 #, elixir-autogen, elixir-format
 msgid "Keep chats for, days"
 msgstr "Keep chats for, days"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:981
+#: lib/phoenix_kit_agent/web/settings_live.ex:1089
 #, elixir-autogen, elixir-format
 msgid "Keeping chats"
 msgstr "Keeping chats"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:635
+#: lib/phoenix_kit_agent/web/settings_live.ex:683
 #, elixir-autogen, elixir-format
 msgid "Nothing was saved: choose at least one type. To take no files, set the attachments per message to 0."
 msgstr "Nothing was saved: choose at least one type. To take no files, set the attachments per message to 0."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1058
+#: lib/phoenix_kit_agent/web/settings_live.ex:1166
 #, elixir-autogen, elixir-format
 msgid "The kinds of file a user can attach. The server refuses any other, whatever the browser's file picker shows. A file added before its type was taken off the list is refused when the message is sent, and the user discards it."
 msgstr "The kinds of file a user can attach. The server refuses any other, whatever the browser's file picker shows. A file added before its type was taken off the list is refused when the message is sent, and the user discards it."
@@ -1983,24 +1971,24 @@ msgstr "The kinds of file a user can attach. The server refuses any other, whate
 msgid "This site accepts only these kinds of file: %{types}."
 msgstr "This site accepts only these kinds of file: %{types}."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1056
+#: lib/phoenix_kit_agent/web/settings_live.ex:1164
 #, elixir-autogen, elixir-format
 msgid "Types of file in chats"
 msgstr "Types of file in chats"
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1035
+#: lib/phoenix_kit_agent/web/settings_live.ex:1143
 #, elixir-autogen, elixir-format
 msgid "Chats are kept without a time limit."
 msgstr "Chats are kept without a time limit."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1029
+#: lib/phoenix_kit_agent/web/settings_live.ex:1137
 #, elixir-autogen, elixir-format
 msgid "Chats are kept for %{count} day."
 msgid_plural "Chats are kept for %{count} days."
 msgstr[0] "Chats are kept for %{count} day."
 msgstr[1] "Chats are kept for %{count} days."
 
-#: lib/phoenix_kit_agent/web/settings_live.ex:1009
+#: lib/phoenix_kit_agent/web/settings_live.ex:1117
 #, elixir-autogen, elixir-format
 msgid "With %{count} day (not saved yet), chats the next nightly run would delete for good: %{chats}."
 msgid_plural "With %{count} days (not saved yet), chats the next nightly run would delete for good: %{chats}."
@@ -2026,3 +2014,94 @@ msgstr "I understand text and voice messages for now."
 #, elixir-autogen, elixir-format
 msgid "Use the AI assistant from the Telegram chat linked to the site bot, with the user's own rights: it reads data and proposes changes the user confirms"
 msgstr "Use the AI assistant from the Telegram chat linked to the site bot, with the user's own rights: it reads data and proposes changes the user confirms"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:921
+#, elixir-autogen, elixir-format
+msgid "A user can choose, for the chat, for pictures and for speech, among these models only, and only one that fits the task. Nothing ticked: nobody chooses, and only an administrator sets a model for a user. Taking a model off the list changes nothing for a user who already uses it."
+msgstr "A user can choose, for the chat, for pictures and for speech, among these models only, and only one that fits the task. Nothing ticked: nobody chooses, and only an administrator sets a model for a user. Taking a model off the list changes nothing for a user who already uses it."
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:850
+#, elixir-autogen, elixir-format
+msgid "Answers everyone who has no chat model of their own. A user's own choice replaces it."
+msgstr "Answers everyone who has no chat model of their own. A user's own choice replaces it."
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:833
+#, elixir-autogen, elixir-format
+msgid "Default models for everyone"
+msgstr "Default models for everyone"
+
+#: lib/phoenix_kit_agent/web/users_live.ex:639
+#, elixir-autogen, elixir-format
+msgid "Default: %{name}"
+msgstr "Default: %{name}"
+
+#: lib/phoenix_kit_agent/web/users_live.ex:640
+#, elixir-autogen, elixir-format
+msgid "Default: none set"
+msgstr "Default: none set"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:865
+#, elixir-autogen, elixir-format
+msgid "Describes pictures for a model that does not take them, for everyone who has no picture model of their own. A user's own choice replaces it."
+msgstr "Describes pictures for a model that does not take them, for everyone who has no picture model of their own. A user's own choice replaces it."
+
+#: lib/phoenix_kit_agent/web/users_live.ex:670
+#, elixir-autogen, elixir-format
+msgid "In effect: default — %{name}"
+msgstr "In effect: default — %{name}"
+
+#: lib/phoenix_kit_agent/web/users_live.ex:667
+#, elixir-autogen, elixir-format
+msgid "In effect: own model — %{name}"
+msgstr "In effect: own model — %{name}"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:919
+#, elixir-autogen, elixir-format
+msgid "Models users may choose themselves"
+msgstr "Models users may choose themselves"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:337
+#: lib/phoenix_kit_agent/web/settings_live.ex:342
+#, elixir-autogen, elixir-format
+msgid "Nothing was saved: a model chosen is not available."
+msgstr "Nothing was saved: a model chosen is not available."
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:835
+#, elixir-autogen, elixir-format
+msgid "The AI endpoints of the AI module. These are the defaults: they serve everyone who has not chosen a model of their own, and a user's own choice replaces them. Without a default model and without an own one the assistant does not answer."
+msgstr "The AI endpoints of the AI module. These are the defaults: they serve everyone who has not chosen a model of their own, and a user's own choice replaces them. Without a default model and without an own one the assistant does not answer."
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:332
+#, elixir-autogen, elixir-format
+msgid "The models users may choose are saved."
+msgstr "The models users may choose are saved."
+
+#: lib/phoenix_kit_agent/web/users_live.ex:674
+#, elixir-autogen, elixir-format
+msgid "The own model cannot be used (switched off or without credentials), so the default is in effect — %{name}"
+msgstr "The own model cannot be used (switched off or without credentials), so the default is in effect — %{name}"
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:942
+#, elixir-autogen, elixir-format
+msgid "There are no AI endpoints that chat."
+msgstr "There are no AI endpoints that chat."
+
+#: lib/phoenix_kit_agent/web/users_live.ex:717
+#, elixir-autogen, elixir-format
+msgid "This model is outside the list of models users may choose."
+msgstr "This model is outside the list of models users may choose."
+
+#: lib/phoenix_kit_agent/web/settings_live.ex:880
+#, elixir-autogen, elixir-format
+msgid "Writes voice down for everyone who has no speech model of their own. A user's own choice replaces it."
+msgstr "Writes voice down for everyone who has no speech model of their own. A user's own choice replaces it."
+
+#: lib/phoenix_kit_agent/web/users_live.ex:663
+#, elixir-autogen, elixir-format
+msgid "none set"
+msgstr "none set"
+
+#: lib/phoenix_kit_agent/web/users_live.ex:916
+#, elixir-autogen, elixir-format
+msgid "the own model cannot be used"
+msgstr "the own model cannot be used"
