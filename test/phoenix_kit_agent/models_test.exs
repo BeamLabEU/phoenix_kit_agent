@@ -224,7 +224,7 @@ defmodule PhoenixKitAgent.ModelsTest do
       usable =
         Models.usable_uuids([good.uuid, off.uuid, tts.uuid, keyless.uuid, Ecto.UUID.generate()])
 
-      assert MapSet.to_list(usable) == [good.uuid]
+      assert usable == [good.uuid]
     end
 
     test "a credential is read through the cache PhoenixKitAI asks, so a change is seen as it sees it" do
@@ -236,20 +236,20 @@ defmodule PhoenixKitAgent.ModelsTest do
         set: [api_key: "", integration_uuid: nil]
       )
 
-      refute MapSet.member?(Models.usable_uuids([keyless.uuid]), keyless.uuid)
+      refute keyless.uuid in Models.usable_uuids([keyless.uuid])
 
       # The credential appears in the cache PhoenixKitAI reads (as an integration
       # saved elsewhere would after its event) … but only a hit is cached, so a miss
       # is asked again at the source.
       assert {:ok, _} = PhoenixKitAI.Cache.credentials(key, fn -> {:ok, %{"api_key" => "k"}} end)
-      assert MapSet.member?(Models.usable_uuids([keyless.uuid]), keyless.uuid)
+      assert keyless.uuid in Models.usable_uuids([keyless.uuid])
 
       PhoenixKitAI.Cache.invalidate_credentials()
-      refute MapSet.member?(Models.usable_uuids([keyless.uuid]), keyless.uuid)
+      refute keyless.uuid in Models.usable_uuids([keyless.uuid])
     end
 
     test "nothing asked is nothing read" do
-      assert Models.usable_uuids([]) == MapSet.new()
+      assert Models.usable_uuids([]) == []
     end
   end
 

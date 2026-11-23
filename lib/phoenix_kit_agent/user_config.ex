@@ -252,7 +252,7 @@ defmodule PhoenixKitAgent.UserConfig do
          resolve(
            own_uuid,
            models.defaults[task],
-           MapSet.member?(models.usable, own_uuid),
+           own_uuid in models.usable,
            own_uuid in models.selectable
          )}
       end)

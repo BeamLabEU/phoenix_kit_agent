@@ -101,16 +101,16 @@ defmodule PhoenixKitAgent.Models do
 
   @doc """
   Which of these endpoint uuids can be called at all (see the moduledoc), as a
-  set. One read, whatever the number; a uuid that is not an endpoint is not in it.
+  list. One read, whatever the number; a uuid that is not an endpoint is not in it.
   """
-  @spec usable_uuids([String.t()]) :: MapSet.t(String.t())
-  def usable_uuids([]), do: MapSet.new()
+  @spec usable_uuids([String.t()]) :: [String.t()]
+  def usable_uuids([]), do: []
 
   def usable_uuids(uuids) when is_list(uuids) do
     from(e in Endpoint, where: e.uuid in ^Enum.uniq(uuids))
     |> RepoHelper.repo().all()
     |> Enum.filter(&callable?/1)
-    |> MapSet.new(& &1.uuid)
+    |> Enum.map(& &1.uuid)
   end
 
   @doc """

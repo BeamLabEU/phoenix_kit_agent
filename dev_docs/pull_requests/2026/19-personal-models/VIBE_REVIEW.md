@@ -2,7 +2,10 @@
 
 **Author:** timujinne · **State:** merged 2026-11-23 (`a849f1c`) · **Reviewed:** 2026-11-23
 
-**Verdict:** merged, no findings that needed a fix.
+**Verdict:** merged. One finding, fixed on main: `Models.usable_uuids/1` was spec'd
+`MapSet.t(String.t())`, an opaque type dialyzer cannot prove the success typing inside
+(contract_with_opaque), so `mix precommit` failed. It now returns a plain list
+(`[String.t()]`, membership via `in`); fixed in a follow-up commit on main.
 
 ## Checked, fine
 
@@ -34,12 +37,24 @@
 - Settings card wording ("defaults for everyone", "a user's own choice replaces it"),
   "money is not counted" tag, switched-off endpoint cannot become a default — as described.
 
+## Findings
+
+1. **BUG - MEDIUM (dialyzer) — `usable_uuids/1` spec vs opaque `MapSet.t/1`.** New in this
+   PR; `@spec usable_uuids([String.t()]) :: MapSet.t(String.t())` tripped dialyzer's
+   contract_with_opaque ("has an opaque subtype %MapSet{:map => MapSet.internal(_)} which
+   is violated by the success typing"), failing `mix precommit`. Fixed on main: the
+   function returns a plain list and the one caller (`UserConfig`) uses `in`; the tests
+   were updated to match. Post-fix gate: `mix precommit` exit 0, `mix test` 1528 tests,
+   0 failures (against local core).
+
 ## Verification
 
 - Full `mix precommit` + `mix test` against local core (`PHOENIX_KIT_PATH=../phoenix_kit`)
-  run on main after the merge — see the sweep report for the result.
-- `mix.lock` refreshed (`mix deps.update --all`) so locked transitive deps satisfy local
-  core's requirements; committed as "Update dependencies".
+  on main after the merge and the fix: precommit exit 0 (incl. dialyzer), 1528 tests,
+  0 failures.
+- `mix.lock` refreshed (`mix deps.update --all` + `deps.unlock --unused`) so locked
+  transitive deps satisfy local core's requirements; committed as "Review PR #19;
+  update dependencies".
 
 ## Notes
 
