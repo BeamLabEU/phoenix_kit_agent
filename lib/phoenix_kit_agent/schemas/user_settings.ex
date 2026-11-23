@@ -5,6 +5,11 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
   `enabled: false` switches the assistant off for this user even with the `agent`
   permission.
 
+  The user has three models, each an AI endpoint of `phoenix_kit_ai` or `nil`
+  (the module default of that task): `endpoint_uuid` for the chat,
+  `vision_endpoint_uuid` for describing pictures and `speech_endpoint_uuid` for
+  writing speech down. What is in effect is `PhoenixKitAgent.UserConfig`'s to say.
+
   `notify_user_uuids` are extra people told when this user hits a limit (the
   uuid of a deleted user is removed from every row, see
   `PhoenixKitAgent.UserDeletion`). `busy_since` / `busy_turn_ref` are the
@@ -13,10 +18,13 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
   the row: both are set by the caller, never cast. Money is in micro-dollars
   ($1 = 1_000_000).
 
-  Two changesets, for the two people who write a row: `admin_changeset/2` —
-  the switch, the model, the admin's prompt, the limits and the notices, for
-  a caller that has checked `agent.manage`; `personal_changeset/2` — the
-  user's own `personal_instructions`, nothing else. Neither casts the lock
+  Three changesets, for the two people who write a row: `admin_changeset/2` —
+  the switch, the three models, the admin's prompt, the limits and the
+  notices, for a caller that has checked `agent.manage`; `personal_changeset/2`
+  — the user's own `personal_instructions`, nothing else; and
+  `personal_models_changeset/2` — the user's own three models, nothing else
+  (the caller checks that each is one the user may choose:
+  `PhoenixKitAgent.UserConfig.put_personal_models/3`). None casts the lock
   columns, `updated_by_uuid` or the key. Never upsert this row with
   `on_conflict: :replace_all`: that would wipe a live turn lock.
   """
@@ -32,6 +40,9 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
   @foreign_key_type UUIDv7
 
   @limits ~w(daily_cost_limit_micro_usd monthly_cost_limit_micro_usd daily_turn_limit max_attachment_mb max_attachments_per_message)a
+
+  # The three models of a user: the chat's, the pictures' and the speech's.
+  @models ~w(endpoint_uuid vision_endpoint_uuid speech_endpoint_uuid)a
 
   # The longest admin prompt and the longest personal instructions, in
   # characters: both go into every request of the user.
@@ -51,6 +62,8 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
   schema "phoenix_kit_agent_user_settings" do
     field(:enabled, :boolean)
     field(:endpoint_uuid, UUIDv7)
+    field(:vision_endpoint_uuid, UUIDv7)
+    field(:speech_endpoint_uuid, UUIDv7)
     field(:system_prompt, :string)
     field(:personal_instructions, :string)
     field(:daily_cost_limit_micro_usd, :integer)
@@ -71,16 +84,21 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
   @spec limit_fields() :: [atom()]
   def limit_fields, do: @limits
 
+  @doc "The three model fields: chat, pictures, speech."
+  @spec model_fields() :: [atom()]
+  def model_fields, do: @models
+
   @doc """
-  What an admin with `agent.manage` sets for a user: switch, model, the
-  admin's prompt, limits, notices. The caller checks the permission.
+  What an admin with `agent.manage` sets for a user: switch, the three models,
+  the admin's prompt, limits, notices. The caller checks the permission. A
+  field the attributes do not name is left as it is.
   """
   @spec admin_changeset(t(), map()) :: Ecto.Changeset.t()
   def admin_changeset(settings, attrs) do
     settings
     |> cast(
       attrs,
-      [:enabled, :endpoint_uuid, :system_prompt, :notify_on_limit, :notify_user_uuids] ++ @limits
+      [:enabled, :system_prompt, :notify_on_limit, :notify_user_uuids] ++ @models ++ @limits
     )
     |> validate_required([:notify_on_limit, :notify_user_uuids])
     |> clean_text(:system_prompt, @prompt_max)
@@ -113,6 +131,18 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
     |> key_constraints()
   end
 
+  @doc """
+  What the user sets for themself: the three models, nothing else. `nil` or a
+  blank value is "the module default". Whether a model is one the user may
+  choose is not decided here.
+  """
+  @spec personal_models_changeset(t(), map()) :: Ecto.Changeset.t()
+  def personal_models_changeset(settings, attrs) do
+    settings
+    |> cast(attrs, @models)
+    |> key_constraints()
+  end
+
   # A text field: NUL characters cut (the database refuses them), the ends
   # trimmed, blank means none, and a length cap.
   defp clean_text(changeset, field, max) do
@@ -138,6 +168,12 @@ defmodule PhoenixKitAgent.Schemas.UserSettings do
     )
     |> foreign_key_constraint(:endpoint_uuid,
       name: :phoenix_kit_agent_user_settings_endpoint_uuid_fkey
+    )
+    |> foreign_key_constraint(:vision_endpoint_uuid,
+      name: :phoenix_kit_agent_user_settings_vision_endpoint_uuid_fkey
+    )
+    |> foreign_key_constraint(:speech_endpoint_uuid,
+      name: :phoenix_kit_agent_user_settings_speech_endpoint_uuid_fkey
     )
   end
 end

@@ -221,7 +221,8 @@ does not take part of the data for all of it; the attachments of one message
 share `agent_history_chars` between them, and one cut to its share there says
 so too.
 
-How a picture reaches the model (decided 2026-10-20):
+How a picture reaches the model (decided 2026-10-20; a user's own picture
+model, below, takes precedence):
 
   * A model known to take images (`PhoenixKitAI.Capabilities`: the
     provider's catalogue, or what an admin declared on the endpoint) is
@@ -468,6 +469,18 @@ recorded in the Activity log by field name, never its text) and who is told
 about limits (none chosen: every Owner). A user without a model of their own,
 while no default is chosen, is refused every turn with a text that says where
 the model is chosen.
+
+Each of the three models — chat, pictures, speech — is a default that a user's
+own model of the same task replaces for that user (`vision_endpoint_uuid` and
+`speech_endpoint_uuid` next to the chat model's `endpoint_uuid` on the user's
+row; empty means the default). A user's own picture model, when it can be
+used, describes every picture of his, also when his chat model could see it
+itself; his own speech model writes down his voice messages and his microphone.
+An own model that was deleted, switched off or lost its credentials is left
+for the default. The administrator sets any of the three for any user; a user
+may only choose among the endpoints the administrator listed for that
+(`agent_selectable_endpoint_uuids`, empty until filled), and only one that fits
+the task (`PhoenixKitAgent.UserConfig.put_personal_models/3`).
 
 The Settings page has two settings only an Owner can change. One is
 `agent_capture_ai_content`: when on, the bodies of the assistant's requests are

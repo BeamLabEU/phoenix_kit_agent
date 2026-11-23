@@ -8,7 +8,9 @@ defmodule PhoenixKitAgent.ModelsTest do
 
   use PhoenixKitAgent.DataCase, async: false
 
-  alias PhoenixKitAgent.Models
+  import Ecto.Query, only: [from: 2]
+
+  alias PhoenixKitAgent.{Config, Models}
 
   @stub __MODULE__
 
@@ -205,6 +207,119 @@ defmodule PhoenixKitAgent.ModelsTest do
       end
 
       refute_receive {:requested, _host, _authorization}
+    end
+  end
+
+  describe "usable_uuids/1: what can be called at all" do
+    test "an enabled endpoint that chats and has a credential is; others are not" do
+      good = endpoint_fixture(%{name: "Good", model: "a/good"})
+      off = endpoint_fixture(%{name: "Off", model: "a/off", enabled: false})
+      tts = endpoint_fixture(%{name: "Voice", model: "a/some-tts"})
+      keyless = endpoint_fixture(%{name: "Keyless", model: "a/keyless", provider: "none-here"})
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^keyless.uuid),
+        set: [api_key: "", integration_uuid: nil]
+      )
+
+      usable =
+        Models.usable_uuids([good.uuid, off.uuid, tts.uuid, keyless.uuid, Ecto.UUID.generate()])
+
+      assert MapSet.to_list(usable) == [good.uuid]
+    end
+
+    test "nothing asked is nothing read" do
+      assert Models.usable_uuids([]) == MapSet.new()
+    end
+  end
+
+  describe "selection_check/2 and selectable/1: what a user may choose" do
+    setup do
+      PhoenixKitAI.Guard.reset_caches()
+      on_exit(&PhoenixKitAI.Guard.reset_caches/0)
+      :ok
+    end
+
+    defp listed(endpoints),
+      do: {:ok, _} = Config.put_selectable_endpoints(Enum.map(endpoints, & &1.uuid), [])
+
+    test "each task has its AI task" do
+      assert Models.task_of(:chat) == "agent.chat"
+      assert Models.task_of(:vision) == "agent.attachment"
+      assert Models.task_of(:speech) == "agent.speech"
+    end
+
+    test "an endpoint outside the list is :not_allowed, for every task" do
+      eyes = declared("a/eyes", %{"vision" => "yes", "tools" => "yes", "audio_input" => "yes"})
+
+      for task <- [:chat, :vision, :speech] do
+        assert {:error, :not_allowed} = Models.selection_check(task, eyes.uuid)
+      end
+
+      assert {:error, :not_allowed} = Models.selection_check(:vision, Ecto.UUID.generate())
+      assert {:error, :not_allowed} = Models.selection_check(:vision, "nope")
+      assert {:error, :not_allowed} = Models.selection_check(:vision, nil)
+      assert Models.selectable(:vision) == []
+    end
+
+    test "a listed endpoint passes only for the tasks it fits" do
+      eyes = declared("a/eyes", %{"vision" => "yes", "tools" => "no", "audio_input" => "no"})
+      listed([eyes])
+
+      assert :ok = Models.selection_check(:vision, eyes.uuid)
+      assert {:error, {:model_unfit, [:tools]}} = Models.selection_check(:chat, eyes.uuid)
+      assert {:error, {:model_unfit, [:audio_input]}} = Models.selection_check(:speech, eyes.uuid)
+    end
+
+    test "a model nobody knows is :model_unverified" do
+      unknown = endpoint_fixture(%{model: "a/never-heard-of"})
+      listed([unknown])
+
+      assert {:error, {:model_unverified, _unclear}} =
+               Models.selection_check(:vision, unknown.uuid)
+    end
+
+    test "a listed endpoint that was switched off is :unusable" do
+      eyes = declared("a/eyes", %{"vision" => "yes"})
+      listed([eyes])
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^eyes.uuid),
+        set: [enabled: false]
+      )
+
+      assert {:error, :unusable} = Models.selection_check(:vision, eyes.uuid)
+    end
+
+    test "selectable/1 offers the listed endpoints that fit the task, by name, as summaries" do
+      b = declared("a/b", %{"vision" => "yes"}) |> rename("B eyes")
+      a = declared("a/a", %{"vision" => "yes"}) |> rename("A eyes")
+      blind = declared("a/blind", %{"vision" => "no"}) |> rename("Blind")
+      off = declared("a/off", %{"vision" => "yes"}) |> rename("Off")
+      outsider = declared("a/outsider", %{"vision" => "yes"}) |> rename("Outsider")
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^off.uuid),
+        set: [enabled: false]
+      )
+
+      listed([b, a, blind, off])
+
+      offered = Models.selectable(:vision)
+
+      assert Enum.map(offered, & &1.uuid) == [a.uuid, b.uuid]
+
+      assert Enum.all?(
+               offered,
+               &(Map.keys(&1) |> Enum.sort() == [:model, :name, :provider, :reports_cost?, :uuid])
+             )
+
+      refute outsider.uuid in Enum.map(offered, & &1.uuid)
+    end
+
+    defp rename(endpoint, name) do
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^endpoint.uuid),
+        set: [name: name]
+      )
+
+      endpoint
     end
   end
 

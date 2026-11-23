@@ -120,7 +120,8 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   ## Speaking instead of typing
 
-  Where voice input is on (`PhoenixKitAgent.Config.speech?/0`) and the core has
+  Where voice input is on for the user (`PhoenixKitAgent.UserConfig.speech?/1`: his own
+  speech model, else the default) and the core has
   the recorder (`PhoenixKitWeb.Components.Core.AudioRecorder`), the composer has
   a microphone. A clip it delivers (`{:audio_recorded, "pk-agent-mic", clip}`)
   is written down (`PhoenixKitAgent.Speech.transcribe/4`, with the panel's
@@ -286,7 +287,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         restored: 0,
         entry_chats: %{},
         upload_errors_seen: MapSet.new(),
-        speech?: speech?(),
+        speech?: speech?(user_uuid),
         transcribing?: false,
         speech_ref: nil,
         speech_timer: nil,
@@ -317,7 +318,7 @@ defmodule PhoenixKitAgent.Web.Dock do
       else: Enum.flat_map(types, &Map.fetch!(@accept_of, &1))
   end
 
-  defp speech?, do: Config.speech?() and Code.ensure_loaded?(recorder())
+  defp speech?(user_uuid), do: UserConfig.speech?(user_uuid) and Code.ensure_loaded?(recorder())
 
   defp recorder, do: Application.get_env(:phoenix_kit_agent, :audio_recorder, @recorder)
 

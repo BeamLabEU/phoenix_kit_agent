@@ -22,12 +22,24 @@ defmodule PhoenixKitAgent.Models do
 
   `reports_cost?/2` says whether a call on an endpoint gets what it cost in
   the AI journal — the money limits count only such calls (spec §7.3).
+
+  A user's own model of a task (`PhoenixKitAgent.UserConfig`) is judged twice
+  over. `usable_uuids/1` is what a turn, a picture or a recording asks of the
+  one a user already has: it can be called at all (it exists, is on, names a
+  model, has a credential), so one that cannot is left for the default.
+  `selection_check/2` and `selectable/1` are what a user's new choice must
+  pass: the endpoint is on the list of those users may choose
+  (`PhoenixKitAgent.Config.selectable_endpoint_uuids/0`), can be called, and
+  fits the task's needs (`PhoenixKitAI.Tasks.check_selection/2`, as the
+  default of that task does).
   """
 
   import Ecto.Query, only: [from: 2]
 
+  alias PhoenixKit.Integrations
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitAI.{Capabilities, Endpoint, TaskLimits}
+  alias PhoenixKitAgent.Config
+  alias PhoenixKitAI.{Capabilities, Endpoint, TaskLimits, Tasks}
 
   @typedoc "Whether a model takes tools."
   @type support :: :supported | :unsupported | :unknown
@@ -50,6 +62,13 @@ defmodule PhoenixKitAgent.Models do
   """
   @type call_kind :: :chat | :vision | :speech
 
+  @typedoc "Why a model is not one a user may choose for a task."
+  @type selection_refusal ::
+          :not_allowed | :unusable | {:model_unfit | :model_unverified, [atom()]}
+
+  # The AI task each of a user's three models is judged against.
+  @tasks %{chat: "agent.chat", vision: "agent.attachment", speech: "agent.speech"}
+
   # What `reports_cost?/2` reads of an endpoint, its key left out.
   @cost_fields [:uuid, :name, :model, :provider, :base_url, :provider_settings]
 
@@ -69,6 +88,75 @@ defmodule PhoenixKitAgent.Models do
     |> Enum.filter(&(Endpoint.kind(&1) == :chat))
     |> add_current(opts |> Keyword.get(:include) |> List.wrap())
     |> Enum.sort_by(&{String.downcase(&1.name || ""), &1.uuid})
+  end
+
+  @doc "The key of the AI task a model of this kind is judged against (`agent.chat`, …)."
+  @spec task_of(call_kind()) :: String.t()
+  def task_of(kind), do: Map.fetch!(@tasks, kind)
+
+  @doc """
+  Which of these endpoint uuids can be called at all (see the moduledoc), as a
+  set. One read, whatever the number; a uuid that is not an endpoint is not in it.
+  """
+  @spec usable_uuids([String.t()]) :: MapSet.t(String.t())
+  def usable_uuids([]), do: MapSet.new()
+
+  def usable_uuids(uuids) when is_list(uuids) do
+    from(e in Endpoint, where: e.uuid in ^Enum.uniq(uuids))
+    |> RepoHelper.repo().all()
+    |> Enum.filter(&callable?/1)
+    |> MapSet.new(& &1.uuid)
+  end
+
+  @doc """
+  Whether `uuid` is one a user may choose for a task of `kind` now: `:ok`, or
+  why not — `:not_allowed` (not on the list of what users may choose, or no
+  such endpoint), `:unusable` (cannot be called), `{:model_unfit, missing}` /
+  `{:model_unverified, unclear}` (does not fit the task, or nobody knows).
+  """
+  @spec selection_check(call_kind(), term()) :: :ok | {:error, selection_refusal()}
+  def selection_check(kind, uuid) when is_binary(uuid) do
+    with {:ok, uuid} <- Ecto.UUID.cast(uuid),
+         true <- uuid in Config.selectable_endpoint_uuids(),
+         %Endpoint{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
+      check_fit(kind, endpoint)
+    else
+      _not_allowed -> {:error, :not_allowed}
+    end
+  end
+
+  def selection_check(_kind, _other), do: {:error, :not_allowed}
+
+  defp check_fit(kind, endpoint) do
+    if callable?(endpoint) do
+      case Tasks.check_selection(task_of(kind), endpoint) do
+        :ok ->
+          :ok
+
+        {:error, {reason, _needs}} = refusal when reason in [:model_unfit, :model_unverified] ->
+          refusal
+
+        {:error, _other} ->
+          {:error, :unusable}
+      end
+    else
+      {:error, :unusable}
+    end
+  end
+
+  @doc """
+  The endpoints a user is offered for a task of `kind`: those of the list users
+  may choose from that pass `selection_check/2`, as `t:summary/0`, by name.
+  """
+  @spec selectable(call_kind()) :: [summary()]
+  def selectable(kind) do
+    uuids = Config.selectable_endpoint_uuids()
+
+    from(e in Endpoint, where: e.uuid in ^uuids)
+    |> RepoHelper.repo().all()
+    |> Enum.filter(&(check_fit(kind, &1) == :ok))
+    |> Enum.sort_by(&{String.downcase(&1.name || ""), &1.uuid})
+    |> Enum.map(&summary/1)
   end
 
   @doc "An endpoint as a page keeps it (`t:summary/0`)."
@@ -211,6 +299,25 @@ defmodule PhoenixKitAgent.Models do
   def reports_cost?(_endpoint, _call), do: false
 
   # ── internals ─────────────────────────────────────────────────────────
+
+  # Can a call be made on it at all: the checks a call itself starts with
+  # (`PhoenixKitAI`'s own are private): on, a model named, and a credential — an
+  # integration, the provider's, or the endpoint's own key.
+  defp callable?(%Endpoint{} = endpoint) do
+    endpoint.enabled != false and Endpoint.kind(endpoint) == :chat and
+      present?(endpoint.model) and credential?(endpoint)
+  end
+
+  defp credential?(endpoint) do
+    present?(endpoint.api_key) or connected?(endpoint.integration_uuid) or
+      connected?(endpoint.provider)
+  end
+
+  defp connected?(key) do
+    present?(key) and match?({:ok, _credentials}, Integrations.get_credentials(key))
+  end
+
+  defp present?(text), do: is_binary(text) and text != ""
 
   defp add_current(endpoints, uuids) do
     Enum.reduce(uuids, endpoints, fn

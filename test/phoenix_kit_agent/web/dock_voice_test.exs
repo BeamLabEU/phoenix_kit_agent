@@ -113,6 +113,36 @@ defmodule PhoenixKitAgent.Web.DockVoiceTest do
 
       refute has_element?(view, "#pk-agent-mic")
     end
+
+    test "is there for a user with a speech model of his own, though the site has none", ctx do
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", "")
+
+      Repo.insert!(%PhoenixKitAgent.Schemas.UserSettings{
+        user_uuid: ctx.user.uuid,
+        speech_endpoint_uuid: ctx.ears.uuid
+      })
+
+      view = dock(ctx)
+
+      assert has_element?(view, "#pk-agent-composer #pk-agent-mic")
+    end
+
+    test "is not there for a user whose own speech model is gone and the site has none", ctx do
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", "")
+
+      Repo.insert!(%PhoenixKitAgent.Schemas.UserSettings{
+        user_uuid: ctx.user.uuid,
+        speech_endpoint_uuid: ctx.ears.uuid
+      })
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^ctx.ears.uuid),
+        set: [enabled: false]
+      )
+
+      view = dock(ctx)
+
+      refute has_element?(view, "#pk-agent-mic")
+    end
   end
 
   describe "the microphone where the platform lacks something" do

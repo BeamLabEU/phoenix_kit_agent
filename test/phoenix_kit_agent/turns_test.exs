@@ -799,6 +799,21 @@ defmodule PhoenixKitAgent.TurnsTest do
       assert last_request(ctx.user).model == @model
     end
 
+    test "an own model that was switched off falls back to the module's, and the turn goes on",
+         ctx do
+      own = endpoint_fixture(%{model: "mistralai/own-model"})
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: own.uuid})
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^own.uuid),
+        set: [enabled: false]
+      )
+
+      answer_next(text_answer("ok"))
+      await_end(ctx.chat, start!(ctx, "Hi"))
+
+      assert last_request(ctx.user).model == @model
+    end
+
     test "with their own model the user needs no module default", ctx do
       {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", "none")
       assert {:error, :no_endpoint} = Turns.start(ctx.ref, false, ctx.chat.uuid, "Hi")

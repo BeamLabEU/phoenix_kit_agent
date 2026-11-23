@@ -100,6 +100,27 @@ and `Web.Markdown`) and the optional chat retention
   Nothing answers a Stop but the turn's end: the panel offers Stop again
   (`:stop_unanswered`) when that end has not come within
   `stop_grace_ms + turn_check_ms`.
+- **The three models of a user** (chat `endpoint_uuid`, pictures
+  `vision_endpoint_uuid`, speech `speech_endpoint_uuid`; migration V3): the
+  Settings → AI Agent models are defaults, a model of the user's own replaces the
+  default of its task for him. Every reader takes the model in effect from
+  `UserConfig.effective/1` (`endpoint_uuid`, `vision_endpoint_uuid`,
+  `speech_endpoint_uuid`) or `UserConfig.model/2`, whose `models` say where it
+  came from (`:own`, `:default`, `:fallback` when the own one is deleted,
+  switched off or without a credential: `Models.usable_uuids/1`), never from
+  `Config` directly (`Config.speech?/0` is the site-level question only: the
+  Telegram help). Whether an own model fits its task is asked when it is chosen
+  (`Models.selection_check/2`), not when it is read. An own model outside the
+  list of those users may choose (`agent_selectable_endpoint_uuids`,
+  `Config.selectable_endpoint_uuids/0`, empty by default) stays in effect, marked
+  `outside_list?`: only an administrator can have set it. A user's write is
+  `UserConfig.put_personal_models/3` alone — the row of the session's user,
+  `UserSettings.personal_models_changeset/2` (the three columns, nothing else),
+  a model only if it is "default" or listed, usable and fit for its task; the
+  admin's `admin_update/4` takes any model that fits. A picture model of his own
+  that can be used describes all of his pictures, also for a chat model that
+  sees (`Processor.picture_mode/1`). The AI tasks' `endpoints` list the
+  defaults and every user's own model (`UserConfig.endpoint_uuids/1`).
 - **Attachments:** session-bound like `Conversations` (`impersonated:` in the
   options); only the owner adds, reads, discards or gets the address of a
   file, an Owner/Admin of the site included. Bytes live in the hidden library

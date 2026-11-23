@@ -227,6 +227,128 @@ defmodule PhoenixKitAgent.SpeechTest do
     end
   end
 
+  describe "the user's own speech model" do
+    # A model of the user's own: another endpoint than the site's, which can
+    # take audio.
+    defp own_ears(user, attrs \\ %{}) do
+      endpoint =
+        endpoint_fixture(
+          Map.merge(
+            %{
+              name: "Own ears",
+              model: @model,
+              provider_settings: %{"capabilities" => %{"audio_input" => "yes", "model" => @model}}
+            },
+            attrs
+          )
+        )
+
+      Repo.insert!(%UserSettings{user_uuid: user.uuid, speech_endpoint_uuid: endpoint.uuid})
+      endpoint
+    end
+
+    defp calls_on(endpoint),
+      do:
+        Repo.aggregate(
+          from(r in PhoenixKitAI.Request, where: r.endpoint_uuid == ^endpoint.uuid),
+          :count
+        )
+
+    test "is the one that writes the recording down, not the site's", %{
+      ref: ref,
+      user: user,
+      endpoint: site
+    } do
+      own = own_ears(user)
+      model_hears(%{"text" => @words, "language" => "en"})
+
+      assert {:ok, @words} = transcribe(ref)
+
+      assert calls_on(own) == 1
+      assert calls_on(site) == 0
+    end
+
+    test "works where the site has no speech model at all", %{ref: ref, user: user} do
+      {:ok, _} = Config.put_speech_endpoint(nil, [])
+      own_ears(user)
+      model_hears(%{"text" => @words, "language" => "en"})
+
+      assert {:ok, @words} = transcribe(ref)
+    end
+
+    test "a user without one is written down by the site's, as before", %{
+      ref: ref,
+      endpoint: site
+    } do
+      model_hears(%{"text" => @words, "language" => "en"})
+
+      assert {:ok, @words} = transcribe(ref)
+      assert calls_on(site) == 1
+    end
+
+    test "one that was switched off is left for the site's, and nothing breaks", %{
+      ref: ref,
+      user: user,
+      endpoint: site
+    } do
+      own = own_ears(user)
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^own.uuid),
+        set: [enabled: false]
+      )
+
+      model_hears(%{"text" => @words, "language" => "en"})
+
+      assert {:ok, @words} = transcribe(ref)
+      assert calls_on(own) == 0
+      assert calls_on(site) == 1
+    end
+
+    test "one that was switched off, with no site model, is :speech_off", %{
+      ref: ref,
+      user: user
+    } do
+      {:ok, _} = Config.put_speech_endpoint(nil, [])
+      own = own_ears(user)
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^own.uuid),
+        set: [enabled: false]
+      )
+
+      model_not_called()
+
+      assert {:error, :speech_off} = transcribe(ref)
+      refute_received :model_called
+    end
+
+    test "is his alone: another user is still written down by the site's", %{
+      ref: ref,
+      user: user,
+      endpoint: site
+    } do
+      own_ears(user)
+      other = user_with(["agent"], "other-speaker")
+      {other_ref, _token} = session_fixture(other)
+
+      model_hears(%{"text" => @words, "language" => "en"})
+      assert {:ok, @words} = transcribe(ref)
+
+      model_hears(%{"text" => @words, "language" => "en"})
+      assert {:ok, @words} = transcribe(other_ref)
+      assert calls_on(site) == 1
+    end
+
+    test "a linked Telegram chat is written down by the user's own model too" do
+      member = user_with(["agent", "agent.telegram"], "tg-own")
+      own = own_ears(member)
+      ref = telegram_link_fixture(member, UUIDv7.generate(), 4244)
+      model_hears(%{"text" => @words, "language" => "en"})
+
+      assert {:ok, @words} = Speech.transcribe(ref, "ogg-bytes", "ogg", impersonated: false)
+      assert calls_on(own) == 1
+    end
+  end
+
   describe "the AI module is off" do
     test "is :ai_disabled and the model is not asked", %{ref: ref} do
       {:ok, _} = PhoenixKitAI.disable_system()

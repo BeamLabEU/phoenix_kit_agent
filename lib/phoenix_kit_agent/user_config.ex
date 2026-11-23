@@ -12,13 +12,36 @@ defmodule PhoenixKitAgent.UserConfig do
   when a turn starts, so a change takes effect with the next turn of any chat
   (spec §14, В6).
 
+  ## The three models
+
+  A user has a model for each task: the chat (`endpoint_uuid`), the pictures
+  (`vision_endpoint_uuid`) and the speech (`speech_endpoint_uuid`). Every
+  reader — a turn, the attachment processor, speech, the dock, Telegram — takes
+  the one in effect from `effective/1` (`endpoint_uuid`, `vision_endpoint_uuid`,
+  `speech_endpoint_uuid`), or `model/2` for one task; `models` in the result
+  says where each came from (`t:model/0`, `resolve/4`):
+
+    * `:default` — the user has none of his own, the module's default is used;
+    * `:own` — the user's own, which can be called at all
+      (`PhoenixKitAgent.Models.usable_uuids/1`). An own model outside the list of
+      those users may choose (`PhoenixKitAgent.Config.selectable_endpoint_uuids/0`)
+      stays in effect: only an administrator can have set it, and it is marked
+      `outside_list?` so a page can say so;
+    * `:fallback` — the user's own model was deleted, switched off or lost its
+      credentials, so the default is used instead, and the page can say so.
+
+  Whether an own model still fits its task is asked when it is chosen, never
+  when it is read: the capabilities of a model come and go with a provider's
+  catalogue, and a model that was fine must not vanish from a turn for that.
+
   `enabled?/1` is the user's own switch: `false` only when an admin switched the
   assistant off for them (it never grants the `agent` permission).
 
   ## Who writes what
 
     * The user — `put_personal_instructions/3` and `get_personal_instructions/2`,
-      for **their own** `personal_instructions` only. Like
+      for **their own** `personal_instructions` only, and `put_personal_models/3`
+      for **their own** three models only. Like
       `PhoenixKitAgent.Conversations` they act for a live browser session and
       need `impersonated: boolean` in the options; an impersonated session, a
       revoked one, a user without `agent` or one switched off is refused. The
@@ -26,9 +49,13 @@ defmodule PhoenixKitAgent.UserConfig do
       through it.
       A linked Telegram chat may read its instructions but not write them
       (`{:error, :not_in_telegram}`): they go into every later prompt.
+      The write of the models takes the row of the session's user and never a
+      uuid from the caller, and a model only if it is "default" or one of those
+      users may choose that fits the task (`PhoenixKitAgent.Models.selection_check/2`).
     * An admin — `admin_update/4`, with the scope of a person who holds
       `agent.manage` (checked again here, so a caller that forgets is refused).
-      It writes the switch, the model, the admin's prompt, the limits and the
+      It writes the switch, the three models (any one that fits the task, on the
+      users' list or not), the admin's prompt, the limits and the
       notice flags (`UserSettings.admin_changeset/2`) and records who changed
       which fields for whom in the core Activity log — field names only, never
       a prompt text. An Owner's settings are changed by an Owner only, and a
@@ -42,16 +69,42 @@ defmodule PhoenixKitAgent.UserConfig do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth.{Scope, User}
   alias PhoenixKit.Users.{Permissions, Roles}
-  alias PhoenixKitAgent.{Config, Conversations}
+  alias PhoenixKitAgent.{Config, Conversations, Models}
   alias PhoenixKitAgent.Schemas.UserSettings
 
   @manage "agent.manage"
+
+  # The three tasks, and the column of the user's row that holds the model of each.
+  @model_fields [
+    chat: :endpoint_uuid,
+    vision: :vision_endpoint_uuid,
+    speech: :speech_endpoint_uuid
+  ]
+
+  @typedoc "The three tasks that have a model of their own."
+  @type task :: :chat | :vision | :speech
+
+  @typedoc """
+  The model of one task for one user: the one in effect (`uuid`, `nil` when none
+  is set anywhere) and where it came from (see the moduledoc), with the user's
+  own (`own_uuid`, as stored) and the module's default (`default_uuid`).
+  """
+  @type model :: %{
+          uuid: String.t() | nil,
+          source: :own | :default | :fallback,
+          own_uuid: String.t() | nil,
+          default_uuid: String.t() | nil,
+          outside_list?: boolean()
+        }
 
   @typedoc "The settings in force for a user."
   @type effective :: %{
           user_uuid: String.t(),
           enabled?: boolean(),
           endpoint_uuid: String.t() | nil,
+          vision_endpoint_uuid: String.t() | nil,
+          speech_endpoint_uuid: String.t() | nil,
+          models: %{task() => model()},
           system_prompt: String.t() | nil,
           personal_instructions: String.t() | nil,
           daily_cost_limit_micro_usd: non_neg_integer(),
@@ -67,8 +120,9 @@ defmodule PhoenixKitAgent.UserConfig do
 
   @doc """
   The settings in force for `user_uuid`: their own value, else the module
-  default (see the moduledoc). `own` lists the fields (model, prompt, limits)
-  the user's row sets itself.
+  default (see the moduledoc). `own` lists the fields (models, prompt, limits)
+  the user's row sets itself, whether or not the value can be used (`models`
+  says that).
   """
   @spec effective(String.t()) :: effective()
   def effective(user_uuid) when is_binary(user_uuid),
@@ -87,47 +141,125 @@ defmodule PhoenixKitAgent.UserConfig do
       |> repo().all()
       |> Map.new(&{&1.user_uuid, &1})
 
+    models = %{
+      defaults:
+        Map.new(@model_fields, fn {task, _field} -> {task, Config.default_endpoint_uuid(task)} end),
+      selectable: Config.selectable_endpoint_uuids(),
+      usable: rows |> Map.values() |> Enum.flat_map(&own_models/1) |> Models.usable_uuids()
+    }
+
     defaults = Config.limit_defaults()
-    default_endpoint = Config.default_endpoint_uuid()
 
     Map.new(user_uuids, fn uuid ->
       row = Map.get(rows, uuid) || %UserSettings{}
-      {uuid, build_effective(uuid, row, defaults, default_endpoint)}
+      {uuid, build_effective(uuid, row, defaults, models)}
     end)
   end
 
   @doc """
-  The endpoints the assistant's turns use now: the module default and
-  every user's own model. It backs the `endpoints` of the `agent.chat` AI
-  task (`PhoenixKitAgent.ai_tasks/0`).
+  The model in effect for one task of one user (`t:model/0`): `effective/1`'s
+  `models` for `task`.
   """
-  @spec endpoint_uuids() :: [String.t()]
-  def endpoint_uuids do
+  @spec model(String.t(), task()) :: model()
+  def model(user_uuid, task) when is_binary(user_uuid) and task in [:chat, :vision, :speech],
+    do: effective(user_uuid).models[task]
+
+  @doc """
+  Whether voice input is on for the user: the AI module can write speech down
+  and the speech model in effect for him exists (his own, else the default).
+  """
+  @spec speech?(String.t()) :: boolean()
+  def speech?(user_uuid) when is_binary(user_uuid),
+    do: Config.transcribe?() and model(user_uuid, :speech).uuid != nil
+
+  @doc """
+  How an own model and the module's default make the one in effect (the rules
+  of the moduledoc), from what is known about them: `usable?` — the own one can
+  be called at all, `listed?` — it is on the list of those users may choose.
+  """
+  @spec resolve(String.t() | nil, String.t() | nil, boolean(), boolean()) :: model()
+  def resolve(nil, default, _usable?, _listed?),
+    do: %{
+      uuid: default,
+      source: :default,
+      own_uuid: nil,
+      default_uuid: default,
+      outside_list?: false
+    }
+
+  def resolve(own, default, true, listed?),
+    do: %{
+      uuid: own,
+      source: :own,
+      own_uuid: own,
+      default_uuid: default,
+      outside_list?: not listed?
+    }
+
+  def resolve(own, default, false, _listed?),
+    do: %{
+      uuid: default,
+      source: :fallback,
+      own_uuid: own,
+      default_uuid: default,
+      outside_list?: false
+    }
+
+  @doc """
+  The endpoints the assistant's calls of a task use now: the module default and
+  every user's own model of it. It backs the `endpoints` of the `agent.chat`
+  (the default `task`), `agent.attachment` (`:vision`) and `agent.speech`
+  (`:speech`) AI tasks (`PhoenixKitAgent.ai_tasks/0`).
+  """
+  @spec endpoint_uuids(task()) :: [String.t()]
+  def endpoint_uuids(task \\ :chat) when task in [:chat, :vision, :speech] do
+    field = Keyword.fetch!(@model_fields, task)
+
     own =
       from(s in UserSettings,
-        where: not is_nil(s.endpoint_uuid),
+        where: not is_nil(field(s, ^field)),
         distinct: true,
-        select: s.endpoint_uuid
+        select: field(s, ^field)
       )
       |> repo().all()
 
-    Enum.uniq(List.wrap(Config.default_endpoint_uuid()) ++ own)
+    Enum.uniq(List.wrap(Config.default_endpoint_uuid(task)) ++ own)
   end
 
-  defp build_effective(user_uuid, row, defaults, default_endpoint) do
+  # The models the rows name as their own.
+  defp own_models(row),
+    do: for({_task, field} <- @model_fields, uuid = Map.get(row, field), do: uuid)
+
+  defp build_effective(user_uuid, row, defaults, models) do
     limits =
       Map.new(UserSettings.limit_fields(), fn field ->
         {field, Map.get(row, field) || Map.fetch!(defaults, field)}
       end)
 
     own =
-      [:endpoint_uuid, :system_prompt | UserSettings.limit_fields()]
+      (UserSettings.model_fields() ++ [:system_prompt | UserSettings.limit_fields()])
       |> Enum.filter(&(Map.get(row, &1) not in [nil, ""]))
+
+    chosen =
+      Map.new(@model_fields, fn {task, field} ->
+        own_uuid = Map.get(row, field)
+
+        {task,
+         resolve(
+           own_uuid,
+           models.defaults[task],
+           MapSet.member?(models.usable, own_uuid),
+           own_uuid in models.selectable
+         )}
+      end)
 
     Map.merge(limits, %{
       user_uuid: user_uuid,
       enabled?: row.enabled != false,
-      endpoint_uuid: row.endpoint_uuid || default_endpoint,
+      endpoint_uuid: chosen.chat.uuid,
+      vision_endpoint_uuid: chosen.vision.uuid,
+      speech_endpoint_uuid: chosen.speech.uuid,
+      models: chosen,
       system_prompt: present(row.system_prompt),
       personal_instructions: present(row.personal_instructions),
       notify_on_limit: row.notify_on_limit == true,
@@ -256,6 +388,82 @@ defmodule PhoenixKitAgent.UserConfig do
     {:ok, text}
   end
 
+  # ── the user's own: the three models ──────────────────────────────────
+
+  @doc """
+  Sets the session user's own models. `attrs` names any of `endpoint_uuid`
+  (chat), `vision_endpoint_uuid` and `speech_endpoint_uuid` (atom or string
+  keys; anything else in it is ignored): a value is an endpoint uuid, or `nil`
+  / blank for "the default". A field `attrs` does not name stays as it is, and
+  so does one whose value is what the row holds already (an administrator's
+  choice outside the users' list, carried back by a form, is not asked again).
+
+  A new endpoint must be one users may choose that can be called and fits the
+  task of its field (`PhoenixKitAgent.Models.selection_check/2`); the first
+  field that is not is `{:error, {field, reason}}` with that function's
+  reason, and nothing is written. A value that is not a uuid is `{:error,
+  changeset}`. The row is the session user's, never named by the caller; only
+  these three columns are written, so the admin's fields and a running turn's
+  lock stay. Returns `{:ok, changed_fields}`; refusals as `put_personal_instructions/3`.
+  """
+  @spec put_personal_models(Conversations.session_ref(), map(), keyword()) ::
+          {:ok, [atom()]}
+          | {:error,
+             Conversations.refusal()
+             | {atom(), Models.selection_refusal()}
+             | Ecto.Changeset.t()}
+  def put_personal_models(session_ref, attrs, opts) when is_map(attrs) do
+    Conversations.on_the_site(session_ref, fn ->
+      with {:ok, user_uuid} <- Conversations.authorize_session(session_ref, opts) do
+        save_personal_models(user_uuid, attrs)
+      end
+    end)
+  end
+
+  defp save_personal_models(user_uuid, attrs) do
+    result =
+      repo().transaction(fn ->
+        repo().insert!(%UserSettings{user_uuid: user_uuid},
+          on_conflict: :nothing,
+          conflict_target: :user_uuid
+        )
+
+        row =
+          repo().one!(
+            from(s in UserSettings, where: s.user_uuid == ^user_uuid, lock: "FOR UPDATE")
+          )
+
+        changeset = UserSettings.personal_models_changeset(row, attrs)
+
+        unless changeset.valid?, do: repo().rollback(%{changeset | action: :update})
+
+        with {:error, refusal} <- check_personal_models(changeset), do: repo().rollback(refusal)
+
+        case repo().update(changeset) do
+          {:ok, _row} -> changeset.changes |> Map.keys() |> Enum.sort()
+          {:error, changeset} -> repo().rollback(changeset)
+        end
+      end)
+
+    case result do
+      {:ok, fields} -> {:ok, fields}
+      {:error, refusal} -> {:error, refusal}
+    end
+  end
+
+  # What a user chose anew: each is one he may choose for that task. A
+  # change to "the default" is always allowed.
+  defp check_personal_models(changeset) do
+    Enum.find_value(@model_fields, :ok, fn {task, field} ->
+      with uuid when is_binary(uuid) <- Ecto.Changeset.get_change(changeset, field),
+           {:error, reason} <- Models.selection_check(task, uuid) do
+        {:error, {field, reason}}
+      else
+        _not_changed_cleared_or_fit -> nil
+      end
+    end)
+  end
+
   # ── the admin's ───────────────────────────────────────────────────────
 
   @doc """
@@ -277,11 +485,15 @@ defmodule PhoenixKitAgent.UserConfig do
   notification for the user. `{:error, :forbidden}` without the permission
   (or for an Owner's settings, to a non-Owner), `{:error, :not_found}` for an
   unknown user, `{:error, changeset}` for an invalid value (nothing is
-  written). A newly chosen model must fit the `agent.chat` AI task
-  (`PhoenixKitAI.Tasks.check_selection/2`): one known not to take tools is
-  `{:error, {:model_unfit, missing}}`, one nobody knows takes them `{:error,
-  {:model_unverified, unclear}}`, and nothing is written; none (the module
-  default) and the model already saved are not checked.
+  written). A newly chosen model must fit the AI task of its field
+  (`PhoenixKitAI.Tasks.check_selection/2`; `agent.chat`, `agent.attachment` for
+  the pictures, `agent.speech`): one known not to fit is `{:error,
+  {:model_unfit, missing}}`, one nobody knows fits `{:error, {:model_unverified,
+  unclear}}`, and nothing is written. The chat model's refusal is those
+  two-element tuples; that of the pictures' or the speech model has the field
+  as a third element (`{:model_unfit, missing, :vision_endpoint_uuid}`). None
+  (the module default) and the model already saved are not checked; whether the
+  users' list holds the model is no concern of an administrator's.
   """
   @spec admin_update(Scope.t() | nil, term(), map(), keyword()) ::
           {:ok, UserSettings.t(), [atom()]}
@@ -290,6 +502,7 @@ defmodule PhoenixKitAgent.UserConfig do
              | :not_found
              | :stale
              | {:model_unfit | :model_unverified, [atom()]}
+             | {:model_unfit | :model_unverified, [atom()], atom()}
              | Ecto.Changeset.t()}
   def admin_update(actor_scope, target_user_uuid, attrs, opts \\ []) when is_map(attrs) do
     with :ok <- authorize_manage(actor_scope),
@@ -359,7 +572,7 @@ defmodule PhoenixKitAgent.UserConfig do
         changeset = UserSettings.admin_changeset(row, attrs)
         fields = changeset.changes |> Map.keys() |> Enum.sort()
 
-        with {:error, refusal} <- check_model(changeset), do: repo().rollback(refusal)
+        with {:error, refusal} <- check_models(changeset), do: repo().rollback(refusal)
 
         changeset =
           if fields == [],
@@ -374,26 +587,47 @@ defmodule PhoenixKitAgent.UserConfig do
       end)
 
     case result do
-      {:ok, {row, fields}} -> {:ok, row, fields}
-      {:error, %Ecto.Changeset{}} = error -> error
-      {:error, :stale} = error -> error
-      {:error, {:model_unfit, _missing}} = error -> error
-      {:error, {:model_unverified, _unclear}} = error -> error
+      {:ok, {row, fields}} ->
+        {:ok, row, fields}
+
+      {:error, %Ecto.Changeset{}} = error ->
+        error
+
+      {:error, :stale} = error ->
+        error
+
+      {:error, {:model_unfit, _missing}} = error ->
+        error
+
+      {:error, {:model_unverified, _unclear}} = error ->
+        error
+
+      {:error, {reason, _needs, _field}} = error
+      when reason in [:model_unfit, :model_unverified] ->
+        error
     end
   end
 
-  # A newly chosen model must fit the `agent.chat` AI task. None (the module
-  # default) and the model already saved are not checked; an endpoint that
-  # does not exist is the changeset's foreign key error.
-  defp check_model(changeset) do
-    with uuid when is_binary(uuid) <- Ecto.Changeset.get_change(changeset, :endpoint_uuid),
-         {:error, {reason, _needs}} = refusal when reason in [:model_unfit, :model_unverified] <-
-           PhoenixKitAI.Tasks.check_selection("agent.chat", uuid) do
-      refusal
-    else
-      _fit_none_or_kept -> :ok
-    end
+  # A newly chosen model must fit the AI task of its field (`agent.chat`,
+  # `agent.attachment`, `agent.speech`), whether or not users may choose it.
+  # None (the module default) and the model already saved are not checked; an
+  # endpoint that does not exist is the changeset's foreign key error. The
+  # refusal of the chat model is `{reason, needs}`, as it always was; that of
+  # another is `{reason, needs, field}`.
+  defp check_models(changeset) do
+    Enum.find_value(@model_fields, :ok, fn {task, field} ->
+      with uuid when is_binary(uuid) <- Ecto.Changeset.get_change(changeset, field),
+           {:error, {reason, needs}} when reason in [:model_unfit, :model_unverified] <-
+             PhoenixKitAI.Tasks.check_selection(Models.task_of(task), uuid) do
+        {:error, refusal_of(task, reason, needs, field)}
+      else
+        _fit_none_or_kept -> nil
+      end
+    end)
   end
+
+  defp refusal_of(:chat, reason, needs, _field), do: {reason, needs}
+  defp refusal_of(_task, reason, needs, field), do: {reason, needs, field}
 
   defp unchanged?(_row, nil), do: true
 

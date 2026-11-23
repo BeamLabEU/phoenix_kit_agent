@@ -5,10 +5,12 @@ defmodule PhoenixKitAgent.Speech do
   the user's own words, to be sent as a message: this module only recognises,
   it starts no turn and keeps nothing.
 
-  `transcribe/4` is the one door. It answers `{:error, :speech_off}` unless
-  `PhoenixKitAgent.Config.speech?/0` (the AI module can write speech down and
-  a speech model is chosen on Settings → AI Agent), then, in this order and
-  before anything is paid:
+  `transcribe/4` is the one door. It answers `{:error, :speech_off}` unless the
+  AI module can write speech down (`PhoenixKitAgent.Config.transcribe?/0`) and
+  the user has a speech model in effect — his own, else the default chosen on
+  Settings → AI Agent (`PhoenixKitAgent.UserConfig.model/2`; an own model that
+  cannot be called is left for the default) — then, in this order and before
+  anything is paid:
 
     1. the AI module is on;
     2. the session may use the assistant now, as `PhoenixKitAgent.Conversations`
@@ -126,13 +128,13 @@ defmodule PhoenixKitAgent.Speech do
     with :ok <- speech_on(),
          :ok <- ai_enabled(),
          {:ok, user_uuid} <- Conversations.authorize_session(session_ref, opts),
-         {:ok, endpoint} <- chosen(Config.speech_endpoint_uuid()),
+         {:ok, endpoint} <- chosen(UserConfig.model(user_uuid, :speech).uuid),
          :ok <- within_limits(user_uuid, endpoint) do
       {:ok, user_uuid, endpoint}
     end
   end
 
-  defp speech_on, do: if(Config.speech?(), do: :ok, else: {:error, :speech_off})
+  defp speech_on, do: if(Config.transcribe?(), do: :ok, else: {:error, :speech_off})
 
   defp ai_enabled, do: if(PhoenixKitAI.enabled?(), do: :ok, else: {:error, :ai_disabled})
 
