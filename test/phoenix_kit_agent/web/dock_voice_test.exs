@@ -145,6 +145,29 @@ defmodule PhoenixKitAgent.Web.DockVoiceTest do
     end
   end
 
+  describe "the microphone follows the user's own speech model, without a reload" do
+    test "appears when he chooses one, goes when he goes back to the default", ctx do
+      {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", "")
+      {:ok, _} = PhoenixKitAgent.Config.put_selectable_endpoints([ctx.ears.uuid], [])
+      view = dock(ctx)
+      refute has_element?(view, "#pk-agent-mic")
+
+      view |> element("#pk-agent-instructions-toggle") |> render_click()
+
+      view
+      |> form("#pk-agent-models-form", models: %{speech_endpoint_uuid: ctx.ears.uuid})
+      |> render_submit()
+
+      assert has_element?(view, "#pk-agent-composer #pk-agent-mic")
+
+      view
+      |> form("#pk-agent-models-form", models: %{speech_endpoint_uuid: ""})
+      |> render_submit()
+
+      refute has_element?(view, "#pk-agent-mic")
+    end
+  end
+
   describe "the microphone where the platform lacks something" do
     defmodule NoTranscribe do
       @moduledoc false

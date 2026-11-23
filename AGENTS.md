@@ -126,7 +126,12 @@ and `Web.Markdown`) and the optional chat retention
   the list of models users may choose; Users → Configure has the three fields,
   the refusal of `admin_update/4` is `{reason, needs, field}` for all three and
   is shown at its field, and "in effect" there and the model column of the
-  list read `effective/1`'s `models` source, never `own`.
+  list read `effective/1`'s `models` source, never `own`. The user's side is
+  the dock's settings region ("My assistant", `Web.Dock.MyAssistant`, opened by
+  the button that used to be the personal instructions'): the three models
+  (read-only while the list of models users may choose is empty), the limits
+  read-only, the instructions; `save_models` takes the three keys as text and
+  calls `put_personal_models/3`, nothing else from the event.
 - **Attachments:** session-bound like `Conversations` (`impersonated:` in the
   options); only the owner adds, reads, discards or gets the address of a
   file, an Owner/Admin of the site included. Bytes live in the hidden library

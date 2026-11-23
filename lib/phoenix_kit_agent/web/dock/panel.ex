@@ -56,7 +56,7 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
   import PhoenixKitAgent.Web.Dock.Components
 
   alias Phoenix.LiveView.JS
-  alias PhoenixKitAgent.Web.Dock.Texts
+  alias PhoenixKitAgent.Web.Dock.{MyAssistant, Texts}
   alias PhoenixKitWeb.Components.AdminDock
 
   @doc "The button, the list of chats and the panel."
@@ -79,6 +79,12 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
   attr(:restored, :integer, default: 0, doc: "how many times the browser restored the panel")
   attr(:error, :string, default: nil)
   attr(:instructions_form, :any, default: nil)
+
+  attr(:my_assistant, :any,
+    default: nil,
+    doc: "what `Dock.MyAssistant` shows, while the settings region is open"
+  )
+
   attr(:unsent, :list, required: true)
   attr(:upload, :any, required: true, doc: "`@uploads.files`")
   attr(:speech?, :boolean, default: false, doc: "whether the composer has a microphone")
@@ -152,28 +158,37 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
           <.header_buttons id_prefix="pk-agent-" instructions?={!!@instructions_form} />
         </header>
 
-        <.form
+        <%!-- The settings region: capped, so that it never pushes the chat out;
+             it scrolls inside --%>
+        <div
           :if={@instructions_form}
-          for={@instructions_form}
-          id="pk-agent-instructions-form"
-          phx-submit="save_instructions"
-          class="border-b border-base-300 p-3 space-y-2"
+          id="pk-agent-settings"
+          class="max-h-[60dvh] shrink-0 overflow-y-auto overscroll-contain"
         >
-          <p class="text-xs opacity-70">
-            {gettext(
-              "How the assistant should answer you. It follows the site's own rules first."
-            )}
-          </p>
-          <.textarea
-            field={@instructions_form[:personal_instructions]}
-            rows="4"
-            maxlength="4000"
-            class="textarea-sm text-sm"
-          />
-          <div class="flex justify-end">
-            <button type="submit" class="btn btn-primary btn-xs pointer-coarse:min-h-11 pointer-coarse:min-w-11">{gettext("Save")}</button>
-          </div>
-        </.form>
+          <MyAssistant.my_assistant :if={@my_assistant} data={@my_assistant} />
+          <.form
+            for={@instructions_form}
+            id="pk-agent-instructions-form"
+            phx-submit="save_instructions"
+            class="border-b border-base-300 p-3 space-y-2"
+          >
+            <h3 class="text-sm font-semibold">{gettext("Personal instructions")}</h3>
+            <p class="text-xs opacity-70">
+              {gettext(
+                "How the assistant should answer you. It follows the site's own rules first."
+              )}
+            </p>
+            <.textarea
+              field={@instructions_form[:personal_instructions]}
+              rows="4"
+              maxlength="4000"
+              class="textarea-sm text-sm"
+            />
+            <div class="flex justify-end">
+              <button type="submit" class="btn btn-primary btn-xs pointer-coarse:min-h-11 pointer-coarse:min-w-11">{gettext("Save")}</button>
+            </div>
+          </.form>
+        </div>
 
         <div
           :if={@error}
@@ -256,7 +271,8 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
     """
   end
 
-  # The personal instructions and the close buttons: in the panel's header, and
+  # The button of the user's settings (the models, the limits, the personal
+  # instructions) and the close buttons: in the panel's header, and
   # again in the host's header for `pk-agent-compact` (one of them is shown).
   attr(:id_prefix, :string, required: true)
   attr(:instructions?, :boolean, required: true)
@@ -273,8 +289,8 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         @instructions? && "btn-active",
         @class
       ]}
-      aria-label={gettext("Personal instructions")}
-      title={gettext("Personal instructions")}
+      aria-label={gettext("My assistant")}
+      title={gettext("My assistant")}
     >
       <.icon name="hero-adjustments-horizontal" class="w-4 h-4" />
     </button>

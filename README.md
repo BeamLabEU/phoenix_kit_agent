@@ -490,6 +490,12 @@ known not to fit the task marked), and says what is in effect for that user: his
 own model, the default, the default because his own cannot be used, or an own
 model outside the list.
 
+In the chat panel the button that opened the personal instructions opens "My
+assistant": the user's three models (a choice among the models the administrator
+listed, or read-only with the model in effect while none is listed), his limits
+read-only, and his instructions. A saved speech model shows or hides the
+microphone at once.
+
 The Settings page has two settings only an Owner can change. One is
 `agent_capture_ai_content`: when on, the bodies of the assistant's requests are
 written to the AI request journal and every holder of the `ai` permission reads
