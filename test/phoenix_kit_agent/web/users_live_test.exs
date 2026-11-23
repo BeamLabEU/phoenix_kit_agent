@@ -11,9 +11,11 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
 
   alias PhoenixKit.{ModuleRegistry, Settings}
   alias PhoenixKit.Users.{Auth, Permissions, Roles}
+  alias PhoenixKitAgent.Config
   alias PhoenixKitAgent.Schemas.UserSettings
   alias PhoenixKitAgent.Test.{LogProbe, Tools}
   alias PhoenixKitAgent.UserConfig
+  alias PhoenixKitAgent.Web.UsersLive
 
   @path "/en/admin/agent/users"
   @stub __MODULE__
@@ -178,6 +180,541 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
       {:ok, view, _html} = live(conn, @path)
 
       assert has_element?(view, "#agent-user-#{member.uuid}-status[data-off]")
+    end
+  end
+
+  defmodule NoTranscribe do
+    @moduledoc false
+  end
+
+  # An endpoint whose model's abilities an admin declared.
+  defp capable(flags, attrs) do
+    model = Map.get(attrs, :model, "a/model-#{System.unique_integer([:positive])}")
+
+    endpoint_fixture(
+      attrs
+      |> Map.put(:model, model)
+      |> Map.put(:provider_settings, %{"capabilities" => Map.put(flags, "model", model)})
+    )
+  end
+
+  defp all_round(attrs \\ %{}),
+    do: capable(%{"tools" => "yes", "vision" => "yes", "audio_input" => "yes"}, attrs)
+
+  defp allow!(endpoints),
+    do: {:ok, _} = Config.put_selectable_endpoints(Enum.map(endpoints, & &1.uuid), [])
+
+  defp switch_off!(endpoint) do
+    Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^endpoint.uuid),
+      set: [enabled: false]
+    )
+  end
+
+  describe "with agent.manage: the three models" do
+    setup %{conn: conn} do
+      admin = manager()
+      member = user_with(["agent"], "member")
+
+      %{
+        conn: log_in(conn, admin),
+        admin: admin,
+        member: member,
+        chat: all_round(%{name: "Chatty"}),
+        pictures: all_round(%{name: "Seer"}),
+        speech: all_round(%{name: "Ear"}),
+        blind:
+          capable(%{"tools" => "yes", "vision" => "no", "audio_input" => "no"}, %{name: "Blind"}),
+        plain:
+          capable(%{"tools" => "no", "vision" => "yes", "audio_input" => "yes"}, %{name: "Plain"})
+      }
+    end
+
+    test "the form has a field for each of chat, pictures and speech, each with the default",
+         ctx do
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", ctx.chat.uuid)
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", ctx.pictures.uuid)
+      view = open(ctx.conn, ctx.member)
+
+      for field <- ~w(agent-user-endpoint agent-user-vision-endpoint agent-user-speech-endpoint) do
+        assert has_element?(view, "##{field}")
+        assert has_element?(view, "##{field} option[value='']", "Default:")
+        assert has_element?(view, "##{field} option[value='#{ctx.chat.uuid}']")
+        assert has_element?(view, "##{field} option[value='#{ctx.blind.uuid}']")
+      end
+
+      assert has_element?(view, "#agent-user-endpoint option[value='']", "Chatty")
+      assert has_element?(view, "#agent-user-vision-endpoint option[value='']", "Seer")
+      assert has_element?(view, "#agent-user-speech-endpoint option[value='']", "none set")
+    end
+
+    test "each field marks the endpoints that do not fit its task", ctx do
+      view = open(ctx.conn, ctx.member)
+      _ = render_async(view)
+
+      assert has_element?(
+               view,
+               "#agent-user-endpoint option[value='#{ctx.plain.uuid}']",
+               "no tools"
+             )
+
+      refute has_element?(
+               view,
+               "#agent-user-endpoint option[value='#{ctx.blind.uuid}']",
+               "no tools"
+             )
+
+      assert has_element?(
+               view,
+               "#agent-user-vision-endpoint option[value='#{ctx.blind.uuid}']",
+               "does not take pictures"
+             )
+
+      refute has_element?(
+               view,
+               "#agent-user-vision-endpoint option[value='#{ctx.pictures.uuid}']",
+               "does not take"
+             )
+
+      assert has_element?(
+               view,
+               "#agent-user-speech-endpoint option[value='#{ctx.blind.uuid}']",
+               "does not take audio"
+             )
+    end
+
+    test "an administrator saves each of the three, and Activity names the field", ctx do
+      for {field, endpoint} <- [
+            endpoint_uuid: ctx.chat,
+            vision_endpoint_uuid: ctx.pictures,
+            speech_endpoint_uuid: ctx.speech
+          ] do
+        view = open(ctx.conn, ctx.member)
+
+        view
+        |> form("#agent-user-form", user_settings: %{field => endpoint.uuid})
+        |> render_submit()
+
+        assert has_element?(view, "#flash-info")
+        assert Map.fetch!(Repo.get!(UserSettings, ctx.member.uuid), field) == endpoint.uuid
+      end
+
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+
+      assert {row.endpoint_uuid, row.vision_endpoint_uuid, row.speech_endpoint_uuid} ==
+               {ctx.chat.uuid, ctx.pictures.uuid, ctx.speech.uuid}
+
+      fields = activity() |> Enum.flat_map(& &1.metadata["fields"]) |> Enum.sort()
+      assert fields == ~w(endpoint_uuid speech_endpoint_uuid vision_endpoint_uuid)
+    end
+
+    test "the three models are saved in one submit", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      view
+      |> form("#agent-user-form",
+        user_settings: %{
+          endpoint_uuid: ctx.chat.uuid,
+          vision_endpoint_uuid: ctx.pictures.uuid,
+          speech_endpoint_uuid: ctx.speech.uuid
+        }
+      )
+      |> render_submit()
+
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+
+      assert {row.endpoint_uuid, row.vision_endpoint_uuid, row.speech_endpoint_uuid} ==
+               {ctx.chat.uuid, ctx.pictures.uuid, ctx.speech.uuid}
+    end
+
+    test "choosing the default clears that field only", ctx do
+      Repo.insert!(%UserSettings{
+        user_uuid: ctx.member.uuid,
+        endpoint_uuid: ctx.chat.uuid,
+        vision_endpoint_uuid: ctx.pictures.uuid,
+        speech_endpoint_uuid: ctx.speech.uuid
+      })
+
+      view = open(ctx.conn, ctx.member)
+
+      view
+      |> form("#agent-user-form", user_settings: %{vision_endpoint_uuid: ""})
+      |> render_submit()
+
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+      assert row.vision_endpoint_uuid == nil
+      assert row.endpoint_uuid == ctx.chat.uuid
+      assert row.speech_endpoint_uuid == ctx.speech.uuid
+    end
+
+    test "a save that changes another field never clears a model", ctx do
+      Repo.insert!(%UserSettings{
+        user_uuid: ctx.member.uuid,
+        vision_endpoint_uuid: ctx.pictures.uuid,
+        speech_endpoint_uuid: ctx.speech.uuid
+      })
+
+      view = open(ctx.conn, ctx.member)
+      view |> form("#agent-user-form", user_settings: %{daily_turn_limit: "3"}) |> render_submit()
+
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+      assert row.daily_turn_limit == 3
+
+      assert {row.vision_endpoint_uuid, row.speech_endpoint_uuid} ==
+               {ctx.pictures.uuid, ctx.speech.uuid}
+
+      # A submit that does not carry the model fields at all, as an old form sends it.
+      view = open(ctx.conn, ctx.member)
+      render_hook(view, "save_user", %{"user_settings" => %{"daily_turn_limit" => "4"}})
+
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+      assert row.daily_turn_limit == 4
+
+      assert {row.vision_endpoint_uuid, row.speech_endpoint_uuid} ==
+               {ctx.pictures.uuid, ctx.speech.uuid}
+    end
+
+    test "a model the user chose after the form opened is not written over", ctx do
+      allow!([ctx.pictures])
+      view = open(ctx.conn, ctx.member)
+      {ref, _token} = session_fixture(ctx.member)
+
+      assert {:ok, [:vision_endpoint_uuid]} =
+               UserConfig.put_personal_models(
+                 ref,
+                 %{"vision_endpoint_uuid" => ctx.pictures.uuid},
+                 impersonated: false
+               )
+
+      view |> form("#agent-user-form", user_settings: %{daily_turn_limit: "9"}) |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      row = Repo.get!(UserSettings, ctx.member.uuid)
+      assert row.vision_endpoint_uuid == ctx.pictures.uuid
+      assert row.daily_turn_limit == nil
+    end
+
+    test "a refusal is shown at its own field, and nothing is saved", ctx do
+      cases = [
+        {"agent-user-endpoint", :endpoint_uuid, ctx.plain, "does not take tools"},
+        {"agent-user-vision-endpoint", :vision_endpoint_uuid, ctx.blind,
+         "does not take pictures"},
+        {"agent-user-speech-endpoint", :speech_endpoint_uuid, ctx.blind, "does not take audio"}
+      ]
+
+      for {dom, field, endpoint, text} <- cases do
+        view = open(ctx.conn, ctx.member)
+
+        view
+        |> form("#agent-user-form", user_settings: %{field => endpoint.uuid})
+        |> render_submit()
+
+        assert has_element?(view, "##{dom}-field p.text-error", text)
+
+        for {other, _, _, _} <- cases, other != dom do
+          refute has_element?(view, "##{other}-field p.text-error")
+        end
+
+        assert Repo.get(UserSettings, ctx.member.uuid) == nil
+      end
+    end
+
+    test "a model nobody knows fits is refused at its field", ctx do
+      unknown = endpoint_fixture(%{name: "Unknown", model: "a/never-heard-of"})
+      view = open(ctx.conn, ctx.member)
+
+      view
+      |> form("#agent-user-form", user_settings: %{vision_endpoint_uuid: unknown.uuid})
+      |> render_submit()
+
+      assert has_element?(
+               view,
+               "#agent-user-vision-endpoint-field p.text-error",
+               "nobody knows whether its model takes pictures"
+             )
+    end
+
+    test "an endpoint the form did not offer is refused for each field", ctx do
+      tts = endpoint_fixture(%{name: "Voice", model: "a/some-tts"})
+      view = open(ctx.conn, ctx.member)
+
+      for field <- ~w(endpoint_uuid vision_endpoint_uuid speech_endpoint_uuid),
+          value <- [tts.uuid, Ecto.UUID.generate(), "nonsense"] do
+        render_hook(view, "save_user", %{"user_settings" => %{field => value}})
+        assert Repo.get(UserSettings, ctx.member.uuid) == nil
+        assert has_element?(view, "#agent-user-form p.text-error")
+      end
+    end
+
+    test "an administrator may set a model that is not on the list users choose from", ctx do
+      allow!([ctx.chat])
+      view = open(ctx.conn, ctx.member)
+
+      view
+      |> form("#agent-user-form", user_settings: %{vision_endpoint_uuid: ctx.pictures.uuid})
+      |> render_submit()
+
+      assert Repo.get!(UserSettings, ctx.member.uuid).vision_endpoint_uuid == ctx.pictures.uuid
+
+      view = open(ctx.conn, ctx.member)
+      assert has_element?(view, "#agent-user-vision-endpoint-effective[data-source='own']")
+      assert has_element?(view, "#agent-user-vision-endpoint-outside-list")
+      refute has_element?(view, "#agent-user-endpoint-outside-list")
+    end
+
+    test "says what is in effect: the default, an own model, the default instead of an unusable one",
+         ctx do
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", ctx.chat.uuid)
+
+      view = open(ctx.conn, ctx.member)
+
+      assert has_element?(view, "#agent-user-endpoint-effective[data-source='default']", "Chatty")
+
+      assert has_element?(
+               view,
+               "#agent-user-vision-endpoint-effective[data-source='default']",
+               "none set"
+             )
+
+      refute has_element?(view, "#agent-user-endpoint-outside-list")
+
+      allow!([ctx.pictures, ctx.speech])
+
+      Repo.insert!(%UserSettings{
+        user_uuid: ctx.member.uuid,
+        vision_endpoint_uuid: ctx.pictures.uuid,
+        speech_endpoint_uuid: ctx.speech.uuid
+      })
+
+      view = open(ctx.conn, ctx.member)
+
+      assert has_element?(
+               view,
+               "#agent-user-vision-endpoint-effective[data-source='own']",
+               "Seer"
+             )
+
+      assert has_element?(view, "#agent-user-speech-endpoint-effective[data-source='own']", "Ear")
+      refute has_element?(view, "#agent-user-vision-endpoint-outside-list")
+
+      switch_off!(ctx.pictures)
+      view = open(ctx.conn, ctx.member)
+
+      assert has_element?(view, "#agent-user-vision-endpoint-effective[data-source='fallback']")
+      assert has_element?(view, "#agent-user-vision-endpoint-effective", "cannot be used")
+      assert has_element?(view, "#agent-user-speech-endpoint-effective[data-source='own']")
+      # The model the user has stays chosen in the field, so a save does not drop it.
+      assert has_element?(
+               view,
+               "#agent-user-vision-endpoint option[value='#{ctx.pictures.uuid}'][selected]"
+             )
+    end
+
+    test "the list shows where the chat model comes from, also when the own one fell back", ctx do
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", ctx.chat.uuid)
+      working = user_with(["agent"], "working")
+      broken = user_with(["agent"], "broken")
+      plain_user = user_with(["agent"], "plain-user")
+      Repo.insert!(%UserSettings{user_uuid: working.uuid, endpoint_uuid: ctx.pictures.uuid})
+      Repo.insert!(%UserSettings{user_uuid: broken.uuid, endpoint_uuid: ctx.speech.uuid})
+      switch_off!(ctx.speech)
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-user-#{working.uuid}-model", "Seer")
+      refute has_element?(view, "#agent-user-#{working.uuid}-model", "module default")
+      refute has_element?(view, "#agent-user-#{working.uuid}-model-fallback")
+
+      assert has_element?(view, "#agent-user-#{broken.uuid}-model", "Chatty")
+      assert has_element?(view, "#agent-user-#{broken.uuid}-model", "module default")
+      assert has_element?(view, "#agent-user-#{broken.uuid}-model-fallback")
+
+      assert has_element?(view, "#agent-user-#{plain_user.uuid}-model", "module default")
+      refute has_element?(view, "#agent-user-#{plain_user.uuid}-model-fallback")
+    end
+
+    test "money not counted is warned of per task, for the model chosen or the default", ctx do
+      bare =
+        capable(%{"tools" => "yes", "vision" => "yes", "audio_input" => "yes"}, %{
+          name: "Bare",
+          provider: "deepseek",
+          model: "deepseek-chat"
+        })
+
+      view = open(ctx.conn, ctx.member)
+
+      for {dom, field} <- [
+            {"agent-user-money-off", :endpoint_uuid},
+            {"agent-user-vision-endpoint-money-off", :vision_endpoint_uuid},
+            {"agent-user-speech-endpoint-money-off", :speech_endpoint_uuid}
+          ] do
+        refute has_element?(view, "##{dom}")
+
+        view
+        |> form("#agent-user-form", user_settings: %{field => bare.uuid})
+        |> render_change()
+
+        assert has_element?(view, "##{dom}", "money is not counted")
+
+        view
+        |> form("#agent-user-form", user_settings: %{field => ctx.chat.uuid})
+        |> render_change()
+
+        refute has_element?(view, "##{dom}")
+      end
+
+      # The default of a task counts when nothing own is chosen.
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", bare.uuid)
+      view = open(ctx.conn, ctx.member)
+      assert has_element?(view, "#agent-user-vision-endpoint-money-off")
+      refute has_element?(view, "#agent-user-speech-endpoint-money-off")
+    end
+
+    test "the selects point to what is said under them", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      for dom <- ~w(agent-user-endpoint agent-user-vision-endpoint agent-user-speech-endpoint) do
+        assert has_element?(view, "select##{dom}[aria-describedby='#{dom}-effective']")
+        assert has_element?(view, "##{dom}-effective")
+      end
+    end
+
+    test "a fallback with no default says that none is set, and why a model fails", ctx do
+      Repo.insert!(%UserSettings{
+        user_uuid: ctx.member.uuid,
+        vision_endpoint_uuid: ctx.pictures.uuid
+      })
+
+      switch_off!(ctx.pictures)
+      view = open(ctx.conn, ctx.member)
+
+      assert has_element?(
+               view,
+               "#agent-user-vision-endpoint-effective[data-source='fallback']",
+               "no default is set"
+             )
+
+      refute has_element?(view, "#agent-user-vision-endpoint-effective", "none set")
+      assert has_element?(view, "#agent-user-vision-endpoint-effective", "no longer a chat model")
+
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", ctx.chat.uuid)
+      view = open(ctx.conn, ctx.member)
+
+      assert has_element?(view, "#agent-user-vision-endpoint-effective", "Chatty")
+      refute has_element?(view, "#agent-user-vision-endpoint-effective", "no default is set")
+    end
+
+    test "without a speech-writing AI module the speech field is gone and a crafted value is refused",
+         ctx do
+      Application.put_env(:phoenix_kit_agent, :speech_ai, __MODULE__.NoTranscribe)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
+
+      view = open(ctx.conn, ctx.member)
+      refute has_element?(view, "#agent-user-speech-endpoint")
+
+      render_hook(view, "save_user", %{
+        "user_settings" => %{"speech_endpoint_uuid" => ctx.speech.uuid}
+      })
+
+      assert Repo.get(UserSettings, ctx.member.uuid) == nil
+      assert has_element?(view, "#flash-error")
+    end
+
+    test "the form is laid out to stack on a phone", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      assert has_element?(view, "#agent-user-form .grid.grid-cols-1[class*='sm:grid-cols-2']")
+      assert has_element?(view, "#agent-user-endpoint-field.min-w-0")
+      assert has_element?(view, "#agent-user-vision-endpoint-field.min-w-0")
+      refute has_element?(view, "#agent-user-form [class*='w-['][class*='px]']")
+    end
+
+    test "agent.manage is checked again for the new fields", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      [role] =
+        ctx.admin
+        |> Roles.get_user_roles()
+        |> Enum.reject(&(&1 in ["Owner", "Admin", "User"]))
+        |> Enum.map(&Roles.get_role_by_name/1)
+
+      :ok = Permissions.revoke_permission(role.uuid, "agent.manage")
+
+      view
+      |> form("#agent-user-form", user_settings: %{vision_endpoint_uuid: ctx.pictures.uuid})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      assert Repo.get(UserSettings, ctx.member.uuid) == nil
+    end
+  end
+
+  describe "what the page does with the result of the save" do
+    defp socket_with(editing) do
+      %Phoenix.LiveView.Socket{
+        assigns: %{__changed__: %{}, flash: %{}, editing: editing}
+      }
+    end
+
+    defp editing_form,
+      do: %{params: %{}, errors: %{}, user: %{uuid: Ecto.UUID.generate()}}
+
+    test "a refusal that comes from the save is shown at the field it names" do
+      cases = [
+        {:model_unfit, [:tools], :endpoint_uuid, "does not take tools"},
+        {:model_unverified, [:tools], :endpoint_uuid, "whether its model takes tools"},
+        {:model_unfit, [:vision], :vision_endpoint_uuid, "does not take pictures"},
+        {:model_unverified, [:vision], :vision_endpoint_uuid, "whether its model takes pictures"},
+        {:model_unfit, [:audio_input], :speech_endpoint_uuid, "does not take audio"},
+        {:model_unverified, [:audio_input], :speech_endpoint_uuid,
+         "whether its model takes audio"}
+      ]
+
+      for {reason, needs, field, text} <- cases do
+        socket =
+          UsersLive.after_update(
+            {:error, {reason, needs, field}},
+            socket_with(editing_form()),
+            editing_form(),
+            %{}
+          )
+
+        assert [message] = socket.assigns.editing.errors[field]
+        assert message =~ text
+        assert Map.keys(socket.assigns.editing.errors) == [field]
+        assert socket.assigns.flash["error"]
+      end
+    end
+  end
+
+  describe "an Owner's models" do
+    test "a manager who is not an Owner cannot set them, not even with a crafted submit", %{
+      conn: conn
+    } do
+      owner = owner_fixture()
+      pictures = all_round()
+      {:ok, view, _html} = live(log_in(conn, manager()), @path)
+
+      render_hook(view, "configure", %{"user" => owner.uuid})
+
+      render_hook(view, "save_user", %{
+        "user_settings" => %{"vision_endpoint_uuid" => pictures.uuid}
+      })
+
+      assert Repo.get(UserSettings, owner.uuid) == nil
+    end
+
+    test "an Owner sets his models", %{conn: conn} do
+      owner = owner_fixture()
+      pictures = all_round()
+      {:ok, view, _html} = live(log_in(conn, owner), @path)
+
+      view |> element("#agent-user-configure-#{owner.uuid}") |> render_click()
+
+      view
+      |> form("#agent-user-form", user_settings: %{vision_endpoint_uuid: pictures.uuid})
+      |> render_submit()
+
+      assert Repo.get!(UserSettings, owner.uuid).vision_endpoint_uuid == pictures.uuid
     end
   end
 

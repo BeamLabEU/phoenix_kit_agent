@@ -33,6 +33,7 @@ defmodule PhoenixKitAgent.ConfigTest do
     test "nothing chosen: no endpoints, no prompt, no watchers, no captured bodies" do
       assert Config.default_endpoint_uuid() == nil
       assert Config.vision_endpoint_uuid() == nil
+      assert Config.selectable_endpoint_uuids() == []
       assert Config.system_prompt() == nil
       assert Config.limit_watchers() == []
       assert Config.capture_ai_content?() == false
@@ -208,7 +209,67 @@ defmodule PhoenixKitAgent.ConfigTest do
       task = Enum.find(PhoenixKitAgent.ai_tasks(), &(&1.key == "agent.speech"))
 
       assert task.needs == [:audio_input]
-      assert task.endpoints == {PhoenixKitAgent.Config, :speech_endpoint_uuid, []}
+      assert task.endpoints == {PhoenixKitAgent.UserConfig, :endpoint_uuids, [:speech]}
+    end
+
+    test "the three tasks name the defaults and the users' own models of their kind" do
+      endpoints = fn key ->
+        task = Enum.find(PhoenixKitAgent.ai_tasks(), &(&1.key == key))
+        {module, function, args} = task.endpoints
+        apply(module, function, args)
+      end
+
+      default = endpoint_fixture()
+      vision = endpoint_fixture()
+      own_speech = endpoint_fixture()
+      user = user_fixture()
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", default.uuid)
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", vision.uuid)
+
+      Repo.insert!(%PhoenixKitAgent.Schemas.UserSettings{
+        user_uuid: user.uuid,
+        speech_endpoint_uuid: own_speech.uuid
+      })
+
+      assert endpoints.("agent.chat") == [default.uuid]
+      assert endpoints.("agent.attachment") == [vision.uuid]
+      assert endpoints.("agent.speech") == [own_speech.uuid]
+    end
+  end
+
+  describe "a switched-off endpoint" do
+    setup do
+      PhoenixKitAI.Guard.reset_caches()
+      on_exit(&PhoenixKitAI.Guard.reset_caches/0)
+      :ok
+    end
+
+    defp switch_off(endpoint) do
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^endpoint.uuid),
+        set: [enabled: false]
+      )
+    end
+
+    test "is no new default of any task" do
+      endpoint =
+        declared(%{model: "a/all"}, %{"tools" => "yes", "vision" => "yes", "audio_input" => "yes"})
+
+      switch_off(endpoint)
+
+      assert {:error, :switched_off} = Config.put_default_endpoint(endpoint.uuid, [])
+      assert {:error, :switched_off} = Config.put_vision_endpoint(endpoint.uuid, [])
+      assert {:error, :switched_off} = Config.put_speech_endpoint(endpoint.uuid, [])
+      assert Config.default_endpoint_uuid() == nil
+    end
+
+    test "that is the default already may be saved again, and cleared" do
+      endpoint = declared(%{model: "a/all"}, %{"tools" => "yes"})
+      assert {:ok, _} = Config.put_default_endpoint(endpoint.uuid, [])
+      switch_off(endpoint)
+
+      assert {:ok, _} = Config.put_default_endpoint(endpoint.uuid, [])
+      assert Config.default_endpoint_uuid() == endpoint.uuid
+      assert {:ok, _} = Config.put_default_endpoint(nil, [])
     end
   end
 
@@ -302,6 +363,88 @@ defmodule PhoenixKitAgent.ConfigTest do
       # The same text again is no change.
       assert {:ok, _} = Config.put_system_prompt(secret, actor_uuid: user.uuid)
       assert length(prompt_entries()) == 1
+    end
+  end
+
+  describe "the endpoints users may choose for themselves" do
+    test "are written and read, repeats dropped, and the setting is in the history" do
+      user = user_fixture()
+      one = endpoint_fixture()
+      two = endpoint_fixture()
+
+      assert {:ok, _} =
+               Config.put_selectable_endpoints([two.uuid, one.uuid, two.uuid],
+                 actor_uuid: user.uuid
+               )
+
+      assert Config.selectable_endpoint_uuids() == [two.uuid, one.uuid]
+    end
+
+    test "an empty list is nobody, and clears what was there" do
+      one = endpoint_fixture()
+      {:ok, _} = Config.put_selectable_endpoints([one.uuid], [])
+
+      assert {:ok, _} = Config.put_selectable_endpoints([], [])
+      assert Config.selectable_endpoint_uuids() == []
+    end
+
+    test "a uuid that is no endpoint, a text and an endpoint that does not chat are refused, and nothing is written" do
+      one = endpoint_fixture()
+      {:ok, _} = Config.put_selectable_endpoints([one.uuid], [])
+      embedding = endpoint_fixture(%{model: "openai/text-embedding-3-small"})
+
+      for bad <- [[Ecto.UUID.generate()], ["nope"], [1], [embedding.uuid], [one.uuid, "nope"]] do
+        assert {:error, :invalid_endpoint} = Config.put_selectable_endpoints(bad, [])
+      end
+
+      assert {:error, :invalid_endpoint} = Config.put_selectable_endpoints("not a list", [])
+      assert Config.selectable_endpoint_uuids() == [one.uuid]
+    end
+  end
+
+  describe "a damaged list of the endpoints users may choose" do
+    defp store_list(value),
+      do:
+        {:ok, _} =
+          Settings.update_json_setting_with_module(
+            "agent_selectable_endpoint_uuids",
+            value,
+            "agent"
+          )
+
+    test "keeps what is a uuid, in canonical form, and drops the rest" do
+      uuid = Ecto.UUID.generate()
+
+      store_list(%{
+        "uuids" => ["zzz", 5, nil, String.upcase(uuid), "aaaaaaaaaaaaaaaa", uuid, %{"a" => 1}]
+      })
+
+      assert Config.selectable_endpoint_uuids() == [uuid]
+    end
+
+    test "a value that is not a list of uuids is an empty list" do
+      for value <- [%{"other" => 1}, %{"uuids" => "x"}, %{"uuids" => nil}, %{}] do
+        store_list(value)
+        assert Config.selectable_endpoint_uuids() == []
+      end
+    end
+
+    test "a raw 16-byte string is no endpoint to write either" do
+      assert {:error, :invalid_endpoint} =
+               Config.put_selectable_endpoints(["aaaaaaaaaaaaaaaa"], [])
+    end
+  end
+
+  describe "the default of a task" do
+    test "is read by the task's name" do
+      chat = endpoint_fixture()
+      vision = endpoint_fixture()
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", chat.uuid)
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", vision.uuid)
+
+      assert Config.default_endpoint_uuid(:chat) == chat.uuid
+      assert Config.default_endpoint_uuid(:vision) == vision.uuid
+      assert Config.default_endpoint_uuid(:speech) == nil
     end
   end
 

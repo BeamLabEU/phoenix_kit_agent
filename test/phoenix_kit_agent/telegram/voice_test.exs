@@ -306,6 +306,34 @@ defmodule PhoenixKitAgent.Telegram.VoiceTest do
 
   # ── what is refused, and nothing paid or downloaded ───────────────────
 
+  describe "a voice message of a user with a speech model of his own" do
+    alias PhoenixKitAgent.Schemas.UserSettings
+
+    test "is written down by it, also where the site has no speech model", ctx do
+      {:ok, _} = Config.put_speech_endpoint(nil, [])
+
+      own =
+        endpoint_fixture(%{
+          model: @ears,
+          provider_settings: %{"capabilities" => %{"audio_input" => "yes", "model" => @ears}}
+        })
+
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, speech_endpoint_uuid: own.uuid})
+      ears_hear("How many orders?")
+      model_says("You have three orders.")
+
+      voice(ctx, "voice", message_id: 43, file_id: "AwAD-voice")
+      calls = calls_until(reaction?("👍"))
+
+      assert texts(calls) == ["🎙 Recognised: How many orders?", "You have three orders."]
+
+      assert Repo.aggregate(
+               from(r in PhoenixKitAI.Request, where: r.endpoint_uuid == ^own.uuid),
+               :count
+             ) == 1
+    end
+  end
+
   describe "a voice message that cannot be taken" do
     test "without a speech model: told so, 🤷, nothing downloaded", ctx do
       {:ok, _} = Settings.update_setting("agent_speech_endpoint_uuid", "")

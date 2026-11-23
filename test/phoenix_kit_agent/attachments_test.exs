@@ -124,6 +124,13 @@ defmodule PhoenixKitAgent.AttachmentsTest do
     endpoint
   end
 
+  # A picture model of the user's own.
+  defp own_vision!(user, model \\ "a/eyes") do
+    endpoint = endpoint_fixture(%{name: "My eyes", model: model})
+    Repo.insert!(%UserSettings{user_uuid: user.uuid, vision_endpoint_uuid: endpoint.uuid})
+    endpoint
+  end
+
   defp limits!(user, attrs) do
     %UserSettings{user_uuid: user.uuid}
     |> UserSettings.admin_changeset(attrs)
@@ -618,6 +625,106 @@ defmodule PhoenixKitAgent.AttachmentsTest do
       # What the user showed is not kept in the AI journal, whatever the global setting.
       refute Map.has_key?(request.metadata, "input")
       refute Map.has_key?(request.metadata, "response")
+    end
+
+    test "a picture model of the user's own describes the picture even for a model that sees",
+         ctx do
+      serve_ai(main_sees: true, description: "Seen by my own eyes.")
+      own = own_vision!(ctx.user)
+
+      attachment = add_done!(ctx, Files.png(40, 30), "own.png")
+
+      assert attachment.status == "ready"
+      assert attachment.extracted_text == "Seen by my own eyes."
+      assert_received {:model_request, body}
+      assert model_request_images(body) == 1
+      assert vision_request(ctx.user).endpoint_uuid == own.uuid
+    end
+
+    test "it describes where the site has no picture model, and the picture is not refused",
+         ctx do
+      serve_ai(main_sees: false, description: "Seen by my own eyes.")
+      own_vision!(ctx.user)
+
+      attachment = add_done!(ctx, Files.png(40, 30), "own.png")
+
+      assert attachment.extracted_text == "Seen by my own eyes."
+    end
+
+    test "it is chosen over the site's picture model", ctx do
+      serve_ai(main_sees: false, description: "Seen by my own eyes.")
+      vision_endpoint!()
+      own = own_vision!(ctx.user)
+
+      add_done!(ctx, Files.png(40, 30), "own.png")
+
+      assert vision_request(ctx.user).endpoint_uuid == own.uuid
+    end
+
+    test "another user's picture model changes nothing for this user", ctx do
+      serve_ai(main_sees: true)
+      other = user_fixture("other-eyes")
+      own_vision!(other)
+
+      attachment = add_done!(ctx, Files.png(40, 30), "plain.png")
+
+      assert attachment.extracted_text == nil
+      refute_received {:model_request, _}
+    end
+
+    test "one that was switched off is left for the present rule: pixels for a model that sees",
+         ctx do
+      serve_ai(main_sees: true)
+      own = own_vision!(ctx.user)
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^own.uuid),
+        set: [enabled: false]
+      )
+
+      attachment = add_done!(ctx, Files.png(40, 30), "plain.png")
+
+      assert attachment.extracted_text == nil
+      refute_received {:model_request, _}
+    end
+
+    test "one that was switched off is left for the site's picture model when the chat model is blind",
+         ctx do
+      serve_ai(main_sees: false, description: "Seen by the site.")
+      site = vision_endpoint!()
+      own = own_vision!(ctx.user)
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^own.uuid),
+        set: [enabled: false]
+      )
+
+      attachment = add_done!(ctx, Files.png(40, 30), "plain.png")
+
+      assert attachment.extracted_text == "Seen by the site."
+      assert vision_request(ctx.user).endpoint_uuid == site.uuid
+    end
+
+    test "one that was switched off, with a blind chat model and no site model: refused at once",
+         ctx do
+      serve_ai(main_sees: false)
+      own = own_vision!(ctx.user)
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^own.uuid),
+        set: [enabled: false]
+      )
+
+      assert {:error, :no_vision_model} = add(ctx, Files.png(40, 30), "a.png")
+    end
+
+    test "a picture is not described by his own model for a user over the limit", ctx do
+      serve_ai(main_sees: true)
+      own_vision!(ctx.user)
+      limits!(ctx.user, %{daily_turn_limit: 0})
+
+      attachment = add_done!(ctx, Files.png(40, 30), "a.png")
+
+      assert attachment.status == "failed"
+      assert attachment.error == "limit_reached"
+      refute_received {:model_request, _}
     end
 
     test "an endpoint of unknown abilities with a vision model set is described too", ctx do

@@ -332,7 +332,7 @@ defmodule PhoenixKitAgent do
         private: true,
         block_group: "free_text",
         user_limits: false,
-        endpoints: {PhoenixKitAgent.Config, :vision_endpoint_uuid, []},
+        endpoints: {PhoenixKitAgent.UserConfig, :endpoint_uuids, [:vision]},
         watchers: {PhoenixKitAgent.Limits, :guard_watchers, []}
       },
       %PhoenixKitAI.TaskSpec{
@@ -347,7 +347,7 @@ defmodule PhoenixKitAgent do
         private: true,
         block_group: "free_text",
         user_limits: false,
-        endpoints: {PhoenixKitAgent.Config, :speech_endpoint_uuid, []},
+        endpoints: {PhoenixKitAgent.UserConfig, :endpoint_uuids, [:speech]},
         watchers: {PhoenixKitAgent.Limits, :guard_watchers, []}
       }
     ]

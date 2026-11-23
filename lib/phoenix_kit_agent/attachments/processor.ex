@@ -13,17 +13,21 @@ defmodule PhoenixKitAgent.Attachments.Processor do
     * `image` — checked to be a picture ImageMagick can read.
 
   A picture (or a scan) is shown to the model in one of two ways, decided here
-  by the user's model as it is now (`PhoenixKitAgent.Models.image_input/1`,
-  `picture_mode/1`):
+  by the user's models as they are now (`PhoenixKitAgent.UserConfig.effective/1`,
+  `PhoenixKitAgent.Models.image_input/1`, `picture_mode/1`). A user's own
+  picture model, when he has one that can be used, always describes his
+  pictures, whatever the chat model can take: the description below is made by
+  it, and no pixels go to the chat model. Without one:
 
-    * the model is known to take images: the row stays without text — the turn
+    * the chat model is known to take images: the row stays without text — the turn
       sends the pixels, in its own message only
       (`PhoenixKitAgent.Attachments`'s `pictures(attachment)`); later turns carry a line that
       names the file, and the assistant's own answer about it;
     * it is known not to, or its abilities are not known (a provider without a
       model listing, a model that declares nothing): it is taken for a blind
       one, and the vision model of the module (`agent_vision_endpoint_uuid`)
-      describes the picture once, now; the description is the row's text,
+      describes the picture once, now — as does the user's own one, which is
+      the "vision model" of what follows; the description is the row's text,
       which the history keeps. With no vision model a picture is refused by
       `PhoenixKitAgent.Attachments.add/4` before it is stored, and a scan
       (known to be one only here) `failed` as `no_vision_model`. The vision
@@ -70,7 +74,7 @@ defmodule PhoenixKitAgent.Attachments.Processor do
   alias PhoenixKit.PubSub.Manager, as: PubSub
   alias PhoenixKit.RepoHelper
   alias PhoenixKitAgent.Attachments.{Bounds, Extract, Slots, Work}
-  alias PhoenixKitAgent.{Config, Conversations, Models, UserConfig}
+  alias PhoenixKitAgent.{Conversations, Models, UserConfig}
   alias PhoenixKitAgent.Limits, as: SpendLimits
   alias PhoenixKitAgent.Schemas.{Attachment, Message}
 
@@ -239,13 +243,19 @@ defmodule PhoenixKitAgent.Attachments.Processor do
   # ── how a picture reaches the model ─────────────────────────────────
 
   @doc false
-  # How a picture reaches the user's model (see the moduledoc): as pixels only
-  # for a model known to take images; else described by the vision model, or
-  # `no_vision_model` when there is none.
+  # How a picture reaches the user's model (see the moduledoc): described by the
+  # user's own picture model when he has a usable one; else as pixels, only for
+  # a chat model known to take images; else described by the module's vision
+  # model, or `no_vision_model` when there is none. `settings` is
+  # `UserConfig.effective/1`'s: its picture model is the user's own or the
+  # module's.
   @spec picture_mode(map()) ::
           {:ok, :pixels | {:describe, String.t()}} | {:error, :no_vision_model}
+  def picture_mode(%{models: %{vision: %{source: :own, uuid: vision}}}),
+    do: {:ok, {:describe, vision}}
+
   def picture_mode(settings) do
-    case {Models.image_input(settings.endpoint_uuid), Config.vision_endpoint_uuid()} do
+    case {Models.image_input(settings.endpoint_uuid), settings.vision_endpoint_uuid} do
       {:supported, _vision} -> {:ok, :pixels}
       {_blind_or_unknown, nil} -> {:error, :no_vision_model}
       {_blind_or_unknown, vision} -> {:ok, {:describe, vision}}

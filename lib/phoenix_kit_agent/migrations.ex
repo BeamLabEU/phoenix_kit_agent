@@ -39,6 +39,17 @@ defmodule PhoenixKitAgent.Migrations do
   `down/1` to V1 drops the two columns and the index, and clears an outcome
   V1 cannot hold (the notice stays, without it).
 
+  ## V3 — a model of the user's own for pictures and for speech
+
+    * `phoenix_kit_agent_user_settings.vision_endpoint_uuid` and
+      `.speech_endpoint_uuid` — nullable, `NULL` meaning "the module default",
+      as `endpoint_uuid` (the chat model) already does; each links to
+      `phoenix_kit_ai_endpoints` and is set to `NULL` when the endpoint is
+      deleted, and has a partial index like `endpoint_uuid`'s.
+
+  A row that only has `endpoint_uuid` is read as before. `down/1` to V2 drops
+  the two columns (with their links and indexes) and the own models they held.
+
   Deleting a user deletes their rows of every table (`ON DELETE CASCADE`); a
   deleted `phoenix_kit_ai_requests` row, AI endpoint or Storage file leaves the
   link `NULL` and never blocks the delete. Money is in micro-dollars
@@ -71,7 +82,7 @@ defmodule PhoenixKitAgent.Migrations do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 2
+  @current_version 3
   @default_prefix "public"
   @marker_prefix "pk_agent_schema:"
   @version_table "phoenix_kit_agent_conversations"
@@ -203,7 +214,9 @@ defmodule PhoenixKitAgent.Migrations do
 
   defp version_up(1, prefix), do: v1_statements(prefix)
   defp version_up(2, prefix), do: v2_statements(prefix)
+  defp version_up(3, prefix), do: v3_statements(prefix)
 
+  defp version_down(3, prefix), do: v3_down_statements(prefix)
   defp version_down(2, prefix), do: v2_down_statements(prefix)
 
   # ── V1 ────────────────────────────────────────────────────────────────
@@ -402,6 +415,37 @@ defmodule PhoenixKitAgent.Migrations do
       "ALTER TABLE #{msgs} DROP COLUMN IF EXISTS confirmation_uuid",
       "ALTER TABLE #{msgs} DROP COLUMN IF EXISTS assistant_message_uuid"
     ]
+  end
+
+  # ── V3 ────────────────────────────────────────────────────────────────
+
+  @v3_columns ~w(vision_endpoint_uuid speech_endpoint_uuid)
+
+  # The link is part of the column's definition, so a column that is there
+  # already (a re-run) keeps its own and no second link is made.
+  defp v3_statements(prefix) do
+    settings = Helpers.qualify_table("phoenix_kit_agent_user_settings", prefix)
+    endpoints = Helpers.qualify_table("phoenix_kit_ai_endpoints", prefix)
+
+    Enum.flat_map(@v3_columns, fn column ->
+      [
+        "ALTER TABLE #{settings} ADD COLUMN IF NOT EXISTS #{column} uuid REFERENCES #{endpoints}(uuid) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS phoenix_kit_agent_user_settings_#{column}_index ON #{settings} (#{column}) WHERE #{column} IS NOT NULL"
+      ]
+    end)
+  end
+
+  defp v3_down_statements(prefix) do
+    settings = Helpers.qualify_table("phoenix_kit_agent_user_settings", prefix)
+
+    Enum.flat_map(@v3_columns, fn column ->
+      index = Helpers.qualify_table("phoenix_kit_agent_user_settings_#{column}_index", prefix)
+
+      [
+        "DROP INDEX IF EXISTS #{index}",
+        "ALTER TABLE #{settings} DROP COLUMN IF EXISTS #{column}"
+      ]
+    end)
   end
 
   defp outcome_check(outcomes) do

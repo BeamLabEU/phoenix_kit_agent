@@ -3,8 +3,9 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   Admin → Agent → Users: the people who hold the `agent` permission, each with
   the model they use, their limits, what they spent today and this month and
   whether a limit being hit is reported — and a form to set one user's
-  settings (the switch, the model, the admin's prompt, the limits, the notice
-  flag; `PhoenixKitAgent.UserConfig.admin_update/4`).
+  settings (the switch, the three models — chat, pictures and speech — the
+  admin's prompt, the limits, the notice flag;
+  `PhoenixKitAgent.UserConfig.admin_update/4`).
 
   Needs `agent.manage`. The tab is registered under that key; the page checks
   it again on mount and on every event that opens or saves a form, against the
@@ -16,11 +17,23 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   and only the fields the form offers are taken from it, so a forged submit
   cannot reach the lock columns, the user's own instructions or the notice
   list. A model that the form did not offer (one that cannot chat, or does not
-  exist) is refused, and so is a newly chosen one that does not fit the
-  `agent.chat` AI task (`PhoenixKitAI.Tasks.check_selection/2`): known not
-  to take tools, or not known to. A save after someone else changed the same user's
-  settings since the form opened is refused (`expected:` of
-  `UserConfig.admin_update/4`), not written over their change.
+  exist) is refused, and so is a newly chosen one that does not fit the AI task of
+  its field (`agent.chat`, `agent.attachment`, `agent.speech`;
+  `PhoenixKitAI.Tasks.check_selection/2`): known not to take what the task
+  needs (tools, pictures, audio), or not known to; the refusal is shown at that
+  field. Each of the three fields offers "Default: <name>" (nothing own) and
+  every endpoint that chats, with the ones known not to fit marked, and says
+  what is in effect for the user now (`PhoenixKitAgent.UserConfig.effective/1`):
+  his own model, the default, the default because his own cannot be called any
+  more, and whether an own model is outside the list of those users may choose.
+  A field the form does not send is left as it is. A save after someone else
+  changed the same user's
+  settings since the form opened (the user's own choice of a model among them)
+  is refused (`expected:` of `UserConfig.admin_update/4`), not written over
+  their change.
+
+  The list shows the chat model only, and where it comes from: a user whose own
+  model cannot be called is marked as using the default.
 
   A user whose model does not report what a call costs
   (`PhoenixKitAgent.Models.reports_cost?/2`) is marked: money is not counted
@@ -65,6 +78,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   alias PhoenixKit.Users.Roles
   alias PhoenixKit.Utils.{Number, Routes}
   alias PhoenixKitAgent.{Config, Models, Spend, UserConfig}
+  alias PhoenixKitAgent.Schemas.UserSettings
   alias PhoenixKitAgent.Web.{Access, ToolAvailability}
   alias PhoenixKitAI.GuardBlocks
 
@@ -86,9 +100,20 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   # The plain fields that hold a whole number.
   @whole_fields ~w(daily_turn_limit max_attachment_mb max_attachments_per_message)
 
+  # The three models of the form: the field of `UserSettings` and the task it is for;
+  # in a submit a field is named as a string.
+  @model_tasks %{
+    endpoint_uuid: :chat,
+    vision_endpoint_uuid: :vision,
+    speech_endpoint_uuid: :speech
+  }
+  @model_fields Map.new(@model_tasks, fn {field, _task} -> {Atom.to_string(field), field} end)
+  @tasks [:chat, :vision, :speech]
+
   # The stored fields the form shows: a save is refused when one of them
   # changed since the form opened.
-  @shown_fields [:endpoint_uuid | Map.values(@plain_fields) ++ Map.values(@money_fields)]
+  @shown_fields UserSettings.model_fields() ++
+                  Map.values(@plain_fields) ++ Map.values(@money_fields)
 
   @impl true
   def mount(_params, session, socket) do
@@ -159,14 +184,15 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
   @impl true
   def handle_async(:tools, {:ok, {user_uuid, support}}, socket) do
-    {:noreply, update_editing(socket, user_uuid, &%{&1 | tools: support, tools_loading?: false})}
+    {:noreply,
+     update_editing(socket, user_uuid, &%{&1 | support: support, tools_loading?: false})}
   end
 
   def handle_async(:tools, {:exit, _reason}, socket) do
     {:noreply,
      update_editing(socket, fn editing ->
        unknown = Map.new(editing.endpoints, &{&1.uuid, :unknown})
-       %{editing | tools: unknown, tools_loading?: false}
+       %{editing | support: Map.new(@tasks, &{&1, unknown}), tools_loading?: false}
      end)}
   end
 
@@ -197,7 +223,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
           spend: Map.fetch!(spend, user.uuid),
           endpoint: endpoint,
           money_off?: endpoint != nil and not Models.reports_cost?(endpoint),
-          own_endpoint?: :endpoint_uuid in settings.own,
+          chat_source: settings.models.chat.source,
           block: block_of(user.uuid, viewer)
         }
       end)
@@ -252,7 +278,11 @@ defmodule PhoenixKitAgent.Web.UsersLive do
         put_flash(socket, :error, gettext("This user does not use the assistant."))
 
       listed ->
-        endpoints = [include: row.endpoint_uuid] |> Models.list_endpoints() |> summaries()
+        own =
+          row |> Map.take(UserSettings.model_fields()) |> Map.values() |> Enum.reject(&is_nil/1)
+
+        endpoints = [include: own] |> Models.list_endpoints() |> summaries()
+        in_effect = in_effect(UserConfig.effective(row.user_uuid).models)
 
         socket
         |> assign(
@@ -262,9 +292,11 @@ defmodule PhoenixKitAgent.Web.UsersLive do
             shown: Map.take(row, @shown_fields),
             errors: %{},
             endpoints: endpoints,
-            tools: %{},
+            support: Map.new(@tasks, &{&1, %{}}),
             tools_loading?: endpoints != [],
-            default_endpoint: default_endpoint(),
+            defaults: defaults(),
+            transcribe?: Config.transcribe?(),
+            in_effect: in_effect,
             assistant_tools: tools_by_roles(listed.user)
           }
         )
@@ -286,22 +318,57 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   # The endpoints are read again off the page process, so neither the page
   # nor the closure holds their keys.
   defp start_tools(socket, user_uuid, endpoint_uuids) do
-    start_async(socket, :tools, fn -> {user_uuid, Models.tools_support_of(endpoint_uuids)} end)
+    start_async(socket, :tools, fn ->
+      {user_uuid,
+       %{
+         chat: Models.tools_support_of(endpoint_uuids),
+         vision: Models.image_input_support_of(endpoint_uuids),
+         speech: Models.audio_input_support_of(endpoint_uuids)
+       }}
+    end)
   end
 
-  defp default_endpoint do
-    with uuid when is_binary(uuid) <- Config.default_endpoint_uuid(),
-         %{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
-      Models.summary(endpoint)
-    else
-      _ -> nil
-    end
+  # The site default of each task, as a summary (none: `nil`).
+  defp defaults do
+    Map.new(@tasks, fn task ->
+      with uuid when is_binary(uuid) <- Config.default_endpoint_uuid(task),
+           %{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
+        {task, Models.summary(endpoint)}
+      else
+        _ -> {task, nil}
+      end
+    end)
+  end
+
+  # What is in effect for each task, from `UserConfig.effective/1`: where it
+  # comes from, and the endpoints it names, as summaries (a deleted one: `nil`).
+  defp in_effect(models) do
+    uuids =
+      models
+      |> Map.values()
+      |> Enum.flat_map(&[&1.uuid, &1.own_uuid, &1.default_uuid])
+      |> Enum.reject(&is_nil/1)
+
+    summaries = Models.summaries(uuids)
+
+    Map.new(models, fn {task, model} ->
+      {task,
+       %{
+         source: model.source,
+         outside_list?: model.outside_list?,
+         model: Map.get(summaries, model.uuid),
+         own: Map.get(summaries, model.own_uuid),
+         default: Map.get(summaries, model.default_uuid)
+       }}
+    end)
   end
 
   defp form_params(row) do
     %{
       "enabled" => if(row.enabled == false, do: "false", else: ""),
       "endpoint_uuid" => row.endpoint_uuid || "",
+      "vision_endpoint_uuid" => row.vision_endpoint_uuid || "",
+      "speech_endpoint_uuid" => row.speech_endpoint_uuid || "",
       "system_prompt" => row.system_prompt || "",
       "daily_cost_limit_usd" => usd_param(row.daily_cost_limit_micro_usd),
       "monthly_cost_limit_usd" => usd_param(row.monthly_cost_limit_micro_usd),
@@ -320,7 +387,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
   # What the form offers, as strings.
   defp text_params(params) do
-    keys = ["endpoint_uuid" | Map.keys(@plain_fields) ++ Map.keys(@money_fields)]
+    keys = Map.keys(@model_fields) ++ Map.keys(@plain_fields) ++ Map.keys(@money_fields)
     for key <- keys, is_binary(params[key]), into: %{}, do: {key, params[key]}
   end
 
@@ -357,9 +424,20 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   end
 
   defp update_user(socket, editing, submitted, attrs) do
-    case UserConfig.admin_update(Access.session_scope(socket), editing.user.uuid, attrs,
-           expected: editing.shown
-         ) do
+    result =
+      UserConfig.admin_update(Access.session_scope(socket), editing.user.uuid, attrs,
+        expected: editing.shown
+      )
+
+    after_update(result, socket, editing, submitted)
+  end
+
+  @doc false
+  # What the page does with the result of `UserConfig.admin_update/4`; a function
+  # of its own so that each result, also the ones that only a race brings, can be
+  # tested.
+  def after_update(result, socket, editing, submitted) do
+    case result do
       {:ok, _row, _fields} ->
         socket
         |> assign(editing: nil)
@@ -370,8 +448,8 @@ defmodule PhoenixKitAgent.Web.UsersLive do
         show_errors(socket, editing, submitted, changeset_errors(changeset))
 
       # The model stopped fitting between the form's check and the save.
-      {:error, {reason, _needs} = refusal} when reason in [:model_unfit, :model_unverified] ->
-        show_errors(socket, editing, submitted, %{endpoint_uuid: [unfit_text(refusal)]})
+      {:error, {reason, _needs, field}} when reason in [:model_unfit, :model_unverified] ->
+        show_errors(socket, editing, submitted, %{field => [unfit_text(field, reason)]})
 
       {:error, :forbidden} ->
         if Access.may_manage?(socket), do: owner_only(socket), else: denied(socket)
@@ -414,7 +492,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
       Enum.reduce(submitted, {%{}, %{}}, fn {key, value}, {attrs, errors} ->
         cond do
           Map.has_key?(@money_fields, key) -> money(key, value, attrs, errors)
-          key == "endpoint_uuid" -> endpoint(value, editing, attrs, errors)
+          Map.has_key?(@model_fields, key) -> model(key, value, editing, attrs, errors)
           key in @whole_fields -> whole(key, value, attrs, errors)
           true -> {Map.put(attrs, Map.fetch!(@plain_fields, key), blank_to_nil(value)), errors}
         end
@@ -463,47 +541,72 @@ defmodule PhoenixKitAgent.Web.UsersLive do
     end
   end
 
-  defp endpoint(value, editing, attrs, errors) do
+  # A blank model is the default; another must be one the form offered, and, when
+  # it is a new choice, one that fits the AI task of its field. The speech model
+  # is taken only where the AI module can write speech down.
+  defp model(key, value, editing, attrs, errors) do
+    field = Map.fetch!(@model_fields, key)
+
     case blank_to_nil(value) do
       nil ->
-        {Map.put(attrs, :endpoint_uuid, nil), errors}
+        {Map.put(attrs, field, nil), errors}
 
       uuid ->
-        case chosen_endpoint(uuid, editing) do
-          :ok -> {Map.put(attrs, :endpoint_uuid, uuid), errors}
-          {:error, message} -> {attrs, Map.put(errors, :endpoint_uuid, [message])}
+        case chosen_endpoint(field, uuid, editing) do
+          :ok -> {Map.put(attrs, field, uuid), errors}
+          {:error, message} -> {attrs, Map.put(errors, field, [message])}
         end
     end
   end
 
-  # One the form offered, and — when it is a new choice — one that fits the
-  # assistant's AI task.
-  defp chosen_endpoint(uuid, editing) do
+  defp chosen_endpoint(field, uuid, editing) do
     cond do
       not Enum.any?(editing.endpoints, &(&1.uuid == uuid)) ->
         {:error, gettext("is not available")}
 
-      uuid == editing.shown.endpoint_uuid ->
+      uuid == editing.shown[field] ->
         :ok
 
+      field == :speech_endpoint_uuid and not Config.transcribe?() ->
+        {:error, gettext("is not available")}
+
       true ->
-        case PhoenixKitAI.Tasks.check_selection("agent.chat", uuid) do
+        task = Models.task_of(Map.fetch!(@model_tasks, field))
+
+        case PhoenixKitAI.Tasks.check_selection(task, uuid) do
           :ok -> :ok
-          {:error, refusal} -> {:error, unfit_text(refusal)}
+          {:error, {reason, _needs}} -> {:error, unfit_text(field, reason)}
+          {:error, _gone} -> {:error, gettext("is not available")}
         end
     end
   end
 
-  defp unfit_text({:model_unfit, _missing}),
+  defp unfit_text(:endpoint_uuid, :model_unfit),
     do: gettext("cannot be used: its model does not take tools, which the assistant needs")
 
-  defp unfit_text({:model_unverified, _unclear}),
+  defp unfit_text(:endpoint_uuid, :model_unverified),
     do:
       gettext(
         "cannot be used yet: nobody knows whether its model takes tools. Mark what it can do on its AI endpoint first"
       )
 
-  defp unfit_text(_gone), do: gettext("is not available")
+  defp unfit_text(:vision_endpoint_uuid, :model_unfit),
+    do: gettext("cannot be used: its model does not take pictures")
+
+  defp unfit_text(:vision_endpoint_uuid, :model_unverified),
+    do:
+      gettext(
+        "cannot be used yet: nobody knows whether its model takes pictures. Mark what it can do on its AI endpoint first"
+      )
+
+  defp unfit_text(:speech_endpoint_uuid, :model_unfit),
+    do: gettext("cannot be used: its model does not take audio")
+
+  defp unfit_text(:speech_endpoint_uuid, :model_unverified),
+    do:
+      gettext(
+        "cannot be used yet: nobody knows whether its model takes audio. Mark what it can do on its AI endpoint first"
+      )
 
   defp blank_to_nil(value) do
     if String.trim(value) == "", do: nil, else: value
@@ -517,37 +620,146 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
   defp usd(micro), do: Spend.format_usd(micro)
 
-  # Whether money goes uncounted for the model chosen in the form (the
-  # module's when none is).
-  defp money_off?(editing) do
-    chosen =
-      case editing.params["endpoint_uuid"] do
-        uuid when uuid in [nil, ""] -> editing.default_endpoint
-        uuid -> Enum.find(editing.endpoints, &(&1.uuid == uuid))
-      end
+  # Whether money goes uncounted for the model chosen in the form for a task (the
+  # default's when none is): what `Models.reports_cost?/2` says for that kind of call.
+  defp money_off?(editing, task) do
+    field = editing.params[field_param(task)]
 
-    chosen != nil and not Models.reports_cost?(chosen)
+    chosen =
+      if field in [nil, ""],
+        do: Map.fetch!(editing.defaults, task),
+        else: Enum.find(editing.endpoints, &(&1.uuid == field))
+
+    chosen != nil and not Models.reports_cost?(chosen, task)
   end
 
-  defp endpoint_label(endpoint, editing) do
-    base = "#{endpoint.name} (#{endpoint.model})"
+  defp field_param(:chat), do: "endpoint_uuid"
+  defp field_param(:vision), do: "vision_endpoint_uuid"
+  defp field_param(:speech), do: "speech_endpoint_uuid"
 
-    case Map.get(editing.tools, endpoint.uuid) do
-      :unsupported -> base <> " — " <> gettext("no tools")
-      :unknown -> base <> " — " <> gettext("tools unknown")
+  defp model_label(endpoint, support, unsupported, unknown) do
+    base = endpoint_name(endpoint)
+
+    case Map.get(support, endpoint.uuid) do
+      :unsupported -> base <> " — " <> unsupported
+      :unknown -> base <> " — " <> unknown
       _supported_or_not_yet_known -> base
     end
   end
 
-  defp endpoint_options(editing) do
+  # "Default: <name>", and every endpoint that chats, the ones known not to
+  # fit the task marked.
+  defp model_options(editing, task) do
     default =
-      case editing.default_endpoint do
-        %{name: name} -> gettext("Module default (%{name})", name: name)
-        nil -> gettext("Module default (none set)")
+      case Map.fetch!(editing.defaults, task) do
+        %{} = default -> gettext("Default: %{name}", name: endpoint_name(default))
+        nil -> gettext("Default: none set")
       end
 
-    [{default, ""} | Enum.map(editing.endpoints, &{endpoint_label(&1, editing), &1.uuid})]
+    support = Map.fetch!(editing.support, task)
+    [{default, ""} | Enum.map(editing.endpoints, &{endpoint_label(&1, support, task), &1.uuid})]
   end
+
+  defp endpoint_label(endpoint, support, :chat),
+    do: model_label(endpoint, support, gettext("no tools"), gettext("tools unknown"))
+
+  defp endpoint_label(endpoint, support, :vision),
+    do:
+      model_label(
+        endpoint,
+        support,
+        gettext("does not take pictures"),
+        gettext("pictures unknown")
+      )
+
+  defp endpoint_label(endpoint, support, :speech),
+    do: model_label(endpoint, support, gettext("does not take audio"), gettext("audio unknown"))
+
+  # One way to write an endpoint: its name, then its model.
+  defp endpoint_name(%{name: name, model: model}), do: "#{name} (#{model})"
+
+  defp summary_name(nil), do: gettext("none set")
+  defp summary_name(endpoint), do: endpoint_name(endpoint)
+
+  # What is in effect for the user for a task, in words.
+  defp in_effect_text(%{source: :own} = info),
+    do: gettext("In effect: own model — %{name}", name: summary_name(info.model))
+
+  defp in_effect_text(%{source: :default} = info),
+    do: gettext("In effect: default — %{name}", name: summary_name(info.model))
+
+  defp in_effect_text(%{source: :fallback, model: nil}),
+    do:
+      gettext(
+        "The own model cannot be used (switched off, without credentials or no longer a chat model) and no default is set."
+      )
+
+  defp in_effect_text(%{source: :fallback} = info),
+    do:
+      gettext(
+        "The own model cannot be used (switched off, without credentials or no longer a chat model), so the default is in effect — %{name}",
+        name: endpoint_name(info.model)
+      )
+
+  attr(:editing, :map, required: true)
+  attr(:task, :atom, required: true)
+  attr(:field, :atom, required: true)
+  attr(:dom, :string, required: true)
+  attr(:label, :string, required: true)
+
+  defp model_field(assigns) do
+    assigns =
+      assign(assigns,
+        name: Atom.to_string(assigns.field),
+        info: Map.fetch!(assigns.editing.in_effect, assigns.task),
+        money_off?: money_off?(assigns.editing, assigns.task),
+        money_id:
+          if(assigns.task == :chat, do: "agent-user-money-off", else: assigns.dom <> "-money-off")
+      )
+
+    ~H"""
+    <div id={@dom <> "-field"} class="min-w-0">
+      <.select
+        id={@dom}
+        aria-describedby={@dom <> "-effective"}
+        name={"user_settings[#{@name}]"}
+        label={@label}
+        value={@editing.params[@name]}
+        options={model_options(@editing, @task)}
+        errors={errors(@editing, @field)}
+      />
+      <p
+        id={@dom <> "-effective"}
+        data-source={@info.source}
+        class={[
+          "mt-1 text-xs break-words",
+          if(@info.source == :fallback, do: "text-warning", else: "text-base-content/60")
+        ]}
+      >
+        {in_effect_text(@info)}
+      </p>
+      <p
+        :if={@info.source == :own and @info.outside_list?}
+        id={@dom <> "-outside-list"}
+        class="mt-1 text-xs text-base-content/60 break-words"
+      >
+        {gettext("This model is outside the list of models users may choose.")}
+      </p>
+      <p :if={@money_off?} id={@money_id} class="mt-1 text-xs text-warning break-words">
+        {money_off_text(@task)}
+      </p>
+    </div>
+    """
+  end
+
+  defp money_off_text(:chat),
+    do:
+      gettext(
+        "This model does not report what a call costs: money is not counted, only the turn limit applies."
+      )
+
+  defp money_off_text(_pictures_or_speech),
+    do: gettext("This model does not report what a call costs: money is not counted for it.")
 
   defp errors(editing, field), do: Map.get(editing.errors, field, [])
 
@@ -577,20 +789,32 @@ defmodule PhoenixKitAgent.Web.UsersLive do
                 options={[{gettext("Allowed"), ""}, {gettext("Switched off"), "false"}]}
                 errors={errors(@editing, :enabled)}
               />
-              <div>
-                <.select
-                  id="agent-user-endpoint"
-                  name="user_settings[endpoint_uuid]"
-                  label={gettext("Model")}
-                  value={@editing.params["endpoint_uuid"]}
-                  options={endpoint_options(@editing)}
-                  errors={errors(@editing, :endpoint_uuid)}
-                />
-                <p :if={@editing.tools_loading?} class="mt-1 text-xs text-base-content/60">
-                  {gettext("Checking which models take tools…")}
-                </p>
-              </div>
+              <.model_field
+                editing={@editing}
+                task={:chat}
+                field={:endpoint_uuid}
+                dom="agent-user-endpoint"
+                label={gettext("Model")}
+              />
+              <.model_field
+                editing={@editing}
+                task={:vision}
+                field={:vision_endpoint_uuid}
+                dom="agent-user-vision-endpoint"
+                label={gettext("Vision model")}
+              />
+              <.model_field
+                :if={@editing.transcribe?}
+                editing={@editing}
+                task={:speech}
+                field={:speech_endpoint_uuid}
+                dom="agent-user-speech-endpoint"
+                label={gettext("Speech recognition model")}
+              />
             </div>
+            <p :if={@editing.tools_loading?} class="text-xs text-base-content/60">
+              {gettext("Checking what the models take…")}
+            </p>
 
             <.textarea
               id="agent-user-system-prompt"
@@ -600,12 +824,6 @@ defmodule PhoenixKitAgent.Web.UsersLive do
               errors={errors(@editing, :system_prompt)}
               rows="4"
             />
-
-            <p :if={money_off?(@editing)} id="agent-user-money-off" class="text-sm text-warning">
-              {gettext(
-                "This model does not report what a call costs: money is not counted, only the turn limit applies."
-              )}
-            </p>
 
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <.decimal_input
@@ -723,7 +941,14 @@ defmodule PhoenixKitAgent.Web.UsersLive do
                     <div>{row.endpoint.name}</div>
                     <div class="text-xs text-base-content/60">
                       {row.endpoint.model}
-                      <span :if={!row.own_endpoint?}>· {gettext("module default")}</span>
+                      <span :if={row.chat_source != :own}>· {gettext("module default")}</span>
+                    </div>
+                    <div
+                      :if={row.chat_source == :fallback}
+                      id={"agent-user-#{row.user.uuid}-model-fallback"}
+                      class="text-xs text-warning"
+                    >
+                      {gettext("the own model cannot be used")}
                     </div>
                   <% else %>
                     <span class="text-base-content/60">{gettext("not set")}</span>

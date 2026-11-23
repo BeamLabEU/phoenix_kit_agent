@@ -120,7 +120,8 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   ## Speaking instead of typing
 
-  Where voice input is on (`PhoenixKitAgent.Config.speech?/0`) and the core has
+  Where voice input is on for the user (`PhoenixKitAgent.UserConfig.speech?/1`: his own
+  speech model, else the default) and the core has
   the recorder (`PhoenixKitWeb.Components.Core.AudioRecorder`), the composer has
   a microphone. A clip it delivers (`{:audio_recorded, "pk-agent-mic", clip}`)
   is written down (`PhoenixKitAgent.Speech.transcribe/4`, with the panel's
@@ -194,7 +195,7 @@ defmodule PhoenixKitAgent.Web.Dock do
   alias PhoenixKitAgent.Attachments.{Detect, Work}
   alias PhoenixKitAgent.Schemas.{Message, UserSettings}
   alias PhoenixKitAgent.Turns.Monitor
-  alias PhoenixKitAgent.Web.Dock.{Panel, Texts}
+  alias PhoenixKitAgent.Web.Dock.{MyAssistant, Panel, Texts}
   alias PhoenixKitWeb.Components.Core.UploadManager
   alias PhoenixKitWeb.ResumableUpload
   alias PhoenixKitWeb.Users.MultiSession
@@ -277,6 +278,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         error: nil,
         renaming: nil,
         instructions_form: nil,
+        my_assistant: nil,
         fresh_uuid: nil,
         turn_check: nil,
         cards: %{},
@@ -286,7 +288,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         restored: 0,
         entry_chats: %{},
         upload_errors_seen: MapSet.new(),
-        speech?: speech?(),
+        speech?: speech?(user_uuid),
         transcribing?: false,
         speech_ref: nil,
         speech_timer: nil,
@@ -317,7 +319,7 @@ defmodule PhoenixKitAgent.Web.Dock do
       else: Enum.flat_map(types, &Map.fetch!(@accept_of, &1))
   end
 
-  defp speech?, do: Config.speech?() and Code.ensure_loaded?(recorder())
+  defp speech?(user_uuid), do: UserConfig.speech?(user_uuid) and Code.ensure_loaded?(recorder())
 
   defp recorder, do: Application.get_env(:phoenix_kit_agent, :audio_recorder, @recorder)
 
@@ -541,13 +543,44 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   defp event("toggle_instructions", _params, socket) do
     if socket.assigns.instructions_form do
-      {:noreply, assign(socket, instructions_form: nil)}
+      {:noreply, assign(socket, instructions_form: nil, my_assistant: nil)}
     else
       case UserConfig.get_personal_instructions(socket.assigns.ref, me(socket)) do
-        {:ok, text} -> {:noreply, assign(socket, instructions_form: instructions_form(text))}
-        {:error, reason} -> {:noreply, refused(socket, reason)}
+        {:ok, text} ->
+          {:noreply,
+           assign(socket,
+             instructions_form: instructions_form(text),
+             my_assistant: MyAssistant.load(socket.assigns.user_uuid)
+           )}
+
+        {:error, reason} ->
+          {:noreply, refused(socket, reason)}
       end
     end
+  end
+
+  # The three models of the session's own user. Only the three fields of the
+  # form are taken, and only as text; the row, the allowed list and whether
+  # each model fits are `UserConfig.put_personal_models/3`'s.
+  defp event("save_models", %{"models" => params}, socket) when is_map(params) do
+    attrs =
+      for key <- MyAssistant.submit_keys(),
+          is_binary(params[key]),
+          into: %{},
+          do: {key, params[key]}
+
+    # Only while the settings region is open (it is where the form is).
+    if socket.assigns.my_assistant,
+      do: {:noreply, save_models(socket, attrs)},
+      else: {:noreply, socket}
+  end
+
+  # Back to the default for one field, whatever the list holds: a blank value is
+  # all this writes.
+  defp event("use_default", %{"field" => field}, socket) when is_binary(field) do
+    if socket.assigns.my_assistant && field in MyAssistant.submit_keys(),
+      do: {:noreply, save_models(socket, %{field => ""})},
+      else: {:noreply, socket}
   end
 
   # Only text: anything else (a forged map or list) would come back into the
@@ -1597,6 +1630,37 @@ defmodule PhoenixKitAgent.Web.Dock do
   defp turn_check_ms,
     do: Application.get_env(:phoenix_kit_agent, :turn_check_ms, @turn_check_ms)
 
+  defp save_models(socket, attrs) do
+    case UserConfig.put_personal_models(socket.assigns.ref, attrs, me(socket)) do
+      {:ok, _changed} ->
+        # The microphone follows the speech model now in effect.
+        assign(socket,
+          my_assistant: %{MyAssistant.load(socket.assigns.user_uuid) | saved?: true},
+          speech?: speech?(socket.assigns.user_uuid),
+          error: nil
+        )
+
+      {:error, {field, reason}} when is_atom(field) ->
+        shown_refused(socket, attrs, {field, reason})
+
+      {:error, %Ecto.Changeset{}} ->
+        shown_refused(socket, attrs, {:form, :not_allowed})
+
+      {:error, reason} ->
+        refused(socket, reason)
+    end
+  end
+
+  # What the user chose stays in the selects, every field that cannot be saved
+  # is marked.
+  defp shown_refused(socket, attrs, refusal) do
+    assign(socket,
+      my_assistant:
+        socket.assigns.user_uuid |> MyAssistant.load() |> MyAssistant.refused(attrs, refusal),
+      error: nil
+    )
+  end
+
   defp instructions_form(text) do
     %UserSettings{}
     |> UserSettings.personal_changeset(%{personal_instructions: text})
@@ -1629,6 +1693,7 @@ defmodule PhoenixKitAgent.Web.Dock do
       restored={@restored}
       error={@error}
       instructions_form={@instructions_form}
+      my_assistant={@my_assistant}
       unsent={@unsent}
       upload={@uploads.files}
       speech?={@speech?}

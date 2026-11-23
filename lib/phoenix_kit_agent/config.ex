@@ -10,6 +10,7 @@ defmodule PhoenixKitAgent.Config do
   | `agent_default_endpoint_uuid` | none — the AI endpoint the assistant uses |
   | `agent_vision_endpoint_uuid` | none — describes images for a model without image input |
   | `agent_speech_endpoint_uuid` | none — writes down voice messages and the panel's microphone; none = voice off |
+  | `agent_selectable_endpoint_uuids` | none — JSON `{"uuids": […]}` of the AI endpoints a user may choose for himself (his own chat, picture and speech model); none = nobody chooses |
   | `agent_system_prompt` | none — the module's system prompt (JSON `{"text": …}`) |
   | `agent_daily_cost_limit_micro_usd` | `1_000_000` ($1) |
   | `agent_monthly_cost_limit_micro_usd` | `10_000_000` ($10) |
@@ -39,7 +40,11 @@ defmodule PhoenixKitAgent.Config do
   The three models are written by `put_default_endpoint/2`,
   `put_vision_endpoint/2` and `put_speech_endpoint/2`, which take only an AI
   endpoint that chats and fits its AI task (`agent.chat`, `agent.attachment`,
-  `agent.speech`).
+  `agent.speech`). They are the defaults: a user's own model of the same task
+  (`PhoenixKitAgent.Schemas.UserSettings`) replaces one for him, and
+  `selectable_endpoint_uuids/0` (written by `put_selectable_endpoints/2`) is
+  the list of the endpoints a user may pick for himself, which is empty until
+  an administrator fills it — so no user picks a model by default.
 
   Every writer records the change with who made it (`actor_uuid:` in `opts`)
   in the core Activity log: through the settings history (`setting.changed`,
@@ -102,6 +107,7 @@ defmodule PhoenixKitAgent.Config do
   }
 
   @watchers_key "agent_limit_watchers"
+  @selectable_key "agent_selectable_endpoint_uuids"
   @prompt_key "agent_system_prompt"
 
   # The longest module prompt, in characters.
@@ -115,7 +121,7 @@ defmodule PhoenixKitAgent.Config do
 
   @typedoc "Why `put_default_endpoint/2`, `put_vision_endpoint/2` or `put_speech_endpoint/2` wrote nothing."
   @type endpoint_refusal ::
-          :invalid_endpoint | {:model_unfit | :model_unverified, [atom()]}
+          :invalid_endpoint | :switched_off | {:model_unfit | :model_unverified, [atom()]}
 
   # ── Readers ───────────────────────────────────────────────────────────
 
@@ -142,6 +148,23 @@ defmodule PhoenixKitAgent.Config do
   @doc "The AI endpoint the assistant uses by default, or `nil`."
   @spec default_endpoint_uuid() :: String.t() | nil
   def default_endpoint_uuid, do: uuid_setting("agent_default_endpoint_uuid")
+
+  @doc """
+  The default endpoint of a task: `:chat` (`default_endpoint_uuid/0`), `:vision`
+  (`vision_endpoint_uuid/0`) or `:speech` (`speech_endpoint_uuid/0`).
+  """
+  @spec default_endpoint_uuid(:chat | :vision | :speech) :: String.t() | nil
+  def default_endpoint_uuid(:chat), do: default_endpoint_uuid()
+  def default_endpoint_uuid(:vision), do: vision_endpoint_uuid()
+  def default_endpoint_uuid(:speech), do: speech_endpoint_uuid()
+
+  @doc """
+  The AI endpoints a user may choose for himself (`agent_selectable_endpoint_uuids`):
+  empty until an administrator names some. Whether one of them is offered for a
+  task is `PhoenixKitAgent.Models.selectable/1`'s to say.
+  """
+  @spec selectable_endpoint_uuids() :: [String.t()]
+  def selectable_endpoint_uuids, do: @selectable_key |> json_setting() |> endpoint_uuid_list()
 
   @doc "The AI endpoint that describes images for a model without image input, or `nil`."
   @spec vision_endpoint_uuid() :: String.t() | nil
@@ -436,7 +459,8 @@ defmodule PhoenixKitAgent.Config do
   task (`PhoenixKitAI.Tasks.check_selection/2`): one whose model is known not
   to take tools is `{:error, {:model_unfit, missing}}`, one nobody knows
   takes them `{:error, {:model_unverified, unclear}}`, and nothing is
-  written; the endpoint already set is not checked again. `opts` go to
+  written; an endpoint that is switched off is `{:error, :switched_off}` unless
+  it is the one already set; the endpoint already set is not checked again. `opts` go to
   `PhoenixKit.Settings` (`actor_uuid:`, `source:`). The caller checks
   `agent.manage`.
   """
@@ -466,6 +490,41 @@ defmodule PhoenixKitAgent.Config do
   def put_speech_endpoint(uuid, opts),
     do: put_endpoint("agent_speech_endpoint_uuid", "agent.speech", uuid, opts)
 
+  @doc """
+  Sets the AI endpoints a user may choose for himself
+  (`agent_selectable_endpoint_uuids`): uuids of existing endpoints that chat,
+  repeats dropped; an empty list means nobody chooses. Anything else is
+  `{:error, :invalid_endpoint}` and nothing is written. An endpoint is checked
+  against a task when a user picks it, not here. `opts` go to `PhoenixKit.Settings`
+  (`actor_uuid:`, `source:`). The caller checks `agent.manage`.
+  """
+  @spec put_selectable_endpoints([String.t()], keyword()) ::
+          {:ok, term()} | {:error, :invalid_endpoint | Ecto.Changeset.t()}
+  def put_selectable_endpoints(uuids, opts) when is_list(uuids) do
+    chosen = Enum.map(uuids, &chat_endpoint/1)
+
+    if Enum.all?(chosen, &match?({:ok, _}, &1)) do
+      list = chosen |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+      Settings.update_json_setting_with_module(@selectable_key, %{"uuids" => list}, @module, opts)
+    else
+      {:error, :invalid_endpoint}
+    end
+  end
+
+  def put_selectable_endpoints(_uuids, _opts), do: {:error, :invalid_endpoint}
+
+  defp chat_endpoint(uuid) when is_binary(uuid) do
+    with {:ok, uuid} <- canonical_uuid(uuid),
+         %Endpoint{} = endpoint <- PhoenixKitAI.get_endpoint(uuid),
+         :chat <- Endpoint.kind(endpoint) do
+      {:ok, uuid}
+    else
+      _not_a_chat_endpoint -> :error
+    end
+  end
+
+  defp chat_endpoint(_other), do: :error
+
   defp put_endpoint(key, _task, nil, opts),
     do: Settings.update_setting_with_module(key, "", @module, opts)
 
@@ -473,10 +532,14 @@ defmodule PhoenixKitAgent.Config do
     with {:ok, uuid} <- Ecto.UUID.cast(uuid),
          %Endpoint{} = endpoint <- PhoenixKitAI.get_endpoint(uuid),
          :chat <- Endpoint.kind(endpoint),
+         :ok <- switched_on(key, endpoint),
          :ok <- fits(key, task, endpoint) do
       Settings.update_setting_with_module(key, uuid, @module, opts)
     else
       {:error, {reason, _needs}} = refusal when reason in [:model_unfit, :model_unverified] ->
+        refusal
+
+      {:error, :switched_off} = refusal ->
         refusal
 
       _not_a_chat_endpoint ->
@@ -485,6 +548,14 @@ defmodule PhoenixKitAgent.Config do
   end
 
   defp put_endpoint(_key, _task, _other, _opts), do: {:error, :invalid_endpoint}
+
+  # A new choice must be on: one that was switched off after it was chosen
+  # stays as it is until someone changes it.
+  defp switched_on(key, endpoint) do
+    if endpoint.enabled == false and uuid_setting(key) != endpoint.uuid,
+      do: {:error, :switched_off},
+      else: :ok
+  end
 
   # The endpoint already set is not checked again.
   defp fits(key, task, endpoint) do
@@ -807,6 +878,28 @@ defmodule PhoenixKitAgent.Config do
   end
 
   defp watcher_uuids(_none), do: []
+
+  # The list of the endpoints users may choose: what a damaged value holds that
+  # is not a uuid is dropped, one written in capitals is the same uuid.
+  defp endpoint_uuid_list(%{"uuids" => uuids}) when is_list(uuids) do
+    uuids
+    |> Enum.flat_map(fn uuid ->
+      case canonical_uuid(uuid) do
+        {:ok, uuid} -> [uuid]
+        :error -> []
+      end
+    end)
+    |> Enum.uniq()
+  end
+
+  defp endpoint_uuid_list(_none), do: []
+
+  # A uuid as it is written, 36 characters: `Ecto.UUID.cast/1` also takes any
+  # 16 bytes as a raw uuid, which no list of endpoints holds.
+  defp canonical_uuid(uuid) when is_binary(uuid) and byte_size(uuid) == 36,
+    do: Ecto.UUID.cast(uuid)
+
+  defp canonical_uuid(_other), do: :error
 
   defp uuid_setting(key) do
     with value when is_binary(value) <- string_setting(key),

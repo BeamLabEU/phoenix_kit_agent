@@ -6,6 +6,15 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   the limits of one turn, the module's system prompt and who is told when
   someone reaches a limit.
 
+  The three models are the defaults for everyone: a user's own choice of a
+  model for a task replaces it (an administrator sets it in Users, or the user
+  does, among the models allowed below). The same card holds the list of the
+  models users may choose themselves (`agent_selectable_endpoint_uuids`,
+  `PhoenixKitAgent.Config.put_selectable_endpoints/2`; empty by default: nobody
+  chooses): its own form, saved on its own, every save checking `agent.manage`
+  again, and only endpoints the page offered are taken. Taking a model off the
+  list changes nothing for a user who already uses it.
+
   The models are chosen among the AI endpoints that chat
   (`PhoenixKitAgent.Models.list_endpoints/1`); the default model's list marks
   the ones known not to take tools, the vision model's the ones known not to
@@ -112,6 +121,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
        )
        |> assign(
          money_off?: money_off?(),
+         vision_money_off?: vision_money_off?(),
          speech_money_off?: speech_money_off?(),
          transcribe?: Config.transcribe?()
        )
@@ -119,6 +129,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
        |> assign_telegram()
        |> assign_form(Config.defaults_changeset(%{}) |> Map.put(:action, nil))
        |> assign_models()
+       |> assign_selectable()
        |> assign_prompt(Config.system_prompt() || "", [])
        |> assign_watchers()
        |> assign_retention(nil, [])
@@ -163,6 +174,13 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
   def handle_event("save_models", %{"models" => params}, socket) when is_map(params) do
     if Access.may_manage?(socket),
       do: {:noreply, save_models(socket, params)},
+      else: {:noreply, denied(socket)}
+  end
+
+  def handle_event("save_selectable", %{"selectable" => %{"uuids" => uuids}}, socket)
+      when is_list(uuids) do
+    if Access.may_manage?(socket),
+      do: {:noreply, save_selectable(socket, uuids)},
       else: {:noreply, denied(socket)}
   end
 
@@ -221,6 +239,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
              "save_capture",
              "save_telegram",
              "save_models",
+             "save_selectable",
              "save_prompt",
              "save_watchers",
              "save_retention",
@@ -266,6 +285,13 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       |> Models.list_endpoints()
       |> Enum.map(&Models.summary/1)
 
+    # The checkboxes also hold what is on the list already, switched off or not;
+    # the three selects above do not offer those.
+    listable =
+      [include: Map.values(current) ++ Config.selectable_endpoint_uuids()]
+      |> Models.list_endpoints()
+      |> Enum.map(&Models.summary/1)
+
     uuids = Enum.map(endpoints, & &1.uuid)
 
     shown = Map.new(current, fn {field, uuid} -> {field, uuid || ""} end)
@@ -274,6 +300,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       assign(socket,
         models: %{
           endpoints: endpoints,
+          listable: listable,
           params: shown,
           # What the form opened with: a save writes only what the person
           # changed from it, and is refused when that changed meanwhile.
@@ -293,6 +320,36 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
            Models.audio_input_support_of(uuids)}
         end),
       else: socket
+  end
+
+  defp assign_selectable(socket),
+    do: assign(socket, selectable: Config.selectable_endpoint_uuids())
+
+  # Only endpoints the page offered; a blank value is the form's empty choice.
+  defp save_selectable(socket, uuids) do
+    offered = MapSet.new(socket.assigns.models.listable, & &1.uuid)
+    chosen = Enum.reject(uuids, &(&1 == ""))
+
+    if Enum.all?(chosen, &(is_binary(&1) and MapSet.member?(offered, &1))) do
+      case Config.put_selectable_endpoints(chosen,
+             actor_uuid: Access.user_uuid(socket),
+             source: "settings"
+           ) do
+        {:ok, _setting} ->
+          socket
+          |> assign_selectable()
+          |> put_flash(:info, gettext("The models users may choose are saved."))
+
+        {:error, _reason} ->
+          socket
+          |> assign_selectable()
+          |> put_flash(:error, gettext("Nothing was saved: a model chosen is not available."))
+      end
+    else
+      socket
+      |> assign_selectable()
+      |> put_flash(:error, gettext("Nothing was saved: a model chosen is not available."))
+    end
   end
 
   defp current_models do
@@ -361,11 +418,27 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
   # The model kept as it is is not checked again: the form saves both fields.
   defp offered_model(field, uuid, offered, chosen, errors) do
-    with true <- MapSet.member?(offered, uuid),
+    with :ok <- offered?(uuid, offered),
          :ok <- fits(field, uuid) do
       {Map.put(chosen, field, uuid), errors}
     else
       refusal -> {chosen, Map.put(errors, field, [unfit_text(field, refusal)])}
+    end
+  end
+
+  # Offered: on the page's selects. One that is not, and is switched off, says so.
+  defp offered?(uuid, offered) do
+    cond do
+      MapSet.member?(offered, uuid) -> :ok
+      switched_off?(uuid) -> {:error, :switched_off}
+      true -> {:error, :not_offered}
+    end
+  end
+
+  defp switched_off?(uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, uuid} -> match?(%{enabled?: false}, Models.summaries([uuid])[uuid])
+      :error -> false
     end
   end
 
@@ -406,6 +479,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
         "cannot be used yet: nobody knows whether its model takes audio. Mark what it can do on its AI endpoint first"
       )
 
+  defp unfit_text(_field, {:error, :switched_off}), do: gettext("is switched off")
   defp unfit_text(_field, _not_offered), do: gettext("is not available")
 
   defp text_or_blank(value) when is_binary(value), do: value
@@ -423,6 +497,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       socket
       |> assign(
         money_off?: money_off?(),
+        vision_money_off?: vision_money_off?(),
         speech_money_off?: speech_money_off?(),
         transcribe?: Config.transcribe?()
       )
@@ -762,6 +837,16 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     end
   end
 
+  # Whether the picture model leaves money uncounted (none chosen: nothing to say).
+  defp vision_money_off? do
+    with uuid when is_binary(uuid) <- Config.vision_endpoint_uuid(),
+         %{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
+      not Models.reports_cost?(endpoint, :vision)
+    else
+      _none -> false
+    end
+  end
+
   # Whether the speech model leaves money uncounted (none chosen: nothing to say).
   defp speech_money_off? do
     with uuid when is_binary(uuid) <- Config.speech_endpoint_uuid(),
@@ -782,38 +867,61 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       <section id="agent-models" class="card bg-base-100 shadow-sm">
         <.form for={%{}} as={:models} id="agent-models-form" phx-submit="save_models">
           <div class="card-body gap-4">
-            <h2 class="card-title text-base">{gettext("Models")}</h2>
-            <p class="text-sm text-base-content/70">
+            <h2 class="card-title text-base">{gettext("Default models for everyone")}</h2>
+            <p id="agent-models-description" class="text-sm text-base-content/70">
               {gettext(
-                "The AI endpoints of the AI module. A user without a model of their own uses the default one; without it the assistant does not answer. The vision model describes pictures for a model that does not take them."
+                "The AI endpoints of the AI module. These are the defaults: they serve everyone who has not chosen a model of their own, and a user's own choice replaces them. Without a default model and without an own one the assistant does not answer."
               )}
             </p>
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <.select
-                id="agent-default-endpoint"
-                name="models[default_endpoint_uuid]"
-                label={gettext("Default model")}
-                value={@models.params["default_endpoint_uuid"]}
-                options={default_options(@models)}
-                errors={Map.get(@models.errors, "default_endpoint_uuid", [])}
-              />
-              <.select
-                id="agent-vision-endpoint"
-                name="models[vision_endpoint_uuid]"
-                label={gettext("Vision model")}
-                value={@models.params["vision_endpoint_uuid"]}
-                options={vision_options(@models)}
-                errors={Map.get(@models.errors, "vision_endpoint_uuid", [])}
-              />
-              <.select
-                :if={@transcribe?}
-                id="agent-speech-endpoint"
-                name="models[speech_endpoint_uuid]"
-                label={gettext("Speech recognition model")}
-                value={@models.params["speech_endpoint_uuid"]}
-                options={speech_options(@models)}
-                errors={Map.get(@models.errors, "speech_endpoint_uuid", [])}
-              />
+              <div class="min-w-0">
+                <.select
+                  id="agent-default-endpoint"
+                  aria-describedby="agent-default-endpoint-note"
+                  name="models[default_endpoint_uuid]"
+                  label={gettext("Default model")}
+                  value={@models.params["default_endpoint_uuid"]}
+                  options={default_options(@models)}
+                  errors={Map.get(@models.errors, "default_endpoint_uuid", [])}
+                />
+                <p id="agent-default-endpoint-note" class="mt-1 text-xs text-base-content/60">
+                  {gettext(
+                    "Answers everyone who has no chat model of their own. A user's own choice replaces it."
+                  )}
+                </p>
+              </div>
+              <div class="min-w-0">
+                <.select
+                  id="agent-vision-endpoint"
+                  aria-describedby="agent-vision-endpoint-note"
+                  name="models[vision_endpoint_uuid]"
+                  label={gettext("Vision model")}
+                  value={@models.params["vision_endpoint_uuid"]}
+                  options={vision_options(@models)}
+                  errors={Map.get(@models.errors, "vision_endpoint_uuid", [])}
+                />
+                <p id="agent-vision-endpoint-note" class="mt-1 text-xs text-base-content/60">
+                  {gettext(
+                    "Describes pictures for a model that does not take them, for everyone who has no picture model of their own. A user's own choice replaces it."
+                  )}
+                </p>
+              </div>
+              <div :if={@transcribe?} class="min-w-0">
+                <.select
+                  id="agent-speech-endpoint"
+                  aria-describedby="agent-speech-endpoint-note"
+                  name="models[speech_endpoint_uuid]"
+                  label={gettext("Speech recognition model")}
+                  value={@models.params["speech_endpoint_uuid"]}
+                  options={speech_options(@models)}
+                  errors={Map.get(@models.errors, "speech_endpoint_uuid", [])}
+                />
+                <p id="agent-speech-endpoint-note" class="mt-1 text-xs text-base-content/60">
+                  {gettext(
+                    "Writes voice down for everyone who has no speech model of their own. A user's own choice replaces it."
+                  )}
+                </p>
+              </div>
             </div>
             <p :if={not @transcribe?} id="agent-speech-unavailable" class="text-xs text-warning">
               {gettext(
@@ -823,6 +931,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
             <p :if={@transcribe?} id="agent-speech-hint" class="text-xs text-base-content/60">
               {gettext(
                 "The speech recognition model writes down the voice messages of the Telegram bot and the recordings of the chat panel's microphone. Choose a model that takes audio, for example Gemini Flash. Without it, voice input is off."
+              )}
+            </p>
+            <p :if={@vision_money_off?} id="agent-vision-money-off" class="text-xs text-warning">
+              {gettext(
+                "The picture model does not report what a call costs: what it spends is not counted, and nothing limits pictures by money."
               )}
             </p>
             <p :if={@transcribe? and @speech_money_off?} id="agent-speech-money-off" class="text-xs text-warning">
@@ -835,6 +948,64 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
             </p>
             <div class="flex justify-end">
               <.button type="submit" variant="primary" id="agent-models-save">
+                {gettext("Save")}
+              </.button>
+            </div>
+          </div>
+        </.form>
+
+        <.form
+          for={%{}}
+          as={:selectable}
+          id="agent-selectable-form"
+          phx-submit="save_selectable"
+        >
+          <div class="card-body gap-4 border-t border-base-200">
+            <fieldset id="agent-selectable" class="min-w-0 space-y-2" aria-describedby="agent-selectable-note">
+              <legend class="font-medium">{gettext("Models users may choose themselves")}</legend>
+              <p id="agent-selectable-note" class="text-sm text-base-content/70">
+                {gettext(
+                  "A user can choose, for the chat, for pictures and for speech, among these models only, and only one that fits the task. Nothing ticked: nobody chooses, and only an administrator sets a model for a user. Taking a model off the list changes nothing for a user who already uses it."
+                )}
+              </p>
+              <input type="hidden" name="selectable[uuids][]" value="" />
+              <ul class="flex flex-col gap-2">
+                <li :for={endpoint <- @models.listable}>
+                  <label class="flex items-start gap-3 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      id={"agent-selectable-#{endpoint.uuid}"}
+                      name="selectable[uuids][]"
+                      value={endpoint.uuid}
+                      checked={endpoint.uuid in @selectable}
+                      class="checkbox checkbox-sm mt-0.5"
+                    />
+                    <span class="min-w-0 break-words">
+                      {endpoint.name} ({endpoint.model})
+                      <span
+                        :if={!endpoint.enabled?}
+                        id={"agent-selectable-#{endpoint.uuid}-off"}
+                        class="badge badge-sm badge-ghost ml-1"
+                      >
+                        {gettext("switched off")}
+                      </span>
+                      <span
+                        :if={!Enum.all?(Map.values(endpoint.costs))}
+                        id={"agent-selectable-#{endpoint.uuid}-money-off"}
+                        class="badge badge-sm badge-warning badge-soft ml-1"
+                      >
+                        {gettext("money is not counted")}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              </ul>
+            </fieldset>
+            <p :if={@models.listable == []} id="agent-selectable-none" class="text-sm">
+              {gettext("There are no AI endpoints that chat.")}
+            </p>
+            <div class="flex justify-end">
+              <.button type="submit" variant="primary" id="agent-selectable-save">
                 {gettext("Save")}
               </.button>
             </div>

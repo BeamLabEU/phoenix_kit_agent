@@ -327,6 +327,31 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       refute has_element?(view, "#agent-speech-money-off")
     end
 
+    test "a picture model that reports no cost is warned about", ctx do
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", ctx.direct.uuid)
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-vision-money-off")
+
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", "")
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      refute has_element?(view, "#agent-vision-money-off")
+    end
+
+    test "a switched-off model is refused as switched off, not as unavailable", ctx do
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^ctx.hears.uuid),
+        set: [enabled: false]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      render_hook(view, "save_models", %{"models" => %{"default_endpoint_uuid" => ctx.hears.uuid}})
+
+      assert has_element?(view, "#agent-models-form p.text-error", "switched off")
+      assert Config.default_endpoint_uuid() == nil
+    end
+
     test "a model the page did not offer is refused", ctx do
       embedder = endpoint_fixture(%{name: "Embed", model: "openai/text-embedding-3-small"})
       {:ok, view, _html} = live(ctx.conn, @path)
@@ -1190,6 +1215,251 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert has_element?(view, "#flash-error")
       refute Config.telegram_enabled?()
     end
+  end
+
+  describe "the models card: defaults for everyone, and who may choose" do
+    setup %{conn: conn} do
+      manager = user_with(["agent", "agent.manage"], "manager")
+      first = declared(%{name: "First", model: "a/first"}, %{"tools" => "yes"})
+      second = declared(%{name: "Second", model: "a/second"}, %{"tools" => "yes"})
+      %{conn: log_in(conn, manager), manager: manager, first: first, second: second}
+    end
+
+    test "says the three models are defaults, each with the note that an own choice replaces it",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, @path)
+
+      assert has_element?(view, "#agent-models-description", "defaults")
+      assert has_element?(view, "#agent-default-endpoint-note", "own choice replaces it")
+      assert has_element?(view, "#agent-vision-endpoint-note", "own choice replaces it")
+      assert has_element?(view, "#agent-speech-endpoint-note", "own choice replaces it")
+    end
+
+    test "offers every endpoint that chats, none ticked by default", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-selectable-form")
+      assert has_element?(view, "#agent-selectable-#{ctx.first.uuid}")
+      assert has_element?(view, "#agent-selectable-#{ctx.second.uuid}")
+      refute has_element?(view, "#agent-selectable-#{ctx.first.uuid}[checked]")
+      assert Config.selectable_endpoint_uuids() == []
+    end
+
+    test "saves the list, shows it ticked after a reload, and records who", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      view
+      |> form("#agent-selectable-form", selectable: %{uuids: [ctx.first.uuid]})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-info")
+      assert Config.selectable_endpoint_uuids() == [ctx.first.uuid]
+      assert has_element?(view, "#agent-selectable-#{ctx.first.uuid}[checked]")
+      refute has_element?(view, "#agent-selectable-#{ctx.second.uuid}[checked]")
+
+      assert [entry] = settings_entries("agent_selectable_endpoint_uuids")
+      assert entry.actor_uuid == ctx.manager.uuid
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+      assert has_element?(view, "#agent-selectable-#{ctx.first.uuid}[checked]")
+    end
+
+    test "unticking everything empties the list", ctx do
+      allow!([ctx.first, ctx.second])
+      {:ok, view, _html} = live(ctx.conn, @path)
+      assert has_element?(view, "#agent-selectable-#{ctx.second.uuid}[checked]")
+
+      view |> form("#agent-selectable-form", selectable: %{uuids: [""]}) |> render_submit()
+
+      assert Config.selectable_endpoint_uuids() == []
+    end
+
+    test "an endpoint switched off but listed stays offered, so saving does not drop it", ctx do
+      allow!([ctx.first])
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^ctx.first.uuid),
+        set: [enabled: false]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+      assert has_element?(view, "#agent-selectable-#{ctx.first.uuid}[checked]")
+
+      view |> form("#agent-selectable-form") |> render_submit()
+      assert Config.selectable_endpoint_uuids() == [ctx.first.uuid]
+    end
+
+    test "saving the models form does not touch the list, nor the list the models", ctx do
+      allow!([ctx.first])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      view
+      |> form("#agent-models-form", models: %{default_endpoint_uuid: ctx.second.uuid})
+      |> render_submit()
+
+      assert Config.default_endpoint_uuid() == ctx.second.uuid
+      assert Config.selectable_endpoint_uuids() == [ctx.first.uuid]
+
+      view
+      |> form("#agent-selectable-form", selectable: %{uuids: [ctx.second.uuid]})
+      |> render_submit()
+
+      assert Config.default_endpoint_uuid() == ctx.second.uuid
+      assert Config.selectable_endpoint_uuids() == [ctx.second.uuid]
+    end
+
+    test "an endpoint the page did not offer is refused and nothing changes", ctx do
+      allow!([ctx.first])
+      voice = endpoint_fixture(%{name: "Voice", model: "a/some-tts"})
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      for forged <- [[voice.uuid], [Ecto.UUID.generate()], ["nonsense"], [ctx.second.uuid, 5]] do
+        render_hook(view, "save_selectable", %{"selectable" => %{"uuids" => forged}})
+        assert has_element?(view, "#flash-error")
+        assert Config.selectable_endpoint_uuids() == [ctx.first.uuid]
+      end
+    end
+
+    test "an existing chat endpoint the page did not offer is refused too", ctx do
+      allow!([ctx.first])
+      hidden = endpoint_fixture(%{name: "Hidden", model: "a/hidden"})
+
+      # Not offered: not on the list, and not enabled, so it is on no page.
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^hidden.uuid),
+        set: [enabled: false]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+      refute has_element?(view, "#agent-selectable-#{hidden.uuid}")
+
+      for forged <- [[hidden.uuid], [ctx.first.uuid, hidden.uuid]] do
+        render_hook(view, "save_selectable", %{"selectable" => %{"uuids" => forged}})
+        assert has_element?(view, "#flash-error")
+        assert Config.selectable_endpoint_uuids() == [ctx.first.uuid]
+      end
+    end
+
+    test "the list is a labelled group, and each select points to its note", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "fieldset#agent-selectable legend")
+
+      assert has_element?(
+               view,
+               "fieldset#agent-selectable[aria-describedby='agent-selectable-note']"
+             )
+
+      assert has_element?(view, "#agent-selectable-note")
+
+      for dom <- ~w(default vision speech) do
+        assert has_element?(
+                 view,
+                 "select#agent-#{dom}-endpoint[aria-describedby='agent-#{dom}-endpoint-note']"
+               )
+
+        assert has_element?(view, "#agent-#{dom}-endpoint-note")
+      end
+    end
+
+    test "an endpoint without a price is tagged in the list, a priced one is not", ctx do
+      bare = endpoint_fixture(%{name: "Bare", provider: "deepseek", model: "deepseek-chat"})
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-selectable-#{bare.uuid}-money-off")
+      refute has_element?(view, "#agent-selectable-#{ctx.first.uuid}-money-off")
+    end
+
+    test "a listed endpoint that was switched off is shown as such, and stays out of the selects",
+         ctx do
+      allow!([ctx.first, ctx.second])
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^ctx.first.uuid),
+        set: [enabled: false]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-selectable-#{ctx.first.uuid}-off")
+      refute has_element?(view, "#agent-selectable-#{ctx.second.uuid}-off")
+
+      for dom <- ~w(default vision speech) do
+        refute has_element?(
+                 view,
+                 "select#agent-#{dom}-endpoint option[value='#{ctx.first.uuid}']"
+               )
+
+        assert has_element?(
+                 view,
+                 "select#agent-#{dom}-endpoint option[value='#{ctx.second.uuid}']"
+               )
+      end
+
+      render_hook(view, "save_models", %{"models" => %{"default_endpoint_uuid" => ctx.first.uuid}})
+
+      assert has_element?(view, "#flash-error")
+      assert Config.default_endpoint_uuid() == nil
+    end
+
+    test "events without their fields change nothing and do not crash", ctx do
+      allow!([ctx.first])
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      render_hook(view, "save_selectable", %{})
+      render_hook(view, "save_selectable", %{"selectable" => %{"uuids" => "x"}})
+      render_hook(view, "save_selectable", %{"selectable" => "x"})
+
+      assert Config.selectable_endpoint_uuids() == [ctx.first.uuid]
+      assert render(view) =~ "agent-selectable-form"
+    end
+
+    test "the card is usable on a phone: nothing in it forces a width", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-models .grid.grid-cols-1")
+      assert has_element?(view, "#agent-selectable li label.items-start")
+      refute has_element?(view, "#agent-models [class*='w-[']")
+      refute has_element?(view, "#agent-models [class*='min-w-[']")
+    end
+
+    test "a page opened before the right was taken away saves no list", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      [role] =
+        ctx.manager
+        |> Roles.get_user_roles()
+        |> Enum.reject(&(&1 in ["Owner", "Admin", "User"]))
+        |> Enum.map(&Roles.get_role_by_name/1)
+
+      :ok = Permissions.revoke_permission(role.uuid, "agent.manage")
+
+      view
+      |> form("#agent-selectable-form", selectable: %{uuids: [ctx.first.uuid]})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      assert Config.selectable_endpoint_uuids() == []
+    end
+
+    test "a session that switched to a role without agent.manage saves no list", ctx do
+      {:ok, _} = Settings.update_setting("role_switcher_enabled", "true")
+      {:ok, plain} = Roles.create_role(%{name: "AgentPlain#{System.unique_integer([:positive])}"})
+      {:ok, _} = Permissions.grant_permission(plain.uuid, "agent")
+      {:ok, _} = Roles.assign_role(ctx.manager, plain.name)
+
+      fresh = Plug.Test.init_test_session(Phoenix.ConnTest.build_conn(), %{})
+      {conn, token} = log_in_session(fresh, ctx.manager)
+      {:ok, view, _html} = live(conn, @path)
+      act_as(token, plain)
+
+      view
+      |> form("#agent-selectable-form", selectable: %{uuids: [ctx.first.uuid]})
+      |> render_submit()
+
+      assert has_element?(view, "#flash-error")
+      assert Config.selectable_endpoint_uuids() == []
+    end
+
+    defp allow!(endpoints),
+      do: {:ok, _} = Config.put_selectable_endpoints(Enum.map(endpoints, & &1.uuid), [])
   end
 
   describe "without agent.manage" do

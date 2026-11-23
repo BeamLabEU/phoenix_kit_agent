@@ -100,6 +100,44 @@ and `Web.Markdown`) and the optional chat retention
   Nothing answers a Stop but the turn's end: the panel offers Stop again
   (`:stop_unanswered`) when that end has not come within
   `stop_grace_ms + turn_check_ms`.
+- **The three models of a user** (chat `endpoint_uuid`, pictures
+  `vision_endpoint_uuid`, speech `speech_endpoint_uuid`; migration V3): the
+  Settings → AI Agent models are defaults, a model of the user's own replaces the
+  default of its task for him. Every reader takes the model in effect from
+  `UserConfig.effective/1` (`endpoint_uuid`, `vision_endpoint_uuid`,
+  `speech_endpoint_uuid`) or `UserConfig.model/2`, whose `models` say where it
+  came from (`:own`, `:default`, `:fallback` when the own one is deleted,
+  switched off or without a credential: `Models.usable_uuids/1`), never from
+  `Config` directly (`Config.speech?/0` is the site-level question only: the
+  Telegram help). Whether an own model fits its task is asked when it is chosen
+  (`Models.selection_check/2`), not when it is read. An own model outside the
+  list of those users may choose (`agent_selectable_endpoint_uuids`,
+  `Config.selectable_endpoint_uuids/0`, empty by default) stays in effect, marked
+  `outside_list?` (an administrator set it, or the user chose it while it was on
+  the list: removing a model from the list does not revoke it). A user's write is
+  `UserConfig.put_personal_models/3` alone — the row of the session's user,
+  `UserSettings.personal_models_changeset/2` (the three columns, nothing else),
+  a model only if it is "default" or listed, usable and fit for its task; the
+  admin's `admin_update/4` takes any model that fits. A picture model of his own
+  that can be used describes all of his pictures, also for a chat model that
+  sees (`Processor.picture_mode/1`). The AI tasks' `endpoints` list the
+  defaults and every user's own model (`UserConfig.endpoint_uuids/1`). In the
+  admin pages the Settings models card is the defaults plus its own form for
+  the list of models users may choose; Users → Configure has the three fields,
+  the refusal of `admin_update/4` is `{reason, needs, field}` for all three and
+  is shown at its field, and "in effect" there and the model column of the
+  list read `effective/1`'s `models` source, never `own`. The user's side is
+  the dock's settings region ("My assistant", `Web.Dock.MyAssistant`, opened by
+  the button that used to be the personal instructions'): the three models
+  (read-only while the list of models users may choose is empty), the limits
+  read-only, the instructions; `save_models` takes the three keys as text and
+  calls `put_personal_models/3`, nothing else from the event. A user can always
+  go back to the default (`use_default`: one field, a blank value, also while
+  the list is empty); a refused save keeps the selection and marks every field
+  that cannot be saved (`MyAssistant.refused/3`).
+  `Models.summary/1` carries `costs` (per call kind, `reports_cost?/2`) and
+  `enabled?`; the pages tag a model whose money is not counted. A switched-off
+  endpoint is no new default (`Config.put_*_endpoint` refuse it).
 - **Attachments:** session-bound like `Conversations` (`impersonated:` in the
   options); only the owner adds, reads, discards or gets the address of a
   file, an Owner/Admin of the site included. Bytes live in the hidden library
