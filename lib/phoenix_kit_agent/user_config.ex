@@ -412,25 +412,27 @@ defmodule PhoenixKitAgent.UserConfig do
   down (`PhoenixKitAgent.Config.transcribe?/0`). A change is written to the
   Activity log as `agent.user_settings_updated` with the user as the actor,
   the fields, and for each the endpoint uuid it was and became.
+  With `expected:`, a submitted field changed since the form opened returns `{:error, :stale}`.
   Returns `{:ok, changed_fields}`; refusals as `put_personal_instructions/3`.
   """
   @spec put_personal_models(Conversations.session_ref(), map(), keyword()) ::
           {:ok, [atom()]}
           | {:error,
              Conversations.refusal()
+             | :stale
              | {atom(), Models.selection_refusal()}
              | Ecto.Changeset.t()}
   def put_personal_models(session_ref, attrs, opts) when is_map(attrs) do
     Conversations.on_the_site(session_ref, fn ->
       with {:ok, user_uuid} <- Conversations.authorize_session(session_ref, opts),
-           {:ok, fields, changes} <- save_personal_models(user_uuid, attrs) do
+           {:ok, fields, changes} <- save_personal_models(user_uuid, attrs, opts[:expected]) do
         log_models_change(user_uuid, changes)
         {:ok, fields}
       end
     end)
   end
 
-  defp save_personal_models(user_uuid, attrs) do
+  defp save_personal_models(user_uuid, attrs, expected) do
     repo().transaction(fn ->
       repo().insert!(%UserSettings{user_uuid: user_uuid},
         on_conflict: :nothing,
@@ -439,6 +441,8 @@ defmodule PhoenixKitAgent.UserConfig do
 
       row =
         repo().one!(from(s in UserSettings, where: s.user_uuid == ^user_uuid, lock: "FOR UPDATE"))
+
+      unless unchanged?(row, expected), do: repo().rollback(:stale)
 
       changeset = UserSettings.personal_models_changeset(row, attrs)
 

@@ -608,14 +608,19 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
       Application.put_env(:phoenix_kit_agent, :speech_ai, __MODULE__.NoTranscribe)
       on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
 
+      Repo.insert!(%UserSettings{
+        user_uuid: ctx.member.uuid,
+        speech_endpoint_uuid: ctx.speech.uuid
+      })
+
       view = open(ctx.conn, ctx.member)
       refute has_element?(view, "#agent-user-speech-endpoint")
 
-      render_hook(view, "save_user", %{
-        "user_settings" => %{"speech_endpoint_uuid" => ctx.speech.uuid}
-      })
+      for value <- ["", ctx.chat.uuid] do
+        render_hook(view, "save_user", %{"user_settings" => %{"speech_endpoint_uuid" => value}})
+        assert Repo.get!(UserSettings, ctx.member.uuid).speech_endpoint_uuid == ctx.speech.uuid
+      end
 
-      assert Repo.get(UserSettings, ctx.member.uuid) == nil
       assert has_element?(view, "#flash-error")
     end
 

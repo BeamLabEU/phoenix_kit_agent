@@ -1288,6 +1288,19 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       assert Config.selectable_endpoint_uuids() == [ctx.first.uuid]
     end
 
+    test "a stale checklist cannot replace a newer selection", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+      allow!([ctx.second])
+
+      view
+      |> form("#agent-selectable-form", selectable: %{uuids: [ctx.first.uuid]})
+      |> render_submit()
+
+      assert Config.selectable_endpoint_uuids() == [ctx.second.uuid]
+      assert has_element?(view, "#agent-selectable-#{ctx.second.uuid}[checked]")
+      assert has_element?(view, "#flash-error")
+    end
+
     test "saving the models form does not touch the list, nor the list the models", ctx do
       allow!([ctx.first])
       {:ok, view, _html} = live(ctx.conn, @path)

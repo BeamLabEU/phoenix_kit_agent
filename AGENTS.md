@@ -134,7 +134,7 @@ and `Web.Markdown`) and the optional chat retention
   calls `put_personal_models/3`, nothing else from the event. A user can always
   go back to the default (`use_default`: one field, a blank value, also while
   the list is empty); a refused save keeps the selection and marks every field
-  that cannot be saved (`MyAssistant.refused/3`).
+  that cannot be saved (`MyAssistant.refused/4`).
   `Models.summary/1` carries `costs` (per call kind, `reports_cost?/2`) and
   `enabled?`; the pages tag a model whose money is not counted. A switched-off
   endpoint is no new default (`Config.put_*_endpoint` refuse it).

@@ -563,24 +563,25 @@ defmodule PhoenixKitAgent.Web.Dock do
   # form are taken, and only as text; the row, the allowed list and whether
   # each model fits are `UserConfig.put_personal_models/3`'s.
   defp event("save_models", %{"models" => params}, socket) when is_map(params) do
-    attrs =
-      for key <- MyAssistant.submit_keys(),
-          is_binary(params[key]),
-          into: %{},
-          do: {key, params[key]}
+    data = socket.assigns.my_assistant
 
-    # Only while the settings region is open (it is where the form is).
-    if socket.assigns.my_assistant,
-      do: {:noreply, save_models(socket, attrs)},
-      else: {:noreply, socket}
+    if data && data.editable? do
+      attrs =
+        for f <- data.fields, is_binary(params[f.name]), into: %{}, do: {f.name, params[f.name]}
+
+      {:noreply, save_models(socket, attrs)}
+    else
+      {:noreply, socket}
+    end
   end
 
-  # Back to the default for one field, whatever the list holds: a blank value is
-  # all this writes.
   defp event("use_default", %{"field" => field}, socket) when is_binary(field) do
-    if socket.assigns.my_assistant && field in MyAssistant.submit_keys(),
-      do: {:noreply, save_models(socket, %{field => ""})},
-      else: {:noreply, socket}
+    data = socket.assigns.my_assistant
+
+    if data &&
+         Enum.any?(data.fields, &(&1.name == field and &1.choices == [] and &1.own_uuid != nil)),
+       do: {:noreply, save_models(socket, %{field => ""})},
+       else: {:noreply, socket}
   end
 
   # Only text: anything else (a forged map or list) would come back into the
@@ -1631,13 +1632,30 @@ defmodule PhoenixKitAgent.Web.Dock do
     do: Application.get_env(:phoenix_kit_agent, :turn_check_ms, @turn_check_ms)
 
   defp save_models(socket, attrs) do
-    case UserConfig.put_personal_models(socket.assigns.ref, attrs, me(socket)) do
+    expected =
+      for f <- socket.assigns.my_assistant.fields,
+          Map.has_key?(attrs, f.name),
+          into: %{},
+          do: {f.field, f.own_uuid}
+
+    opts = Keyword.put(me(socket), :expected, expected)
+
+    case UserConfig.put_personal_models(socket.assigns.ref, attrs, opts) do
       {:ok, _changed} ->
         # The microphone follows the speech model now in effect.
         assign(socket,
           my_assistant: %{MyAssistant.load(socket.assigns.user_uuid) | saved?: true},
           speech?: speech?(socket.assigns.user_uuid),
           error: nil
+        )
+
+      {:error, :stale} ->
+        assign(socket,
+          my_assistant: MyAssistant.load(socket.assigns.user_uuid),
+          error:
+            gettext(
+              "Someone else changed these settings after the form was opened. Nothing was saved: open the form again."
+            )
         )
 
       {:error, {field, reason}} when is_atom(field) ->
@@ -1656,7 +1674,9 @@ defmodule PhoenixKitAgent.Web.Dock do
   defp shown_refused(socket, attrs, refusal) do
     assign(socket,
       my_assistant:
-        socket.assigns.user_uuid |> MyAssistant.load() |> MyAssistant.refused(attrs, refusal),
+        socket.assigns.user_uuid
+        |> MyAssistant.load()
+        |> MyAssistant.refused(socket.assigns.my_assistant, attrs, refusal),
       error: nil
     )
   end

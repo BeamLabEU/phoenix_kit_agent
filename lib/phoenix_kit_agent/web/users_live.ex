@@ -546,12 +546,16 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   # is taken only where the AI module can write speech down.
   defp model(key, value, editing, attrs, errors) do
     field = Map.fetch!(@model_fields, key)
+    uuid = blank_to_nil(value)
 
-    case blank_to_nil(value) do
-      nil ->
+    cond do
+      field == :speech_endpoint_uuid and not (editing.transcribe? and Config.transcribe?()) ->
+        {attrs, Map.put(errors, field, [gettext("is not available")])}
+
+      is_nil(uuid) ->
         {Map.put(attrs, field, nil), errors}
 
-      uuid ->
+      true ->
         case chosen_endpoint(field, uuid, editing) do
           :ok -> {Map.put(attrs, field, uuid), errors}
           {:error, message} -> {attrs, Map.put(errors, field, [message])}
@@ -566,9 +570,6 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
       uuid == editing.shown[field] ->
         :ok
-
-      field == :speech_endpoint_uuid and not Config.transcribe?() ->
-        {:error, gettext("is not available")}
 
       true ->
         task = Models.task_of(Map.fetch!(@model_tasks, field))

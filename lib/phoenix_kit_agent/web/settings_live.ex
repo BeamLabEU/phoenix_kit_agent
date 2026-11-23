@@ -285,13 +285,6 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       |> Models.list_endpoints()
       |> Enum.map(&Models.summary/1)
 
-    # The checkboxes also hold what is on the list already, switched off or not;
-    # the three selects above do not offer those.
-    listable =
-      [include: Map.values(current) ++ Config.selectable_endpoint_uuids()]
-      |> Models.list_endpoints()
-      |> Enum.map(&Models.summary/1)
-
     uuids = Enum.map(endpoints, & &1.uuid)
 
     shown = Map.new(current, fn {field, uuid} -> {field, uuid || ""} end)
@@ -300,7 +293,6 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       assign(socket,
         models: %{
           endpoints: endpoints,
-          listable: listable,
           params: shown,
           # What the form opened with: a save writes only what the person
           # changed from it, and is refused when that changed meanwhile.
@@ -322,16 +314,20 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       else: socket
   end
 
-  defp assign_selectable(socket),
-    do: assign(socket, selectable: Config.selectable_endpoint_uuids())
+  defp assign_selectable(socket) do
+    selected = Config.selectable_endpoint_uuids()
+    listable = Models.list_endpoints(include: selected ++ Map.values(current_models()))
+    assign(socket, selectable: selected, listable: Enum.map(listable, &Models.summary/1))
+  end
 
   # Only endpoints the page offered; a blank value is the form's empty choice.
   defp save_selectable(socket, uuids) do
-    offered = MapSet.new(socket.assigns.models.listable, & &1.uuid)
+    offered = MapSet.new(socket.assigns.listable, & &1.uuid)
     chosen = Enum.reject(uuids, &(&1 == ""))
 
     if Enum.all?(chosen, &(is_binary(&1) and MapSet.member?(offered, &1))) do
       case Config.put_selectable_endpoints(chosen,
+             expected: socket.assigns.selectable,
              actor_uuid: Access.user_uuid(socket),
              source: "settings"
            ) do
@@ -339,6 +335,16 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
           socket
           |> assign_selectable()
           |> put_flash(:info, gettext("The models users may choose are saved."))
+
+        {:error, :stale} ->
+          socket
+          |> assign_selectable()
+          |> put_flash(
+            :error,
+            gettext(
+              "Someone else changed these settings after the form was opened. Nothing was saved: open the form again."
+            )
+          )
 
         {:error, _reason} ->
           socket
@@ -970,7 +976,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
               </p>
               <input type="hidden" name="selectable[uuids][]" value="" />
               <ul class="flex flex-col gap-2">
-                <li :for={endpoint <- @models.listable}>
+                <li :for={endpoint <- @listable}>
                   <label class="flex items-start gap-3 text-sm cursor-pointer">
                     <input
                       type="checkbox"
@@ -1001,7 +1007,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
                 </li>
               </ul>
             </fieldset>
-            <p :if={@models.listable == []} id="agent-selectable-none" class="text-sm">
+            <p :if={@listable == []} id="agent-selectable-none" class="text-sm">
               {gettext("There are no AI endpoints that chat.")}
             </p>
             <div class="flex justify-end">

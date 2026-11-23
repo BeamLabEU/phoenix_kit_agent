@@ -77,8 +77,6 @@ defmodule PhoenixKitAgent.Models do
 
   @kinds [:chat, :vision, :speech]
 
-  @page_size 500
-
   @doc """
   The endpoints a user can be given: enabled ones that chat (not speech,
   embedding or image models), by name. `include: uuid` (or a list of uuids)
@@ -87,11 +85,15 @@ defmodule PhoenixKitAgent.Models do
   """
   @spec list_endpoints(keyword()) :: [Endpoint.t()]
   def list_endpoints(opts \\ []) do
-    {endpoints, _total} = PhoenixKitAI.list_endpoints(enabled: true, page_size: @page_size)
+    included =
+      for uuid <- List.wrap(opts[:include]),
+          is_binary(uuid),
+          {:ok, id} <- [Ecto.UUID.cast(uuid)],
+          do: id
 
-    endpoints
-    |> Enum.filter(&(Endpoint.kind(&1) == :chat))
-    |> add_current(opts |> Keyword.get(:include) |> List.wrap())
+    from(e in Endpoint, where: e.enabled == true or e.uuid in ^included)
+    |> RepoHelper.repo().all()
+    |> Enum.filter(&(Endpoint.kind(&1) == :chat or &1.uuid in included))
     |> Enum.sort_by(&{String.downcase(&1.name || ""), &1.uuid})
   end
 
@@ -351,18 +353,4 @@ defmodule PhoenixKitAgent.Models do
   end
 
   defp present?(text), do: is_binary(text) and text != ""
-
-  defp add_current(endpoints, uuids) do
-    Enum.reduce(uuids, endpoints, fn
-      uuid, acc when is_binary(uuid) ->
-        cond do
-          Enum.any?(acc, &(&1.uuid == uuid)) -> acc
-          current = PhoenixKitAI.get_endpoint(uuid) -> [current | acc]
-          true -> acc
-        end
-
-      _none, acc ->
-        acc
-    end)
-  end
 end

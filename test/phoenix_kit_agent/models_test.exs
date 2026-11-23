@@ -32,6 +32,16 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert Enum.map(Models.list_endpoints(), & &1.uuid) == [a.uuid, b.uuid]
     end
 
+    test "a large catalogue includes every enabled chat endpoint" do
+      template =
+        endpoint_fixture() |> Map.take([:model, :provider, :api_key, :inserted_at, :updated_at])
+
+      endpoints = for n <- 1..500, do: Map.put(template, :name, "Chat #{n}")
+      Repo.insert_all(PhoenixKitAI.Endpoint, endpoints)
+
+      assert length(Models.list_endpoints()) == 501
+    end
+
     test "the endpoint a user has now is listed even when it can no longer be picked" do
       off = endpoint_fixture(%{name: "Off", model: "a/off", enabled: false})
       on = endpoint_fixture(%{name: "On", model: "a/on"})

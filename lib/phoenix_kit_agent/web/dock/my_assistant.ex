@@ -79,6 +79,7 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
       task: task,
       field: field,
       name: Atom.to_string(field),
+      own_uuid: info.own_uuid,
       value: info.own_uuid || "",
       source: info.source,
       outside_list?: info.outside_list?,
@@ -103,14 +104,27 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
   be saved is marked, not only the one the write named. `refusal` is that
   first `{field, reason}`.
   """
-  @spec refused(t(), map(), {atom() | :form, term()}) :: t()
-  def refused(data, attrs, {field, reason}) do
+  @spec refused(t(), t(), map(), {atom() | :form, term()}) :: t()
+  def refused(data, previous, attrs, {field, reason}) do
     refusal = refusal_errors(field, reason)
 
     submitted =
       for f <- data.fields, is_binary(attrs[f.name]), into: %{}, do: {f.field, attrs[f.name]}
 
-    fields = Enum.map(data.fields, &with_submitted(&1, submitted, data.editable?))
+    offered = Map.new(previous.fields, &{&1.field, &1.choices})
+
+    fields =
+      for f <- data.fields do
+        choice = Enum.find(offered[f.field] || [], &(&1.uuid == submitted[f.field]))
+
+        cond do
+          not data.editable? -> f
+          submitted[f.field] == "" -> %{f | value: ""}
+          is_nil(choice) -> f
+          Enum.any?(f.choices, &(&1.uuid == choice.uuid)) -> %{f | value: choice.uuid}
+          true -> %{f | value: choice.uuid, choices: f.choices ++ [choice]}
+        end
+      end
 
     errors =
       for f <- data.fields,
@@ -129,27 +143,6 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
     do: %{form: gettext("Nothing was saved: check the highlighted fields.")}
 
   defp refusal_errors(field, reason), do: %{field => refusal_text(reason)}
-
-  defp with_submitted(field, submitted, true) do
-    case Map.fetch(submitted, field.field) do
-      {:ok, value} -> %{field | value: value, choices: with_choice(field.choices, value)}
-      :error -> field
-    end
-  end
-
-  defp with_submitted(field, _submitted, false), do: field
-
-  defp with_choice(choices, ""), do: choices
-
-  defp with_choice(choices, uuid) do
-    if Enum.any?(choices, &(&1.uuid == uuid)),
-      do: choices,
-      else: choices ++ Map.values(Models.summaries([uuid]))
-  end
-
-  @doc "The fields of the form that a submit may carry, as they are named in it."
-  @spec submit_keys() :: [String.t()]
-  def submit_keys, do: Enum.map(@fields, fn {_task, field} -> Atom.to_string(field) end)
 
   @doc "Why a model is refused, for the field it was chosen in."
   @spec refusal_text(term()) :: String.t()
@@ -183,9 +176,6 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
         class="space-y-3"
       >
         <.model_field :for={field <- @data.fields} field={field} error={@data.errors[field.field]} />
-        <p :if={@data.errors[:form]} id="pk-agent-models-error" role="alert" class="text-xs text-error">
-          {@data.errors[:form]}
-        </p>
         <div class="flex justify-end">
           <button
             id="pk-agent-models-save"
@@ -198,8 +188,12 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
       </.form>
 
       <div :if={!@data.editable?} id="pk-agent-models" class="space-y-3">
-        <.model_field :for={field <- @data.fields} field={field} />
+        <.model_field :for={field <- @data.fields} field={field} error={@data.errors[field.field]} />
       </div>
+
+        <p :if={@data.errors[:form]} id="pk-agent-models-error" role="alert" class="text-xs text-error">
+          {@data.errors[:form]}
+        </p>
 
       <p :if={@data.saved?} id="pk-agent-models-saved" role="status" class="text-xs text-success">
         {gettext("Settings saved.")}
@@ -255,6 +249,7 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
           </span>
         </p>
       </div>
+      <p :if={!editing?(@field) and @error} role="alert" class="text-xs text-error">{@error}</p>
       <p
         :if={editing?(@field)}
         id={@dom <> "-effective"}

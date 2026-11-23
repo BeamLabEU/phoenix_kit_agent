@@ -499,13 +499,28 @@ defmodule PhoenixKitAgent.Config do
   (`actor_uuid:`, `source:`). The caller checks `agent.manage`.
   """
   @spec put_selectable_endpoints([String.t()], keyword()) ::
-          {:ok, term()} | {:error, :invalid_endpoint | Ecto.Changeset.t()}
+          {:ok, term()} | {:error, :invalid_endpoint | :stale | Ecto.Changeset.t()}
   def put_selectable_endpoints(uuids, opts) when is_list(uuids) do
+    {expected, opts} = Keyword.pop(opts, :expected)
     chosen = Enum.map(uuids, &chat_endpoint/1)
 
     if Enum.all?(chosen, &match?({:ok, _}, &1)) do
       list = chosen |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
-      Settings.update_json_setting_with_module(@selectable_key, %{"uuids" => list}, @module, opts)
+
+      :global.trans({{__MODULE__, @selectable_key}, self()}, fn ->
+        if expected &&
+             MapSet.new(expected) !=
+               MapSet.new(endpoint_uuid_list(Settings.get_json_setting(@selectable_key))) do
+          {:error, :stale}
+        else
+          Settings.update_json_setting_with_module(
+            @selectable_key,
+            %{"uuids" => list},
+            @module,
+            opts
+          )
+        end
+      end)
     else
       {:error, :invalid_endpoint}
     end

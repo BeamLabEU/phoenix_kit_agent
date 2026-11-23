@@ -350,6 +350,15 @@ defmodule PhoenixKitAgent.Web.DockMyAssistantTest do
       :ok
     end
 
+    test "the field error stays visible if the administrator closes the list", ctx do
+      view = open_settings(ctx)
+      allow!([])
+      save(view, %{endpoint_uuid: ctx.chat.uuid})
+
+      assert has_element?(view, "#pk-agent-model-chat-field [role=alert]", "is not available")
+      assert row(ctx) == nil
+    end
+
     test "two bad fields are both marked, the good one keeps what was selected", ctx do
       view = open_settings(ctx)
       allow!([ctx.chat])
@@ -509,6 +518,17 @@ defmodule PhoenixKitAgent.Web.DockMyAssistantTest do
       refute has_element?(view, "#pk-agent-model-vision-outside-list")
     end
 
+    test "an older form cannot clear a model changed in another tab", ctx do
+      view = open_settings(ctx)
+      other = open_settings(ctx)
+      save(other, %{endpoint_uuid: ctx.chat.uuid})
+      save(view, %{vision_endpoint_uuid: ctx.seer.uuid})
+
+      assert row(ctx).endpoint_uuid == ctx.chat.uuid
+      assert row(ctx).vision_endpoint_uuid == nil
+      assert has_element?(view, "#pk-agent-dock-error", "Someone else changed")
+    end
+
     test "a model taken off the list after the page opened is refused at its field", ctx do
       view = open_settings(ctx)
       allow!([ctx.seer])
@@ -548,12 +568,33 @@ defmodule PhoenixKitAgent.Web.DockMyAssistantTest do
       Map.take(before, keep) == Map.take(current, keep)
     end
 
+    test "a hidden speech field keeps its stored value on either model event", ctx do
+      Repo.update!(Ecto.Changeset.change(ctx.before, speech_endpoint_uuid: ctx.ear.uuid))
+      previous = Application.fetch_env(:phoenix_kit_agent, :speech_ai)
+      Application.put_env(:phoenix_kit_agent, :speech_ai, __MODULE__)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, original} -> Application.put_env(:phoenix_kit_agent, :speech_ai, original)
+          :error -> Application.delete_env(:phoenix_kit_agent, :speech_ai)
+        end
+      end)
+
+      view = open_settings(ctx)
+      refute has_element?(view, "#pk-agent-model-speech-field")
+
+      render_hook(view, "save_models", %{"models" => %{"speech_endpoint_uuid" => ""}})
+      render_hook(view, "use_default", %{"field" => "speech_endpoint_uuid"})
+      assert row(ctx).speech_endpoint_uuid == ctx.ear.uuid
+    end
+
     test "with a model not on the list, or none that exists, changes nothing", ctx do
       view = open_settings(ctx)
 
       for forged <- [ctx.outside.uuid, Ecto.UUID.generate(), "nonsense", "", " "] do
         for field <- ~w(endpoint_uuid vision_endpoint_uuid speech_endpoint_uuid), forged != "" do
-          render_hook(view, "save_models", %{"models" => %{field => forged}})
+          html = render_hook(view, "save_models", %{"models" => %{field => forged}})
+          refute html =~ ctx.outside.name
         end
       end
 
