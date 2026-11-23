@@ -2,6 +2,40 @@
 
 All notable changes to PhoenixKitAgent will be documented in this file.
 
+## 0.4.0 - 2026-11-23
+
+### Upgrade
+
+- Run `mix phoenix_kit.update` in the host application and apply the generated
+  migration before serving traffic. Module migration V3 adds nullable picture
+  and speech endpoint columns. Existing users inherit the site defaults for
+  both until a personal model is set.
+
+### Added
+
+- Administrators can set a user's chat, picture and speech models independently
+  and choose which endpoints users may select for themselves. The selection
+  list starts empty. Removing an endpoint from the list preserves existing
+  assignments.
+- **My assistant** in the chat panel shows the models and limits in effect.
+  Users can choose an allowed model, return to the default for each task, and
+  edit their personal instructions.
+- The panel and Telegram use the user's effective models. A usable personal
+  picture model describes images even when the chat model supports image input.
+  An unavailable personal endpoint falls back to the site default for its task.
+- Admin pages identify endpoints whose calls do not report a cost and show
+  whether a user's model is personal, inherited or a fallback.
+
+### Fixed
+
+- Stale settings forms preserve newer personal model choices and changes to
+  the administrator's selection list. Hidden speech controls preserve stored
+  values when transcription is unavailable.
+- A rejected choice keeps previously offered options visible without exposing
+  the names of unlisted endpoints. The dock shows the refusal even if an
+  administrator closes model selection while the form is open.
+- The model catalogue includes eligible endpoints beyond the first 500.
+
 ## 0.3.0 - 2026-11-15
 
 The assistant in Telegram, voice input, an optional time limit on chats, a
