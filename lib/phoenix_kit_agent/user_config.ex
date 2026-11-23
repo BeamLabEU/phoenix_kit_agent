@@ -29,6 +29,10 @@ defmodule PhoenixKitAgent.UserConfig do
       `outside_list?` so a page can say so;
     * `:fallback` — the user's own model was deleted, switched off or lost its
       credentials, so the default is used instead, and the page can say so.
+      This holds for the chat model too: a row whose own `endpoint_uuid` can
+      no longer be called is answered by the default, where it used to fail
+      with the endpoint-unusable notice. Deleting the endpoint always had that
+      effect (the link is set to `NULL`).
 
   Whether an own model still fits its task is asked when it is chosen, never
   when it is read: the capabilities of a model come and go with a provider's
