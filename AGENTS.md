@@ -132,6 +132,9 @@ and `Web.Markdown`) and the optional chat retention
   (read-only while the list of models users may choose is empty), the limits
   read-only, the instructions; `save_models` takes the three keys as text and
   calls `put_personal_models/3`, nothing else from the event.
+  `Models.summary/1` carries `costs` (per call kind, `reports_cost?/2`) and
+  `enabled?`; the pages tag a model whose money is not counted. A switched-off
+  endpoint is no new default (`Config.put_*_endpoint` refuse it).
 - **Attachments:** session-bound like `Conversations` (`impersonated:` in the
   options); only the owner adds, reads, discards or gets the address of a
   file, an Owner/Admin of the site included. Bytes live in the hidden library

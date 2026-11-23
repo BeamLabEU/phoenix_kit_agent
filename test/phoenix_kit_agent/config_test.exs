@@ -237,6 +237,42 @@ defmodule PhoenixKitAgent.ConfigTest do
     end
   end
 
+  describe "a switched-off endpoint" do
+    setup do
+      PhoenixKitAI.Guard.reset_caches()
+      on_exit(&PhoenixKitAI.Guard.reset_caches/0)
+      :ok
+    end
+
+    defp switch_off(endpoint) do
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^endpoint.uuid),
+        set: [enabled: false]
+      )
+    end
+
+    test "is no new default of any task" do
+      endpoint =
+        declared(%{model: "a/all"}, %{"tools" => "yes", "vision" => "yes", "audio_input" => "yes"})
+
+      switch_off(endpoint)
+
+      assert {:error, :invalid_endpoint} = Config.put_default_endpoint(endpoint.uuid, [])
+      assert {:error, :invalid_endpoint} = Config.put_vision_endpoint(endpoint.uuid, [])
+      assert {:error, :invalid_endpoint} = Config.put_speech_endpoint(endpoint.uuid, [])
+      assert Config.default_endpoint_uuid() == nil
+    end
+
+    test "that is the default already may be saved again, and cleared" do
+      endpoint = declared(%{model: "a/all"}, %{"tools" => "yes"})
+      assert {:ok, _} = Config.put_default_endpoint(endpoint.uuid, [])
+      switch_off(endpoint)
+
+      assert {:ok, _} = Config.put_default_endpoint(endpoint.uuid, [])
+      assert Config.default_endpoint_uuid() == endpoint.uuid
+      assert {:ok, _} = Config.put_default_endpoint(nil, [])
+    end
+  end
+
   describe "the default and the vision model must fit their AI tasks" do
     setup do
       PhoenixKitAI.Guard.reset_caches()

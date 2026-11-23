@@ -223,6 +223,44 @@ defmodule PhoenixKitAgent.Web.DockMyAssistantTest do
       refute has_element?(view, "#pk-agent-models-closed")
     end
 
+    test "a model without a price is marked in the choices, one with a price is not", ctx do
+      bare = all_round(%{name: "Bare", provider: "deepseek", model: "deepseek-chat"})
+      priced = all_round(%{name: "Priced", provider: "anthropic", model: "claude-sonnet-5-5"})
+      allow!([ctx.chat, bare, priced])
+
+      view = open_settings(ctx)
+
+      for dom <- ~w(chat vision speech) do
+        assert has_element?(
+                 view,
+                 "#pk-agent-model-#{dom} option[value='#{bare.uuid}']",
+                 "money is not counted"
+               )
+
+        refute has_element?(
+                 view,
+                 "#pk-agent-model-#{dom} option[value='#{priced.uuid}']",
+                 "money is not counted"
+               )
+      end
+
+      Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: bare.uuid})
+      {:ok, _} = Config.put_selectable_endpoints([], [])
+      view = open_settings(ctx)
+      assert has_element?(view, "#pk-agent-model-chat-model", "money is not counted")
+    end
+
+    test "each select points to what is said under it", ctx do
+      view = open_settings(ctx)
+
+      for dom <- ~w(chat vision speech) do
+        assert has_element?(
+                 view,
+                 "select#pk-agent-model-#{dom}[aria-describedby='pk-agent-model-#{dom}-effective']"
+               )
+      end
+    end
+
     test "saves each of the three through the form and says what is in effect", ctx do
       view = open_settings(ctx)
 

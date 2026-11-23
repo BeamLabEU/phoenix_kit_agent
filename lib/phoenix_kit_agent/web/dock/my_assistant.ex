@@ -175,6 +175,7 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
       <.select
         :if={editing?(@field)}
         id={@dom}
+        aria-describedby={@dom <> "-effective"}
         name={"models[#{@field.name}]"}
         label={label(@field.task)}
         value={@field.value}
@@ -185,7 +186,9 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
       />
       <div :if={!editing?(@field)}>
         <p class="text-xs font-medium">{label(@field.task)}</p>
-        <p id={@dom <> "-model"} class="text-sm break-words">{name(@field.model)}</p>
+        <p id={@dom <> "-model"} class="text-sm break-words">
+          {priced_name(@field.model, @field.task)}
+        </p>
       </div>
       <p
         id={@dom <> "-effective"}
@@ -218,7 +221,7 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
         nil -> gettext("Default: none set")
       end
 
-    [{default, ""} | Enum.map(field.choices, &{name(&1), &1.uuid})]
+    [{default, ""} | Enum.map(field.choices, &{priced_name(&1, field.task), &1.uuid})]
   end
 
   defp label(:chat), do: gettext("Model")
@@ -226,7 +229,18 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
   defp label(:speech), do: gettext("Speech recognition model")
 
   defp name(%{name: name, model: model}), do: "#{name} (#{model})"
+
   defp name(nil), do: gettext("none set")
+
+  # The name, and where money is not counted for that kind of call, a note: the
+  # user's own limits in money do not hold for such a model.
+  defp priced_name(%{} = summary, task) do
+    if Models.reports_cost?(summary, task),
+      do: name(summary),
+      else: name(summary) <> " — " <> gettext("money is not counted")
+  end
+
+  defp priced_name(nil, _task), do: name(nil)
 
   defp in_effect_text(%{source: :own} = field),
     do: gettext("In effect: own model — %{name}", name: name(field.model))
@@ -234,10 +248,16 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
   defp in_effect_text(%{source: :default} = field),
     do: gettext("In effect: default — %{name}", name: name(field.model))
 
+  defp in_effect_text(%{source: :fallback, model: nil}),
+    do:
+      gettext(
+        "The own model cannot be used (switched off, without credentials or no longer a chat model) and no default is set."
+      )
+
   defp in_effect_text(%{source: :fallback} = field),
     do:
       gettext(
-        "The own model cannot be used (switched off or without credentials), so the default is in effect — %{name}",
+        "The own model cannot be used (switched off, without credentials or no longer a chat model), so the default is in effect — %{name}",
         name: name(field.model)
       )
 end

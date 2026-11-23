@@ -489,6 +489,9 @@ three fields offers "Default: <name>" and every endpoint that chats (the ones
 known not to fit the task marked), and says what is in effect for that user: his
 own model, the default, the default because his own cannot be used, or an own
 model outside the list.
+Where a model reports no price for a kind of call, money is not counted for it
+and only the turn limit applies: the list, the three fields and the user's own
+choices say so ("money is not counted") per task.
 
 In the chat panel the button that opened the personal instructions opens "My
 assistant": the user's three models (a choice among the models the administrator

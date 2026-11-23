@@ -280,6 +280,13 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     current = current_models()
 
     endpoints =
+      [include: Map.values(current)]
+      |> Models.list_endpoints()
+      |> Enum.map(&Models.summary/1)
+
+    # The checkboxes also hold what is on the list already, switched off or not;
+    # the three selects above do not offer those.
+    listable =
       [include: Map.values(current) ++ Config.selectable_endpoint_uuids()]
       |> Models.list_endpoints()
       |> Enum.map(&Models.summary/1)
@@ -292,6 +299,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       assign(socket,
         models: %{
           endpoints: endpoints,
+          listable: listable,
           params: shown,
           # What the form opened with: a save writes only what the person
           # changed from it, and is refused when that changed meanwhile.
@@ -318,7 +326,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
   # Only endpoints the page offered; a blank value is the form's empty choice.
   defp save_selectable(socket, uuids) do
-    offered = MapSet.new(socket.assigns.models.endpoints, & &1.uuid)
+    offered = MapSet.new(socket.assigns.models.listable, & &1.uuid)
     chosen = Enum.reject(uuids, &(&1 == ""))
 
     if Enum.all?(chosen, &(is_binary(&1) and MapSet.member?(offered, &1))) do
@@ -840,6 +848,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
               <div class="min-w-0">
                 <.select
                   id="agent-default-endpoint"
+                  aria-describedby="agent-default-endpoint-note"
                   name="models[default_endpoint_uuid]"
                   label={gettext("Default model")}
                   value={@models.params["default_endpoint_uuid"]}
@@ -855,6 +864,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
               <div class="min-w-0">
                 <.select
                   id="agent-vision-endpoint"
+                  aria-describedby="agent-vision-endpoint-note"
                   name="models[vision_endpoint_uuid]"
                   label={gettext("Vision model")}
                   value={@models.params["vision_endpoint_uuid"]}
@@ -870,6 +880,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
               <div :if={@transcribe?} class="min-w-0">
                 <.select
                   id="agent-speech-endpoint"
+                  aria-describedby="agent-speech-endpoint-note"
                   name="models[speech_endpoint_uuid]"
                   label={gettext("Speech recognition model")}
                   value={@models.params["speech_endpoint_uuid"]}
@@ -916,29 +927,47 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
           phx-submit="save_selectable"
         >
           <div class="card-body gap-4 border-t border-base-200">
-            <h3 class="font-medium">{gettext("Models users may choose themselves")}</h3>
-            <p class="text-sm text-base-content/70">
-              {gettext(
-                "A user can choose, for the chat, for pictures and for speech, among these models only, and only one that fits the task. Nothing ticked: nobody chooses, and only an administrator sets a model for a user. Taking a model off the list changes nothing for a user who already uses it."
-              )}
-            </p>
-            <input type="hidden" name="selectable[uuids][]" value="" />
-            <ul id="agent-selectable" class="flex flex-col gap-2">
-              <li :for={endpoint <- @models.endpoints}>
-                <label class="flex items-start gap-3 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    id={"agent-selectable-#{endpoint.uuid}"}
-                    name="selectable[uuids][]"
-                    value={endpoint.uuid}
-                    checked={endpoint.uuid in @selectable}
-                    class="checkbox checkbox-sm mt-0.5"
-                  />
-                  <span class="min-w-0 break-words">{endpoint.name} ({endpoint.model})</span>
-                </label>
-              </li>
-            </ul>
-            <p :if={@models.endpoints == []} id="agent-selectable-none" class="text-sm">
+            <fieldset id="agent-selectable" class="min-w-0 space-y-2" aria-describedby="agent-selectable-note">
+              <legend class="font-medium">{gettext("Models users may choose themselves")}</legend>
+              <p id="agent-selectable-note" class="text-sm text-base-content/70">
+                {gettext(
+                  "A user can choose, for the chat, for pictures and for speech, among these models only, and only one that fits the task. Nothing ticked: nobody chooses, and only an administrator sets a model for a user. Taking a model off the list changes nothing for a user who already uses it."
+                )}
+              </p>
+              <input type="hidden" name="selectable[uuids][]" value="" />
+              <ul class="flex flex-col gap-2">
+                <li :for={endpoint <- @models.listable}>
+                  <label class="flex items-start gap-3 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      id={"agent-selectable-#{endpoint.uuid}"}
+                      name="selectable[uuids][]"
+                      value={endpoint.uuid}
+                      checked={endpoint.uuid in @selectable}
+                      class="checkbox checkbox-sm mt-0.5"
+                    />
+                    <span class="min-w-0 break-words">
+                      {endpoint.name} ({endpoint.model})
+                      <span
+                        :if={!endpoint.enabled?}
+                        id={"agent-selectable-#{endpoint.uuid}-off"}
+                        class="badge badge-sm badge-ghost ml-1"
+                      >
+                        {gettext("switched off")}
+                      </span>
+                      <span
+                        :if={!Enum.all?(Map.values(endpoint.costs))}
+                        id={"agent-selectable-#{endpoint.uuid}-money-off"}
+                        class="badge badge-sm badge-warning badge-soft ml-1"
+                      >
+                        {gettext("money is not counted")}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              </ul>
+            </fieldset>
+            <p :if={@models.listable == []} id="agent-selectable-none" class="text-sm">
               {gettext("There are no AI endpoints that chat.")}
             </p>
             <div class="flex justify-end">

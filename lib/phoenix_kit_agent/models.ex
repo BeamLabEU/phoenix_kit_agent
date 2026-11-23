@@ -46,14 +46,17 @@ defmodule PhoenixKitAgent.Models do
 
   @typedoc """
   What a page shows of an endpoint: never the endpoint itself, which carries
-  its API key. `reports_cost?` is `reports_cost?/2` of a chat call on it.
+  its API key. `reports_cost?` is `reports_cost?/2` of a chat call on it and
+  `costs` the same for each kind of call; `enabled?` is whether the endpoint is on.
   """
   @type summary :: %{
           uuid: String.t(),
           name: String.t(),
           model: String.t(),
           provider: String.t(),
-          reports_cost?: boolean()
+          reports_cost?: boolean(),
+          costs: %{call_kind() => boolean()},
+          enabled?: boolean()
         }
 
   @typedoc """
@@ -70,7 +73,9 @@ defmodule PhoenixKitAgent.Models do
   @tasks %{chat: "agent.chat", vision: "agent.attachment", speech: "agent.speech"}
 
   # What `reports_cost?/2` reads of an endpoint, its key left out.
-  @cost_fields [:uuid, :name, :model, :provider, :base_url, :provider_settings]
+  @cost_fields [:uuid, :name, :model, :provider, :base_url, :provider_settings, :enabled]
+
+  @kinds [:chat, :vision, :speech]
 
   @page_size 500
 
@@ -167,7 +172,9 @@ defmodule PhoenixKitAgent.Models do
       name: endpoint.name,
       model: endpoint.model,
       provider: endpoint.provider,
-      reports_cost?: reports_cost?(endpoint)
+      reports_cost?: reports_cost?(endpoint),
+      costs: Map.new(@kinds, &{&1, reports_cost?(endpoint, &1)}),
+      enabled?: endpoint.enabled != false
     }
 
   @doc "The endpoints with these uuids as `t:summary/0`: `%{uuid => summary}`."
@@ -281,7 +288,10 @@ defmodule PhoenixKitAgent.Models do
     * `:speech` (a recording written down, `PhoenixKitAI.transcribe/3`) — the
       same rule (`TaskLimits.money_counted?/2` with `:audio_input`).
 
-  A `t:summary/0` carries the answer for `:chat`.
+  A `t:summary/0` carries the answer for each kind (`costs`). The answer is the
+  one a call is limited by (`PhoenixKitAgent.Limits`): `phoenix_kit_ai` has no
+  third answer such as "not known"; a price source that is not loaded (a
+  catalogue not read yet) counts as no price, as it does for the limit.
   """
   @spec reports_cost?(Endpoint.t() | summary() | nil, call_kind()) :: boolean()
   def reports_cost?(endpoint, call \\ :chat)
@@ -293,6 +303,9 @@ defmodule PhoenixKitAgent.Models do
 
   def reports_cost?(%Endpoint{} = endpoint, :speech),
     do: TaskLimits.money_counted?(endpoint, [:audio_input])
+
+  def reports_cost?(%{costs: costs}, call) when is_map_key(costs, call),
+    do: Map.fetch!(costs, call)
 
   def reports_cost?(%{reports_cost?: reports?}, :chat) when is_boolean(reports?), do: reports?
 

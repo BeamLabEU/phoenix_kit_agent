@@ -15,6 +15,7 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
   alias PhoenixKitAgent.Schemas.UserSettings
   alias PhoenixKitAgent.Test.{LogProbe, Tools}
   alias PhoenixKitAgent.UserConfig
+  alias PhoenixKitAgent.Web.UsersLive
 
   @path "/en/admin/agent/users"
   @stub __MODULE__
@@ -180,6 +181,10 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
 
       assert has_element?(view, "#agent-user-#{member.uuid}-status[data-off]")
     end
+  end
+
+  defmodule NoTranscribe do
+    @moduledoc false
   end
 
   # An endpoint whose model's abilities an admin declared.
@@ -527,6 +532,93 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
       refute has_element?(view, "#agent-user-#{plain_user.uuid}-model-fallback")
     end
 
+    test "money not counted is warned of per task, for the model chosen or the default", ctx do
+      bare =
+        capable(%{"tools" => "yes", "vision" => "yes", "audio_input" => "yes"}, %{
+          name: "Bare",
+          provider: "deepseek",
+          model: "deepseek-chat"
+        })
+
+      view = open(ctx.conn, ctx.member)
+
+      for {dom, field} <- [
+            {"agent-user-money-off", :endpoint_uuid},
+            {"agent-user-vision-endpoint-money-off", :vision_endpoint_uuid},
+            {"agent-user-speech-endpoint-money-off", :speech_endpoint_uuid}
+          ] do
+        refute has_element?(view, "##{dom}")
+
+        view
+        |> form("#agent-user-form", user_settings: %{field => bare.uuid})
+        |> render_change()
+
+        assert has_element?(view, "##{dom}", "money is not counted")
+
+        view
+        |> form("#agent-user-form", user_settings: %{field => ctx.chat.uuid})
+        |> render_change()
+
+        refute has_element?(view, "##{dom}")
+      end
+
+      # The default of a task counts when nothing own is chosen.
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", bare.uuid)
+      view = open(ctx.conn, ctx.member)
+      assert has_element?(view, "#agent-user-vision-endpoint-money-off")
+      refute has_element?(view, "#agent-user-speech-endpoint-money-off")
+    end
+
+    test "the selects point to what is said under them", ctx do
+      view = open(ctx.conn, ctx.member)
+
+      for dom <- ~w(agent-user-endpoint agent-user-vision-endpoint agent-user-speech-endpoint) do
+        assert has_element?(view, "select##{dom}[aria-describedby='#{dom}-effective']")
+        assert has_element?(view, "##{dom}-effective")
+      end
+    end
+
+    test "a fallback with no default says that none is set, and why a model fails", ctx do
+      Repo.insert!(%UserSettings{
+        user_uuid: ctx.member.uuid,
+        vision_endpoint_uuid: ctx.pictures.uuid
+      })
+
+      switch_off!(ctx.pictures)
+      view = open(ctx.conn, ctx.member)
+
+      assert has_element?(
+               view,
+               "#agent-user-vision-endpoint-effective[data-source='fallback']",
+               "no default is set"
+             )
+
+      refute has_element?(view, "#agent-user-vision-endpoint-effective", "none set")
+      assert has_element?(view, "#agent-user-vision-endpoint-effective", "no longer a chat model")
+
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", ctx.chat.uuid)
+      view = open(ctx.conn, ctx.member)
+
+      assert has_element?(view, "#agent-user-vision-endpoint-effective", "Chatty")
+      refute has_element?(view, "#agent-user-vision-endpoint-effective", "no default is set")
+    end
+
+    test "without a speech-writing AI module the speech field is gone and a crafted value is refused",
+         ctx do
+      Application.put_env(:phoenix_kit_agent, :speech_ai, __MODULE__.NoTranscribe)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
+
+      view = open(ctx.conn, ctx.member)
+      refute has_element?(view, "#agent-user-speech-endpoint")
+
+      render_hook(view, "save_user", %{
+        "user_settings" => %{"speech_endpoint_uuid" => ctx.speech.uuid}
+      })
+
+      assert Repo.get(UserSettings, ctx.member.uuid) == nil
+      assert has_element?(view, "#flash-error")
+    end
+
     test "the form is laid out to stack on a phone", ctx do
       view = open(ctx.conn, ctx.member)
 
@@ -553,6 +645,44 @@ defmodule PhoenixKitAgent.Web.UsersLiveTest do
 
       assert has_element?(view, "#flash-error")
       assert Repo.get(UserSettings, ctx.member.uuid) == nil
+    end
+  end
+
+  describe "what the page does with the result of the save" do
+    defp socket_with(editing) do
+      %Phoenix.LiveView.Socket{
+        assigns: %{__changed__: %{}, flash: %{}, editing: editing}
+      }
+    end
+
+    defp editing_form,
+      do: %{params: %{}, errors: %{}, user: %{uuid: Ecto.UUID.generate()}}
+
+    test "a refusal that comes from the save is shown at the field it names" do
+      cases = [
+        {:model_unfit, [:tools], :endpoint_uuid, "does not take tools"},
+        {:model_unverified, [:tools], :endpoint_uuid, "whether its model takes tools"},
+        {:model_unfit, [:vision], :vision_endpoint_uuid, "does not take pictures"},
+        {:model_unverified, [:vision], :vision_endpoint_uuid, "whether its model takes pictures"},
+        {:model_unfit, [:audio_input], :speech_endpoint_uuid, "does not take audio"},
+        {:model_unverified, [:audio_input], :speech_endpoint_uuid,
+         "whether its model takes audio"}
+      ]
+
+      for {reason, needs, field, text} <- cases do
+        socket =
+          UsersLive.after_update(
+            {:error, {reason, needs, field}},
+            socket_with(editing_form()),
+            editing_form(),
+            %{}
+          )
+
+        assert [message] = socket.assigns.editing.errors[field]
+        assert message =~ text
+        assert Map.keys(socket.assigns.editing.errors) == [field]
+        assert socket.assigns.flash["error"]
+      end
     end
   end
 

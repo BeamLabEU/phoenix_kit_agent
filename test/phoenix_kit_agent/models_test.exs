@@ -341,7 +341,8 @@ defmodule PhoenixKitAgent.ModelsTest do
 
       assert Enum.all?(
                offered,
-               &(Map.keys(&1) |> Enum.sort() == [:model, :name, :provider, :reports_cost?, :uuid])
+               &(Map.keys(&1) |> Enum.sort() ==
+                   [:costs, :enabled?, :model, :name, :provider, :reports_cost?, :uuid])
              )
 
       refute outsider.uuid in Enum.map(offered, & &1.uuid)
@@ -418,6 +419,30 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert Models.summary(priced).reports_cost?
       assert Models.summary(claude).reports_cost?
       refute Models.summary(bare).reports_cost?
+    end
+
+    test "a summary says per kind of call whether money is counted, and whether the endpoint is on" do
+      claude = endpoint_fixture(%{provider: "anthropic", model: "claude-sonnet-5-5"})
+      bare = endpoint_fixture(%{provider: "deepseek", model: "deepseek-reasoner"})
+
+      assert Models.summary(claude).costs == %{chat: true, vision: true, speech: true}
+      assert Models.summary(bare).costs == %{chat: false, vision: false, speech: false}
+
+      for kind <- [:chat, :vision, :speech] do
+        assert Models.reports_cost?(Models.summary(claude), kind)
+        refute Models.reports_cost?(Models.summary(bare), kind)
+
+        assert Models.reports_cost?(Models.summary(claude), kind) ==
+                 Models.reports_cost?(claude, kind)
+      end
+
+      assert Models.summary(bare).enabled?
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^bare.uuid),
+        set: [enabled: false]
+      )
+
+      refute Models.summaries([bare.uuid])[bare.uuid].enabled?
     end
 
     test "a picture's description is counted where a chat call on the model would be" do

@@ -531,11 +531,15 @@ defmodule PhoenixKitAgent.Config do
     with {:ok, uuid} <- Ecto.UUID.cast(uuid),
          %Endpoint{} = endpoint <- PhoenixKitAI.get_endpoint(uuid),
          :chat <- Endpoint.kind(endpoint),
+         :ok <- switched_on(key, endpoint),
          :ok <- fits(key, task, endpoint) do
       Settings.update_setting_with_module(key, uuid, @module, opts)
     else
       {:error, {reason, _needs}} = refusal when reason in [:model_unfit, :model_unverified] ->
         refusal
+
+      {:error, :switched_off} ->
+        {:error, :invalid_endpoint}
 
       _not_a_chat_endpoint ->
         {:error, :invalid_endpoint}
@@ -543,6 +547,14 @@ defmodule PhoenixKitAgent.Config do
   end
 
   defp put_endpoint(_key, _task, _other, _opts), do: {:error, :invalid_endpoint}
+
+  # A new choice must be on: one that was switched off after it was chosen
+  # stays as it is until someone changes it.
+  defp switched_on(key, endpoint) do
+    if endpoint.enabled == false and uuid_setting(key) != endpoint.uuid,
+      do: {:error, :switched_off},
+      else: :ok
+  end
 
   # The endpoint already set is not checked again.
   defp fits(key, task, endpoint) do

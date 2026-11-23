@@ -1294,6 +1294,86 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       end
     end
 
+    test "an existing chat endpoint the page did not offer is refused too", ctx do
+      allow!([ctx.first])
+      hidden = endpoint_fixture(%{name: "Hidden", model: "a/hidden"})
+
+      # Not offered: not on the list, and not enabled, so it is on no page.
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^hidden.uuid),
+        set: [enabled: false]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+      refute has_element?(view, "#agent-selectable-#{hidden.uuid}")
+
+      for forged <- [[hidden.uuid], [ctx.first.uuid, hidden.uuid]] do
+        render_hook(view, "save_selectable", %{"selectable" => %{"uuids" => forged}})
+        assert has_element?(view, "#flash-error")
+        assert Config.selectable_endpoint_uuids() == [ctx.first.uuid]
+      end
+    end
+
+    test "the list is a labelled group, and each select points to its note", ctx do
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "fieldset#agent-selectable legend")
+
+      assert has_element?(
+               view,
+               "fieldset#agent-selectable[aria-describedby='agent-selectable-note']"
+             )
+
+      assert has_element?(view, "#agent-selectable-note")
+
+      for dom <- ~w(default vision speech) do
+        assert has_element?(
+                 view,
+                 "select#agent-#{dom}-endpoint[aria-describedby='agent-#{dom}-endpoint-note']"
+               )
+
+        assert has_element?(view, "#agent-#{dom}-endpoint-note")
+      end
+    end
+
+    test "an endpoint without a price is tagged in the list, a priced one is not", ctx do
+      bare = endpoint_fixture(%{name: "Bare", provider: "deepseek", model: "deepseek-chat"})
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-selectable-#{bare.uuid}-money-off")
+      refute has_element?(view, "#agent-selectable-#{ctx.first.uuid}-money-off")
+    end
+
+    test "a listed endpoint that was switched off is shown as such, and stays out of the selects",
+         ctx do
+      allow!([ctx.first, ctx.second])
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^ctx.first.uuid),
+        set: [enabled: false]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-selectable-#{ctx.first.uuid}-off")
+      refute has_element?(view, "#agent-selectable-#{ctx.second.uuid}-off")
+
+      for dom <- ~w(default vision speech) do
+        refute has_element?(
+                 view,
+                 "select#agent-#{dom}-endpoint option[value='#{ctx.first.uuid}']"
+               )
+
+        assert has_element?(
+                 view,
+                 "select#agent-#{dom}-endpoint option[value='#{ctx.second.uuid}']"
+               )
+      end
+
+      render_hook(view, "save_models", %{"models" => %{"default_endpoint_uuid" => ctx.first.uuid}})
+
+      assert has_element?(view, "#flash-error")
+      assert Config.default_endpoint_uuid() == nil
+    end
+
     test "events without their fields change nothing and do not crash", ctx do
       allow!([ctx.first])
       {:ok, view, _html} = live(ctx.conn, @path)

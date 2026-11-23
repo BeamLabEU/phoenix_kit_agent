@@ -424,9 +424,20 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   end
 
   defp update_user(socket, editing, submitted, attrs) do
-    case UserConfig.admin_update(Access.session_scope(socket), editing.user.uuid, attrs,
-           expected: editing.shown
-         ) do
+    result =
+      UserConfig.admin_update(Access.session_scope(socket), editing.user.uuid, attrs,
+        expected: editing.shown
+      )
+
+    after_update(result, socket, editing, submitted)
+  end
+
+  @doc false
+  # What the page does with the result of `UserConfig.admin_update/4`; a function
+  # of its own so that each result, also the ones that only a race brings, can be
+  # tested.
+  def after_update(result, socket, editing, submitted) do
+    case result do
       {:ok, _row, _fields} ->
         socket
         |> assign(editing: nil)
@@ -609,20 +620,25 @@ defmodule PhoenixKitAgent.Web.UsersLive do
 
   defp usd(micro), do: Spend.format_usd(micro)
 
-  # Whether money goes uncounted for the chat model chosen in the form (the
-  # module's when none is).
-  defp money_off?(editing) do
-    chosen =
-      case editing.params["endpoint_uuid"] do
-        uuid when uuid in [nil, ""] -> editing.defaults.chat
-        uuid -> Enum.find(editing.endpoints, &(&1.uuid == uuid))
-      end
+  # Whether money goes uncounted for the model chosen in the form for a task (the
+  # default's when none is): what `Models.reports_cost?/2` says for that kind of call.
+  defp money_off?(editing, task) do
+    field = editing.params[field_param(task)]
 
-    chosen != nil and not Models.reports_cost?(chosen)
+    chosen =
+      if field in [nil, ""],
+        do: Map.fetch!(editing.defaults, task),
+        else: Enum.find(editing.endpoints, &(&1.uuid == field))
+
+    chosen != nil and not Models.reports_cost?(chosen, task)
   end
 
+  defp field_param(:chat), do: "endpoint_uuid"
+  defp field_param(:vision), do: "vision_endpoint_uuid"
+  defp field_param(:speech), do: "speech_endpoint_uuid"
+
   defp model_label(endpoint, support, unsupported, unknown) do
-    base = "#{endpoint.name} (#{endpoint.model})"
+    base = endpoint_name(endpoint)
 
     case Map.get(support, endpoint.uuid) do
       :unsupported -> base <> " — " <> unsupported
@@ -636,7 +652,7 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   defp model_options(editing, task) do
     default =
       case Map.fetch!(editing.defaults, task) do
-        %{name: name, model: model} -> gettext("Default: %{name}", name: "#{name} (#{model})")
+        %{} = default -> gettext("Default: %{name}", name: endpoint_name(default))
         nil -> gettext("Default: none set")
       end
 
@@ -659,8 +675,11 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   defp endpoint_label(endpoint, support, :speech),
     do: model_label(endpoint, support, gettext("does not take audio"), gettext("audio unknown"))
 
-  defp summary_name(%{name: name, model: model}), do: "#{name} (#{model})"
+  # One way to write an endpoint: its name, then its model.
+  defp endpoint_name(%{name: name, model: model}), do: "#{name} (#{model})"
+
   defp summary_name(nil), do: gettext("none set")
+  defp summary_name(endpoint), do: endpoint_name(endpoint)
 
   # What is in effect for the user for a task, in words.
   defp in_effect_text(%{source: :own} = info),
@@ -669,11 +688,17 @@ defmodule PhoenixKitAgent.Web.UsersLive do
   defp in_effect_text(%{source: :default} = info),
     do: gettext("In effect: default — %{name}", name: summary_name(info.model))
 
+  defp in_effect_text(%{source: :fallback, model: nil}),
+    do:
+      gettext(
+        "The own model cannot be used (switched off, without credentials or no longer a chat model) and no default is set."
+      )
+
   defp in_effect_text(%{source: :fallback} = info),
     do:
       gettext(
-        "The own model cannot be used (switched off or without credentials), so the default is in effect — %{name}",
-        name: summary_name(info.model)
+        "The own model cannot be used (switched off, without credentials or no longer a chat model), so the default is in effect — %{name}",
+        name: endpoint_name(info.model)
       )
 
   attr(:editing, :map, required: true)
@@ -686,13 +711,17 @@ defmodule PhoenixKitAgent.Web.UsersLive do
     assigns =
       assign(assigns,
         name: Atom.to_string(assigns.field),
-        info: Map.fetch!(assigns.editing.in_effect, assigns.task)
+        info: Map.fetch!(assigns.editing.in_effect, assigns.task),
+        money_off?: money_off?(assigns.editing, assigns.task),
+        money_id:
+          if(assigns.task == :chat, do: "agent-user-money-off", else: assigns.dom <> "-money-off")
       )
 
     ~H"""
     <div id={@dom <> "-field"} class="min-w-0">
       <.select
         id={@dom}
+        aria-describedby={@dom <> "-effective"}
         name={"user_settings[#{@name}]"}
         label={@label}
         value={@editing.params[@name]}
@@ -716,9 +745,21 @@ defmodule PhoenixKitAgent.Web.UsersLive do
       >
         {gettext("This model is outside the list of models users may choose.")}
       </p>
+      <p :if={@money_off?} id={@money_id} class="mt-1 text-xs text-warning break-words">
+        {money_off_text(@task)}
+      </p>
     </div>
     """
   end
+
+  defp money_off_text(:chat),
+    do:
+      gettext(
+        "This model does not report what a call costs: money is not counted, only the turn limit applies."
+      )
+
+  defp money_off_text(_pictures_or_speech),
+    do: gettext("This model does not report what a call costs: money is not counted for it.")
 
   defp errors(editing, field), do: Map.get(editing.errors, field, [])
 
@@ -783,12 +824,6 @@ defmodule PhoenixKitAgent.Web.UsersLive do
               errors={errors(@editing, :system_prompt)}
               rows="4"
             />
-
-            <p :if={money_off?(@editing)} id="agent-user-money-off" class="text-sm text-warning">
-              {gettext(
-                "This model does not report what a call costs: money is not counted, only the turn limit applies."
-              )}
-            </p>
 
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <.decimal_input
