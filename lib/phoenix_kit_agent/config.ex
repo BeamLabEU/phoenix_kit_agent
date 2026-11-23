@@ -121,7 +121,7 @@ defmodule PhoenixKitAgent.Config do
 
   @typedoc "Why `put_default_endpoint/2`, `put_vision_endpoint/2` or `put_speech_endpoint/2` wrote nothing."
   @type endpoint_refusal ::
-          :invalid_endpoint | {:model_unfit | :model_unverified, [atom()]}
+          :invalid_endpoint | :switched_off | {:model_unfit | :model_unverified, [atom()]}
 
   # ── Readers ───────────────────────────────────────────────────────────
 
@@ -459,7 +459,8 @@ defmodule PhoenixKitAgent.Config do
   task (`PhoenixKitAI.Tasks.check_selection/2`): one whose model is known not
   to take tools is `{:error, {:model_unfit, missing}}`, one nobody knows
   takes them `{:error, {:model_unverified, unclear}}`, and nothing is
-  written; the endpoint already set is not checked again. `opts` go to
+  written; an endpoint that is switched off is `{:error, :switched_off}` unless
+  it is the one already set; the endpoint already set is not checked again. `opts` go to
   `PhoenixKit.Settings` (`actor_uuid:`, `source:`). The caller checks
   `agent.manage`.
   """
@@ -538,8 +539,8 @@ defmodule PhoenixKitAgent.Config do
       {:error, {reason, _needs}} = refusal when reason in [:model_unfit, :model_unverified] ->
         refusal
 
-      {:error, :switched_off} ->
-        {:error, :invalid_endpoint}
+      {:error, :switched_off} = refusal ->
+        refusal
 
       _not_a_chat_endpoint ->
         {:error, :invalid_endpoint}

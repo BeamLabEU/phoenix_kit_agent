@@ -445,6 +445,15 @@ defmodule PhoenixKitAgent.ModelsTest do
       refute Models.summaries([bare.uuid])[bare.uuid].enabled?
     end
 
+    test "summaries ignore what is not a uuid" do
+      endpoint = endpoint_fixture(%{provider: "deepseek", model: "deepseek-chat"})
+
+      assert Map.keys(Models.summaries(["nonsense", nil, 5, endpoint.uuid, endpoint.uuid])) ==
+               [endpoint.uuid]
+
+      assert Models.summaries(["nonsense"]) == %{}
+    end
+
     test "a picture's description is counted where a chat call on the model would be" do
       claude = endpoint_fixture(%{provider: "anthropic", model: "claude-sonnet-5-5"})
 

@@ -103,8 +103,10 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
   be saved is marked, not only the one the write named. `refusal` is that
   first `{field, reason}`.
   """
-  @spec refused(t(), map(), {atom(), term()}) :: t()
+  @spec refused(t(), map(), {atom() | :form, term()}) :: t()
   def refused(data, attrs, {field, reason}) do
+    refusal = refusal_errors(field, reason)
+
     submitted =
       for f <- data.fields, is_binary(attrs[f.name]), into: %{}, do: {f.field, attrs[f.name]}
 
@@ -118,8 +120,15 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
           into: %{},
           do: {f.field, refusal_text(why)}
 
-    %{data | fields: fields, errors: Map.put(errors, field, refusal_text(reason))}
+    %{data | fields: fields, errors: Map.merge(errors, refusal)}
   end
+
+  # The refusal belongs to a field; one the write cannot place (a value that is
+  # not an endpoint at all) is the form's.
+  defp refusal_errors(:form, _reason),
+    do: %{form: gettext("Nothing was saved: check the highlighted fields.")}
+
+  defp refusal_errors(field, reason), do: %{field => refusal_text(reason)}
 
   defp with_submitted(field, submitted, true) do
     case Map.fetch(submitted, field.field) do
@@ -174,6 +183,9 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
         class="space-y-3"
       >
         <.model_field :for={field <- @data.fields} field={field} error={@data.errors[field.field]} />
+        <p :if={@data.errors[:form]} id="pk-agent-models-error" role="alert" class="text-xs text-error">
+          {@data.errors[:form]}
+        </p>
         <div class="flex justify-end">
           <button
             id="pk-agent-models-save"
@@ -233,7 +245,7 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
       <div :if={!editing?(@field)}>
         <p class="text-xs font-medium">{label(@field.task)}</p>
         <p id={@dom <> "-model"} class="text-sm break-words">
-          {priced_name(@field.model, @field.task)}
+          {name(@field.model)}
           <span
             id={@dom <> "-effective"}
             data-source={@field.source}
@@ -289,7 +301,7 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
         nil -> gettext("Default: none set")
       end
 
-    [{default, ""} | Enum.map(field.choices, &{priced_name(&1, field.task), &1.uuid})]
+    [{default, ""} | Enum.map(field.choices, &{name(&1), &1.uuid})]
   end
 
   defp label(:chat), do: gettext("Model")
@@ -299,16 +311,6 @@ defmodule PhoenixKitAgent.Web.Dock.MyAssistant do
   defp name(%{name: name, model: model}), do: "#{name} (#{model})"
 
   defp name(nil), do: gettext("none set")
-
-  # The name, and where money is not counted for that kind of call, a note: the
-  # user's own limits in money do not hold for such a model.
-  defp priced_name(%{} = summary, task) do
-    if Models.reports_cost?(summary, task),
-      do: name(summary),
-      else: name(summary) <> " — " <> gettext("money is not counted")
-  end
-
-  defp priced_name(nil, _task), do: name(nil)
 
   # Under a select, which already shows the chosen model: only the state, and
   # what is in effect where that is not what is chosen.

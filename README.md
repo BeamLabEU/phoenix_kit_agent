@@ -19,8 +19,10 @@ locks, rounds of model and tool calls over the session's own tools, stop and
 deadline), the writes the user confirms in the chat
 (`PhoenixKitAgent.Confirmations`, below), the per-user settings
 (`PhoenixKitAgent.UserConfig` — the user's own value, else the module default:
-the model, the admin's prompt, the limits, the on/off switch and the personal
-instructions), the system prompt put together in the order of priority
+the three models — chat, pictures and speech, each with a site default and a
+list of models users may choose themselves — the admin's prompt, the limits, the
+on/off switch and the personal instructions, which the user edits in the panel's
+"My assistant"), the system prompt put together in the order of priority
 (`PhoenixKitAgent.Prompt`), Admin → AI Agent → Users, where an admin with
 `agent.manage` sees every user's model, limits and spending and sets them
 (with what the assistant can use now — on Settings → AI Agent for the
@@ -43,8 +45,8 @@ their chats — "New chat" on top, then the chats with the newest message first,
 panel on the right, about 400 px wide (it can be dragged wider), which narrows
 the page; on a phone it takes the whole screen. The panel has the feed, the
 input with a paper clip for files, "Stop", an indicator of what the assistant
-is doing (thinking / calling a tool), and a small form for the user's own
-personal instructions. "New chat" empties the panel; the chat is made with its
+is doing (thinking / calling a tool), and a "My assistant" button that opens the
+user's own settings: three models, limits and instructions (below). "New chat" empties the panel; the chat is made with its
 first message or file, and takes its title from that message (a first message
 or file that is refused leaves no chat behind). A long chat opens at its end,
 with "Earlier messages" above. Open or closed, the chosen chat and the width are
@@ -96,7 +98,7 @@ on a desktop they take two clicks.
 A host that renders the widget (`PhoenixKitAgent.Web.Dock`) in a header of its
 own, over a page given to the panel, can ask for a **compact panel**: with the
 class `pk-agent-compact` on `<body>` the panel has no header bar, and its
-title (the chat's), the personal instructions button and the close button
+title (the chat's), the "My assistant" button and the close button
 stand in the widget, next to the button with the list of chats. The class may
 be in the layout or be set and removed at any time (say, as a tablet turns):
 `document.body.classList.toggle("pk-agent-compact", on)`; the server renders
@@ -490,8 +492,8 @@ known not to fit the task marked), and says what is in effect for that user: his
 own model, the default, the default because his own cannot be used, or an own
 model outside the list.
 Where a model reports no price for a kind of call, money is not counted for it
-and only the turn limit applies: the list, the three fields and the user's own
-choices say so ("money is not counted") per task.
+and only the turn limit applies: the administrator's list of models and the Users
+form say so ("money is not counted") per task. The user's own panel does not.
 
 In the chat panel the button that opened the personal instructions opens "My
 assistant": the user's three models (a choice among the models the administrator

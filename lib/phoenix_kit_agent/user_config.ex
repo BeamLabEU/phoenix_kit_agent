@@ -408,7 +408,11 @@ defmodule PhoenixKitAgent.UserConfig do
   reason, and nothing is written. A value that is not a uuid is `{:error,
   changeset}`. The row is the session user's, never named by the caller; only
   these three columns are written, so the admin's fields and a running turn's
-  lock stay. Returns `{:ok, changed_fields}`; refusals as `put_personal_instructions/3`.
+  lock stay. A speech model is taken only where the AI module can write speech
+  down (`PhoenixKitAgent.Config.transcribe?/0`). A change is written to the
+  Activity log as `agent.user_settings_updated` with the user as the actor,
+  the fields, and for each the endpoint uuid it was and became.
+  Returns `{:ok, changed_fields}`; refusals as `put_personal_instructions/3`.
   """
   @spec put_personal_models(Conversations.session_ref(), map(), keyword()) ::
           {:ok, [atom()]}
@@ -418,8 +422,10 @@ defmodule PhoenixKitAgent.UserConfig do
              | Ecto.Changeset.t()}
   def put_personal_models(session_ref, attrs, opts) when is_map(attrs) do
     Conversations.on_the_site(session_ref, fn ->
-      with {:ok, user_uuid} <- Conversations.authorize_session(session_ref, opts) do
-        save_personal_models(user_uuid, attrs)
+      with {:ok, user_uuid} <- Conversations.authorize_session(session_ref, opts),
+           {:ok, fields, changes} <- save_personal_models(user_uuid, attrs) do
+        log_models_change(user_uuid, changes)
+        {:ok, fields}
       end
     end)
   end
@@ -441,10 +447,20 @@ defmodule PhoenixKitAgent.UserConfig do
       with {:error, refusal} <- check_personal_models(changeset), do: repo().rollback(refusal)
 
       case repo().update(changeset) do
-        {:ok, _row} -> changeset.changes |> Map.keys() |> Enum.sort()
-        {:error, changeset} -> repo().rollback(changeset)
+        {:ok, _row} ->
+          changes =
+            Map.new(changeset.changes, fn {field, to} -> {field, {Map.get(row, field), to}} end)
+
+          {changeset.changes |> Map.keys() |> Enum.sort(), changes}
+
+        {:error, changeset} ->
+          repo().rollback(changeset)
       end
     end)
+    |> case do
+      {:ok, {fields, changes}} -> {:ok, fields, changes}
+      {:error, _reason} = error -> error
+    end
   end
 
   # What a user chose anew: each is one he may choose for that task. A
@@ -452,12 +468,20 @@ defmodule PhoenixKitAgent.UserConfig do
   defp check_personal_models(changeset) do
     Enum.find_value(@model_fields, :ok, fn {task, field} ->
       with uuid when is_binary(uuid) <- Ecto.Changeset.get_change(changeset, field),
-           {:error, reason} <- Models.selection_check(task, uuid) do
+           {:error, reason} <- personal_check(task, uuid) do
         {:error, {field, reason}}
       else
         _not_changed_cleared_or_fit -> nil
       end
     end)
+  end
+
+  # A speech model is taken only where the AI module can write speech down, as
+  # the admin's page does.
+  defp personal_check(task, uuid) do
+    if task == :speech and not Config.transcribe?(),
+      do: {:error, :not_allowed},
+      else: Models.selection_check(task, uuid)
   end
 
   # ── the admin's ───────────────────────────────────────────────────────
@@ -618,6 +642,28 @@ defmodule PhoenixKitAgent.UserConfig do
 
   defp unchanged?(row, expected) when is_map(expected),
     do: Enum.all?(expected, fn {field, value} -> Map.get(row, field) == value end)
+
+  # The user's own change, in the same entry as an administrator's, the actor
+  # being the user: the fields, and for each the endpoint it was and became (a
+  # uuid, nil for the default) — nothing secret.
+  defp log_models_change(_user_uuid, changes) when map_size(changes) == 0, do: :ok
+
+  defp log_models_change(user_uuid, changes) do
+    Activity.log("agent", "agent.user_settings_updated",
+      actor_uuid: user_uuid,
+      resource_type: "agent_user_settings",
+      resource_uuid: user_uuid,
+      metadata: %{
+        "fields" => changes |> Map.keys() |> Enum.sort() |> Enum.map(&Atom.to_string/1),
+        "changes" =>
+          Map.new(changes, fn {field, {from, to}} ->
+            {Atom.to_string(field), %{"from" => from, "to" => to}}
+          end)
+      }
+    )
+
+    :ok
+  end
 
   defp log_change(_actor_uuid, _target, []), do: :ok
 

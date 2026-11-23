@@ -256,9 +256,9 @@ defmodule PhoenixKitAgent.ConfigTest do
 
       switch_off(endpoint)
 
-      assert {:error, :invalid_endpoint} = Config.put_default_endpoint(endpoint.uuid, [])
-      assert {:error, :invalid_endpoint} = Config.put_vision_endpoint(endpoint.uuid, [])
-      assert {:error, :invalid_endpoint} = Config.put_speech_endpoint(endpoint.uuid, [])
+      assert {:error, :switched_off} = Config.put_default_endpoint(endpoint.uuid, [])
+      assert {:error, :switched_off} = Config.put_vision_endpoint(endpoint.uuid, [])
+      assert {:error, :switched_off} = Config.put_speech_endpoint(endpoint.uuid, [])
       assert Config.default_endpoint_uuid() == nil
     end
 

@@ -1644,7 +1644,7 @@ defmodule PhoenixKitAgent.Web.Dock do
         shown_refused(socket, attrs, {field, reason})
 
       {:error, %Ecto.Changeset{}} ->
-        shown_refused(socket, attrs, {:endpoint_uuid, :not_allowed})
+        shown_refused(socket, attrs, {:form, :not_allowed})
 
       {:error, reason} ->
         refused(socket, reason)

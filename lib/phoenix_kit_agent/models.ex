@@ -166,21 +166,34 @@ defmodule PhoenixKitAgent.Models do
 
   @doc "An endpoint as a page keeps it (`t:summary/0`)."
   @spec summary(Endpoint.t()) :: summary()
-  def summary(%Endpoint{} = endpoint),
-    do: %{
+  def summary(%Endpoint{} = endpoint) do
+    costs = Map.new(@kinds, &{&1, reports_cost?(endpoint, &1)})
+
+    %{
       uuid: endpoint.uuid,
       name: endpoint.name,
       model: endpoint.model,
       provider: endpoint.provider,
-      reports_cost?: reports_cost?(endpoint),
-      costs: Map.new(@kinds, &{&1, reports_cost?(endpoint, &1)}),
+      reports_cost?: costs.chat,
+      costs: costs,
       enabled?: endpoint.enabled != false
     }
+  end
 
-  @doc "The endpoints with these uuids as `t:summary/0`: `%{uuid => summary}`."
-  @spec summaries([String.t()]) :: %{String.t() => summary()}
+  @doc """
+  The endpoints with these uuids as `t:summary/0`: `%{uuid => summary}`. A value
+  that is not a uuid names no endpoint.
+  """
+  @spec summaries([term()]) :: %{String.t() => summary()}
   def summaries(uuids) when is_list(uuids) do
-    from(e in Endpoint, where: e.uuid in ^Enum.uniq(uuids), select: struct(e, ^@cost_fields))
+    valid =
+      for uuid <- uuids,
+          is_binary(uuid),
+          {:ok, uuid} <- [Ecto.UUID.cast(uuid)],
+          uniq: true,
+          do: uuid
+
+    from(e in Endpoint, where: e.uuid in ^valid, select: struct(e, ^@cost_fields))
     |> RepoHelper.repo().all()
     |> Map.new(&{&1.uuid, summary(&1)})
   end

@@ -327,6 +327,31 @@ defmodule PhoenixKitAgent.Web.SettingsLiveTest do
       refute has_element?(view, "#agent-speech-money-off")
     end
 
+    test "a picture model that reports no cost is warned about", ctx do
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", ctx.direct.uuid)
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      assert has_element?(view, "#agent-vision-money-off")
+
+      {:ok, _} = Settings.update_setting("agent_vision_endpoint_uuid", "")
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      refute has_element?(view, "#agent-vision-money-off")
+    end
+
+    test "a switched-off model is refused as switched off, not as unavailable", ctx do
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^ctx.hears.uuid),
+        set: [enabled: false]
+      )
+
+      {:ok, view, _html} = live(ctx.conn, @path)
+
+      render_hook(view, "save_models", %{"models" => %{"default_endpoint_uuid" => ctx.hears.uuid}})
+
+      assert has_element?(view, "#agent-models-form p.text-error", "switched off")
+      assert Config.default_endpoint_uuid() == nil
+    end
+
     test "a model the page did not offer is refused", ctx do
       embedder = endpoint_fixture(%{name: "Embed", model: "openai/text-embedding-3-small"})
       {:ok, view, _html} = live(ctx.conn, @path)

@@ -828,6 +828,71 @@ defmodule PhoenixKitAgent.UserConfigTest do
       assert Repo.get(UserSettings, user.uuid) == nil
     end
 
+    test "the user's own change is in the activity log, with him as the actor", %{
+      ref: ref,
+      user: user,
+      good: good
+    } do
+      other = all_round(%{name: "Other"})
+      allow!([good, other])
+
+      assert {:ok, [:endpoint_uuid]} =
+               UserConfig.put_personal_models(ref, %{"endpoint_uuid" => good.uuid}, @me)
+
+      assert {:ok, [:endpoint_uuid]} =
+               UserConfig.put_personal_models(ref, %{"endpoint_uuid" => other.uuid}, @me)
+
+      # Nothing changed: nothing logged.
+      assert {:ok, []} =
+               UserConfig.put_personal_models(ref, %{"endpoint_uuid" => other.uuid}, @me)
+
+      assert [first, second] =
+               "agent.user_settings_updated"
+               |> activity()
+               |> Enum.sort_by(& &1.inserted_at, {:asc, DateTime})
+
+      for entry <- [first, second] do
+        assert entry.actor_uuid == user.uuid
+        assert entry.resource_uuid == user.uuid
+        assert entry.module == "agent"
+        assert entry.metadata["fields"] == ["endpoint_uuid"]
+      end
+
+      assert first.metadata["changes"] == %{
+               "endpoint_uuid" => %{"from" => nil, "to" => good.uuid}
+             }
+
+      assert second.metadata["changes"] == %{
+               "endpoint_uuid" => %{"from" => good.uuid, "to" => other.uuid}
+             }
+    end
+
+    test "a refused choice logs nothing", %{ref: ref, good: good} do
+      assert {:error, _} =
+               UserConfig.put_personal_models(ref, %{"endpoint_uuid" => good.uuid}, @me)
+
+      assert activity("agent.user_settings_updated") == []
+    end
+
+    test "a speech model is refused where the AI module cannot write speech down", %{
+      ref: ref,
+      user: user,
+      good: good
+    } do
+      allow!([good])
+      Application.put_env(:phoenix_kit_agent, :speech_ai, __MODULE__)
+      on_exit(fn -> Application.delete_env(:phoenix_kit_agent, :speech_ai) end)
+      refute Config.transcribe?()
+
+      assert {:error, {:speech_endpoint_uuid, :not_allowed}} =
+               UserConfig.put_personal_models(ref, %{"speech_endpoint_uuid" => good.uuid}, @me)
+
+      assert Repo.get(UserSettings, user.uuid) == nil
+
+      # Going back to the default stays possible.
+      assert {:ok, _} = UserConfig.put_personal_models(ref, %{"speech_endpoint_uuid" => ""}, @me)
+    end
+
     test "an allowed, valid model is taken, for each task, and is in effect at once", %{
       ref: ref,
       user: user,

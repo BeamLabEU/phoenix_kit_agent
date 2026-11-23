@@ -121,6 +121,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
        )
        |> assign(
          money_off?: money_off?(),
+         vision_money_off?: vision_money_off?(),
          speech_money_off?: speech_money_off?(),
          transcribe?: Config.transcribe?()
        )
@@ -417,11 +418,27 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
 
   # The model kept as it is is not checked again: the form saves both fields.
   defp offered_model(field, uuid, offered, chosen, errors) do
-    with true <- MapSet.member?(offered, uuid),
+    with :ok <- offered?(uuid, offered),
          :ok <- fits(field, uuid) do
       {Map.put(chosen, field, uuid), errors}
     else
       refusal -> {chosen, Map.put(errors, field, [unfit_text(field, refusal)])}
+    end
+  end
+
+  # Offered: on the page's selects. One that is not, and is switched off, says so.
+  defp offered?(uuid, offered) do
+    cond do
+      MapSet.member?(offered, uuid) -> :ok
+      switched_off?(uuid) -> {:error, :switched_off}
+      true -> {:error, :not_offered}
+    end
+  end
+
+  defp switched_off?(uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, uuid} -> match?(%{enabled?: false}, Models.summaries([uuid])[uuid])
+      :error -> false
     end
   end
 
@@ -462,6 +479,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
         "cannot be used yet: nobody knows whether its model takes audio. Mark what it can do on its AI endpoint first"
       )
 
+  defp unfit_text(_field, {:error, :switched_off}), do: gettext("is switched off")
   defp unfit_text(_field, _not_offered), do: gettext("is not available")
 
   defp text_or_blank(value) when is_binary(value), do: value
@@ -479,6 +497,7 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
       socket
       |> assign(
         money_off?: money_off?(),
+        vision_money_off?: vision_money_off?(),
         speech_money_off?: speech_money_off?(),
         transcribe?: Config.transcribe?()
       )
@@ -818,6 +837,16 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
     end
   end
 
+  # Whether the picture model leaves money uncounted (none chosen: nothing to say).
+  defp vision_money_off? do
+    with uuid when is_binary(uuid) <- Config.vision_endpoint_uuid(),
+         %{} = endpoint <- PhoenixKitAI.get_endpoint(uuid) do
+      not Models.reports_cost?(endpoint, :vision)
+    else
+      _none -> false
+    end
+  end
+
   # Whether the speech model leaves money uncounted (none chosen: nothing to say).
   defp speech_money_off? do
     with uuid when is_binary(uuid) <- Config.speech_endpoint_uuid(),
@@ -902,6 +931,11 @@ defmodule PhoenixKitAgent.Web.SettingsLive do
             <p :if={@transcribe?} id="agent-speech-hint" class="text-xs text-base-content/60">
               {gettext(
                 "The speech recognition model writes down the voice messages of the Telegram bot and the recordings of the chat panel's microphone. Choose a model that takes audio, for example Gemini Flash. Without it, voice input is off."
+              )}
+            </p>
+            <p :if={@vision_money_off?} id="agent-vision-money-off" class="text-xs text-warning">
+              {gettext(
+                "The picture model does not report what a call costs: what it spends is not counted, and nothing limits pictures by money."
               )}
             </p>
             <p :if={@transcribe? and @speech_money_off?} id="agent-speech-money-off" class="text-xs text-warning">

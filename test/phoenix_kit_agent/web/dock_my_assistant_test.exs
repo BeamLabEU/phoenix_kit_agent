@@ -333,6 +333,18 @@ defmodule PhoenixKitAgent.Web.DockMyAssistantTest do
   end
 
   describe "a refused save keeps the choices and marks every failing field" do
+    test "a value that is no endpoint is the form's error, and no field it was not in is blamed",
+         ctx do
+      view = open_settings(ctx)
+
+      render_hook(view, "save_models", %{"models" => %{"vision_endpoint_uuid" => "nonsense"}})
+
+      assert has_element?(view, "#pk-agent-models-error")
+      assert has_element?(view, "#pk-agent-model-vision-field p.text-error")
+      refute has_element?(view, "#pk-agent-model-chat-field p.text-error")
+      assert row(ctx) == nil
+    end
+
     setup ctx do
       allow!([ctx.chat, ctx.seer, ctx.ear])
       :ok
@@ -387,31 +399,23 @@ defmodule PhoenixKitAgent.Web.DockMyAssistantTest do
       refute has_element?(view, "#pk-agent-models-closed")
     end
 
-    test "a model without a price is marked in the choices, one with a price is not", ctx do
+    test "a model without a price is not marked for the user", ctx do
       bare = all_round(%{name: "Bare", provider: "deepseek", model: "deepseek-chat"})
-      priced = all_round(%{name: "Priced", provider: "anthropic", model: "claude-sonnet-5-5"})
-      allow!([ctx.chat, bare, priced])
+      allow!([ctx.chat, bare])
 
       view = open_settings(ctx)
 
       for dom <- ~w(chat vision speech) do
-        assert has_element?(
-                 view,
-                 "#pk-agent-model-#{dom} option[value='#{bare.uuid}']",
-                 "money is not counted"
-               )
-
-        refute has_element?(
-                 view,
-                 "#pk-agent-model-#{dom} option[value='#{priced.uuid}']",
-                 "money is not counted"
-               )
+        assert has_element?(view, "#pk-agent-model-#{dom} option[value='#{bare.uuid}']", "Bare")
+        refute has_element?(view, "#pk-agent-model-#{dom} option", "money is not counted")
       end
 
       Repo.insert!(%UserSettings{user_uuid: ctx.user.uuid, endpoint_uuid: bare.uuid})
       {:ok, _} = Config.put_selectable_endpoints([], [])
       view = open_settings(ctx)
-      assert has_element?(view, "#pk-agent-model-chat-model", "money is not counted")
+
+      assert has_element?(view, "#pk-agent-model-chat-model", "Bare")
+      refute has_element?(view, "#pk-agent-my-assistant", "money is not counted")
     end
 
     test "each select points to what is said under it", ctx do
