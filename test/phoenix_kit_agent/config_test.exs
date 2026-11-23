@@ -366,6 +366,39 @@ defmodule PhoenixKitAgent.ConfigTest do
     end
   end
 
+  describe "a damaged list of the endpoints users may choose" do
+    defp store_list(value),
+      do:
+        {:ok, _} =
+          Settings.update_json_setting_with_module(
+            "agent_selectable_endpoint_uuids",
+            value,
+            "agent"
+          )
+
+    test "keeps what is a uuid, in canonical form, and drops the rest" do
+      uuid = Ecto.UUID.generate()
+
+      store_list(%{
+        "uuids" => ["zzz", 5, nil, String.upcase(uuid), "aaaaaaaaaaaaaaaa", uuid, %{"a" => 1}]
+      })
+
+      assert Config.selectable_endpoint_uuids() == [uuid]
+    end
+
+    test "a value that is not a list of uuids is an empty list" do
+      for value <- [%{"other" => 1}, %{"uuids" => "x"}, %{"uuids" => nil}, %{}] do
+        store_list(value)
+        assert Config.selectable_endpoint_uuids() == []
+      end
+    end
+
+    test "a raw 16-byte string is no endpoint to write either" do
+      assert {:error, :invalid_endpoint} =
+               Config.put_selectable_endpoints(["aaaaaaaaaaaaaaaa"], [])
+    end
+  end
+
   describe "the default of a task" do
     test "is read by the task's name" do
       chat = endpoint_fixture()

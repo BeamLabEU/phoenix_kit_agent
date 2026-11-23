@@ -313,8 +313,15 @@ defmodule PhoenixKitAgent.Models do
       connected?(endpoint.provider)
   end
 
+  # Through the cache `PhoenixKitAI` itself asks (a settings read and a decrypt
+  # otherwise), so the answer is the one a call would get, and `effective/1`,
+  # which asks on every turn, does not pay for it each time.
   defp connected?(key) do
-    present?(key) and match?({:ok, _credentials}, Integrations.get_credentials(key))
+    present?(key) and
+      match?(
+        {:ok, _credentials},
+        PhoenixKitAI.Cache.credentials(key, fn -> Integrations.get_credentials(key) end)
+      )
   end
 
   defp present?(text), do: is_binary(text) and text != ""

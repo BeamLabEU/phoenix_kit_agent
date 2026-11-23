@@ -171,6 +171,21 @@ defmodule PhoenixKitAgent.SpeechTest do
       refute_received :model_called
     end
 
+    test "with no speech model at all, the AI module and the session are asked first", %{
+      ref: ref
+    } do
+      {:ok, _} = Config.put_speech_endpoint(nil, [])
+      model_not_called()
+
+      outsider = user_with(["dashboard"], "outsider-2")
+      {outsider_ref, _token} = session_fixture(outsider)
+      assert {:error, :forbidden} = transcribe(outsider_ref)
+
+      {:ok, _} = PhoenixKitAI.disable_system()
+      assert {:error, :ai_disabled} = transcribe(ref)
+      refute_received :model_called
+    end
+
     test "a user who may not use the assistant is refused", %{} do
       outsider = user_with(["dashboard"], "outsider")
       {ref, _token} = session_fixture(outsider)

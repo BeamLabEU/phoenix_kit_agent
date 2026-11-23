@@ -124,6 +124,11 @@ defmodule PhoenixKitAgent.Speech do
 
   # The user and the model the limits were checked for, which are the ones the
   # call is made for.
+  # The order: the AI module can write speech down at all, the AI module is on,
+  # the session, and only then the user's own model — which cannot be known
+  # before the session names the user. So a user with no speech model at all
+  # hears `:ai_disabled` or the session's refusal before `:speech_off`
+  # (`:speech_off` first only where the AI module cannot transcribe).
   defp verify(session_ref, opts) do
     with :ok <- speech_on(),
          :ok <- ai_enabled(),

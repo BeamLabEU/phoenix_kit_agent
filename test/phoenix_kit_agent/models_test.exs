@@ -227,6 +227,27 @@ defmodule PhoenixKitAgent.ModelsTest do
       assert MapSet.to_list(usable) == [good.uuid]
     end
 
+    test "a credential is read through the cache PhoenixKitAI asks, so a change is seen as it sees it" do
+      start_supervised!(PhoenixKitAI.Cache)
+      key = "cache-probe-#{System.unique_integer([:positive])}"
+      keyless = endpoint_fixture(%{name: "Keyless", model: "a/keyless", provider: key})
+
+      Repo.update_all(from(e in PhoenixKitAI.Endpoint, where: e.uuid == ^keyless.uuid),
+        set: [api_key: "", integration_uuid: nil]
+      )
+
+      refute MapSet.member?(Models.usable_uuids([keyless.uuid]), keyless.uuid)
+
+      # The credential appears in the cache PhoenixKitAI reads (as an integration
+      # saved elsewhere would after its event) … but only a hit is cached, so a miss
+      # is asked again at the source.
+      assert {:ok, _} = PhoenixKitAI.Cache.credentials(key, fn -> {:ok, %{"api_key" => "k"}} end)
+      assert MapSet.member?(Models.usable_uuids([keyless.uuid]), keyless.uuid)
+
+      PhoenixKitAI.Cache.invalidate_credentials()
+      refute MapSet.member?(Models.usable_uuids([keyless.uuid]), keyless.uuid)
+    end
+
     test "nothing asked is nothing read" do
       assert Models.usable_uuids([]) == MapSet.new()
     end
@@ -287,6 +308,18 @@ defmodule PhoenixKitAgent.ModelsTest do
       )
 
       assert {:error, :unusable} = Models.selection_check(:vision, eyes.uuid)
+    end
+
+    test "the uuid of a deleted endpoint left in the list is :not_allowed and is not offered" do
+      gone = declared("a/gone", %{"vision" => "yes"})
+      kept = declared("a/kept", %{"vision" => "yes"})
+      listed([gone, kept])
+      {:ok, _} = PhoenixKitAI.delete_endpoint(gone)
+
+      assert gone.uuid in Config.selectable_endpoint_uuids()
+      assert {:error, :not_allowed} = Models.selection_check(:vision, gone.uuid)
+      assert :ok = Models.selection_check(:vision, kept.uuid)
+      assert Enum.map(Models.selectable(:vision), & &1.uuid) == [kept.uuid]
     end
 
     test "selectable/1 offers the listed endpoints that fit the task, by name, as summaries" do

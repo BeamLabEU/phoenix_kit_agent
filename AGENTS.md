@@ -113,7 +113,8 @@ and `Web.Markdown`) and the optional chat retention
   (`Models.selection_check/2`), not when it is read. An own model outside the
   list of those users may choose (`agent_selectable_endpoint_uuids`,
   `Config.selectable_endpoint_uuids/0`, empty by default) stays in effect, marked
-  `outside_list?`: only an administrator can have set it. A user's write is
+  `outside_list?` (an administrator set it, or the user chose it while it was on
+  the list: removing a model from the list does not revoke it). A user's write is
   `UserConfig.put_personal_models/3` alone — the row of the session's user,
   `UserSettings.personal_models_changeset/2` (the three columns, nothing else),
   a model only if it is "default" or listed, usable and fit for its task; the

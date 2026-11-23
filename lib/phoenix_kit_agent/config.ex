@@ -164,7 +164,7 @@ defmodule PhoenixKitAgent.Config do
   task is `PhoenixKitAgent.Models.selectable/1`'s to say.
   """
   @spec selectable_endpoint_uuids() :: [String.t()]
-  def selectable_endpoint_uuids, do: @selectable_key |> json_setting() |> watcher_uuids()
+  def selectable_endpoint_uuids, do: @selectable_key |> json_setting() |> endpoint_uuid_list()
 
   @doc "The AI endpoint that describes images for a model without image input, or `nil`."
   @spec vision_endpoint_uuid() :: String.t() | nil
@@ -513,7 +513,7 @@ defmodule PhoenixKitAgent.Config do
   def put_selectable_endpoints(_uuids, _opts), do: {:error, :invalid_endpoint}
 
   defp chat_endpoint(uuid) when is_binary(uuid) do
-    with {:ok, uuid} <- Ecto.UUID.cast(uuid),
+    with {:ok, uuid} <- canonical_uuid(uuid),
          %Endpoint{} = endpoint <- PhoenixKitAI.get_endpoint(uuid),
          :chat <- Endpoint.kind(endpoint) do
       {:ok, uuid}
@@ -865,6 +865,28 @@ defmodule PhoenixKitAgent.Config do
   end
 
   defp watcher_uuids(_none), do: []
+
+  # The list of the endpoints users may choose: what a damaged value holds that
+  # is not a uuid is dropped, one written in capitals is the same uuid.
+  defp endpoint_uuid_list(%{"uuids" => uuids}) when is_list(uuids) do
+    uuids
+    |> Enum.flat_map(fn uuid ->
+      case canonical_uuid(uuid) do
+        {:ok, uuid} -> [uuid]
+        :error -> []
+      end
+    end)
+    |> Enum.uniq()
+  end
+
+  defp endpoint_uuid_list(_none), do: []
+
+  # A uuid as it is written, 36 characters: `Ecto.UUID.cast/1` also takes any
+  # 16 bytes as a raw uuid, which no list of endpoints holds.
+  defp canonical_uuid(uuid) when is_binary(uuid) and byte_size(uuid) == 36,
+    do: Ecto.UUID.cast(uuid)
+
+  defp canonical_uuid(_other), do: :error
 
   defp uuid_setting(key) do
     with value when is_binary(value) <- string_setting(key),

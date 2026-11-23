@@ -25,8 +25,8 @@ defmodule PhoenixKitAgent.UserConfig do
     * `:own` — the user's own, which can be called at all
       (`PhoenixKitAgent.Models.usable_uuids/1`). An own model outside the list of
       those users may choose (`PhoenixKitAgent.Config.selectable_endpoint_uuids/0`)
-      stays in effect: only an administrator can have set it, and it is marked
-      `outside_list?` so a page can say so;
+      stays in effect — an administrator set it, or the user chose it while it was
+      on the list — and is marked `outside_list?` so a page can say so;
     * `:fallback` — the user's own model was deleted, switched off or lost its
       credentials, so the default is used instead, and the page can say so.
       This holds for the chat model too: a row whose own `endpoint_uuid` can
@@ -425,34 +425,26 @@ defmodule PhoenixKitAgent.UserConfig do
   end
 
   defp save_personal_models(user_uuid, attrs) do
-    result =
-      repo().transaction(fn ->
-        repo().insert!(%UserSettings{user_uuid: user_uuid},
-          on_conflict: :nothing,
-          conflict_target: :user_uuid
-        )
+    repo().transaction(fn ->
+      repo().insert!(%UserSettings{user_uuid: user_uuid},
+        on_conflict: :nothing,
+        conflict_target: :user_uuid
+      )
 
-        row =
-          repo().one!(
-            from(s in UserSettings, where: s.user_uuid == ^user_uuid, lock: "FOR UPDATE")
-          )
+      row =
+        repo().one!(from(s in UserSettings, where: s.user_uuid == ^user_uuid, lock: "FOR UPDATE"))
 
-        changeset = UserSettings.personal_models_changeset(row, attrs)
+      changeset = UserSettings.personal_models_changeset(row, attrs)
 
-        unless changeset.valid?, do: repo().rollback(%{changeset | action: :update})
+      unless changeset.valid?, do: repo().rollback(%{changeset | action: :update})
 
-        with {:error, refusal} <- check_personal_models(changeset), do: repo().rollback(refusal)
+      with {:error, refusal} <- check_personal_models(changeset), do: repo().rollback(refusal)
 
-        case repo().update(changeset) do
-          {:ok, _row} -> changeset.changes |> Map.keys() |> Enum.sort()
-          {:error, changeset} -> repo().rollback(changeset)
-        end
-      end)
-
-    case result do
-      {:ok, fields} -> {:ok, fields}
-      {:error, refusal} -> {:error, refusal}
-    end
+      case repo().update(changeset) do
+        {:ok, _row} -> changeset.changes |> Map.keys() |> Enum.sort()
+        {:error, changeset} -> repo().rollback(changeset)
+      end
+    end)
   end
 
   # What a user chose anew: each is one he may choose for that task. A

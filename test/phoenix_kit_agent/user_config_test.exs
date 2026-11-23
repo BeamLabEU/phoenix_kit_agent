@@ -729,6 +729,39 @@ defmodule PhoenixKitAgent.UserConfigTest do
     end
   end
 
+  describe "the picture rule on what effective/1 gives (no ImageMagick needed)" do
+    alias PhoenixKitAgent.Attachments.Processor
+
+    test "an own picture model describes even for a chat model that sees", %{user: user} do
+      chat = all_round()
+      own = all_round()
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", chat.uuid)
+      Repo.insert!(%UserSettings{user_uuid: user.uuid, vision_endpoint_uuid: own.uuid})
+
+      assert {:ok, {:describe, described_by}} =
+               user.uuid |> UserConfig.effective() |> Processor.picture_mode()
+
+      assert described_by == own.uuid
+    end
+
+    test "without one, a chat model that sees gets the pixels", %{user: user} do
+      chat = all_round()
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", chat.uuid)
+
+      assert {:ok, :pixels} = user.uuid |> UserConfig.effective() |> Processor.picture_mode()
+    end
+
+    test "an own picture model that was switched off leaves the old rule: pixels", %{user: user} do
+      chat = all_round()
+      own = all_round()
+      {:ok, _} = Settings.update_setting("agent_default_endpoint_uuid", chat.uuid)
+      Repo.insert!(%UserSettings{user_uuid: user.uuid, vision_endpoint_uuid: own.uuid})
+      disable!(own)
+
+      assert {:ok, :pixels} = user.uuid |> UserConfig.effective() |> Processor.picture_mode()
+    end
+  end
+
   describe "speech?/1: voice is offered when the user's own speech model exists" do
     test "the default alone, his own alone, none, and his own gone", %{user: user} do
       refute UserConfig.speech?(user.uuid)
