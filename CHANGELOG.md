@@ -2,6 +2,23 @@
 
 All notable changes to PhoenixKitAgent will be documented in this file.
 
+## Unreleased
+
+### Changed
+
+- The chat panel works under a nonce `Content-Security-Policy`
+  (`script-src 'self' 'nonce-…'`, no `'unsafe-inline'`; core's
+  `guides/content-security-policy.md`). Its five browser hooks (`.DockState`,
+  `.Feed`, `.Composer`, `.Turn`, `.Waiting`) are inline scripts and now carry
+  the host's nonce, and the panel, a nested LiveView, restores the nonce in its
+  own process so a connected render has it too. Both are feature-detected
+  (`PhoenixKitAgent.Web.CSP`): on a core without `PhoenixKitWeb.CSP` nothing
+  changes, and a host with a policy still needs `script-src 'unsafe-inline'`
+  there. The module renders no inline event handlers and no inline `<style>`.
+  `test/phoenix_kit_agent/web/csp_inline_tags_test.exs` fails on a new inline
+  tag without the nonce or an inline handler. Inline `style="…"` attributes
+  are not covered. (#20)
+
 ## 0.4.0 - 2026-11-23
 
 ### Upgrade

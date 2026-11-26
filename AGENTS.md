@@ -265,7 +265,8 @@ and `Web.Markdown`) and the optional chat retention
   composer's textarea). A re-join after a lost connection mounts the LiveView
   afresh but calls the hook's `reconnected()`, not `mounted()`: state the
   server must get back (`restore`) is pushed from both. They are inline
-  scripts: a host CSP needs `script-src 'unsafe-inline'`. `.Feed` keeps a
+  scripts carrying the host's CSP nonce (see "Content-Security-Policy" below).
+  `.Feed` keeps a
   reader who scrolled up where they are over a re-join (while the chat is gone it remembers the chat and the distance from the end,
   and ignores the empty feed's scroll events; the place is applied once the
   content is tall enough for it, and only for the same chat back within a few
@@ -602,6 +603,28 @@ and `Web.Markdown`) and the optional chat retention
 - **Boundaries:** nothing about orders, customers or other host domain data
   lives here — the module only knows "tools from the registry". Model calls,
   budget and the request journal stay in `phoenix_kit_ai`.
+
+## Content-Security-Policy
+
+The module works under a host policy like `script-src 'self' 'nonce-…'`
+(core's `guides/content-security-policy.md`). Rules:
+
+- **Every inline `<script>` / `<style>` carries the host's nonce**:
+  `nonce={PhoenixKitAgent.Web.CSP.nonce(:script)}` (`:style` for a style). The
+  helper feature-detects core's `PhoenixKitWeb.CSP` (absent from the older
+  cores the pin still allows) and answers `nil` there, which renders no
+  attribute. The five runtime colocated hooks of `Web.Dock.Panel` have it:
+  LiveView copies the nonce from the tag when it re-creates a runtime hook.
+- **A nested LiveView restores the nonces itself.** The dock is rendered with
+  `live_render/3` and skips the live session's `on_mount`; core hands the
+  nonces over in the widget's session and `on_mount PhoenixKitAgent.Web.CSP`
+  (in `Web.Dock`) puts them back. A new nested view takes the same line.
+- **No inline event handlers** (`onclick=`, `onerror=` …), in markup or in HTML
+  a hook builds: no nonce covers an attribute. Use a `phx-` binding,
+  `Phoenix.LiveView.JS`, or a hook.
+- `test/phoenix_kit_agent/web/csp_inline_tags_test.exs` enforces the tag and
+  handler rules over `lib/`. Inline `style="…"` attributes are not covered
+  (a host keeps `style-src-attr 'unsafe-inline'`).
 
 ## Commands
 

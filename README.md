@@ -81,10 +81,12 @@ text), and an exception in an event is caught and logged as its class only (a
 crash report would carry the draft). The panel's classes come from the
 module's sources (`css_sources/0`), and its browser hooks are runtime colocated
 hooks, so the host bundles nothing for it; it needs core's admin layout with
-header widgets and the dock column. The hooks are inline scripts without a
-nonce: a host with a Content-Security-Policy must allow `script-src
-'unsafe-inline'`, or the panel shows but does not remember its state, resize
-or send on Enter.
+header widgets and the dock column. The hooks are inline scripts. They carry
+the host's Content-Security-Policy nonce when core knows it
+(`config :phoenix_kit, csp_nonce_assign_key:`, core's
+`guides/content-security-policy.md`); on a core without nonce support a host
+with a policy must allow `script-src 'unsafe-inline'`, or the panel shows but
+does not remember its state, resize or send on Enter.
 
 On a touch screen (`pointer: coarse`) the panel's buttons are at least 44 × 44
 px. Enter sends and Shift+Enter breaks the line; on a touch screen without a

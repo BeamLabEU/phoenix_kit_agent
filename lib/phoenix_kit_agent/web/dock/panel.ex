@@ -7,10 +7,11 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
 
   The hooks are runtime colocated hooks (the host bundles nothing for them),
   and live here because a colocated hook is named after the module that
-  renders the element using it. They run from inline `<script>` elements, so
-  under a Content-Security-Policy the page must allow `script-src
-  'unsafe-inline'`; the scripts carry no nonce. Without them the panel shows,
-  but forgets its state, does not resize, and Enter does not send:
+  renders the element using it. They run from inline `<script>` elements,
+  which carry the host's Content-Security-Policy nonce when core knows it
+  (`PhoenixKitAgent.Web.CSP.nonce/1`); on a core that has no nonce support a
+  page with a policy must allow `script-src 'unsafe-inline'`. Without them the
+  panel shows, but forgets its state, does not resize, and Enter does not send:
 
     * `.DockState` — keeps the panel open or closed, the chosen chat and the
       width in `localStorage`, and tells the LiveView on mount and when it
@@ -566,7 +567,12 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
 
   defp hooks(assigns) do
     ~H"""
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".DockState" runtime>
+    <script
+      :type={Phoenix.LiveView.ColocatedHook}
+      name=".DockState"
+      runtime
+      nonce={PhoenixKitAgent.Web.CSP.nonce(:script)}
+    >
       {
         mounted() {
           this.key = this.el.dataset.storageKey
@@ -649,7 +655,12 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         }
       }
     </script>
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".Feed" runtime>
+    <script
+      :type={Phoenix.LiveView.ColocatedHook}
+      name=".Feed"
+      runtime
+      nonce={PhoenixKitAgent.Web.CSP.nonce(:script)}
+    >
       {
         mounted() {
           this.stick = true
@@ -824,7 +835,12 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         }
       }
     </script>
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".Composer" runtime>
+    <script
+      :type={Phoenix.LiveView.ColocatedHook}
+      name=".Composer"
+      runtime
+      nonce={PhoenixKitAgent.Web.CSP.nonce(:script)}
+    >
       {
         mounted() {
           this.el.addEventListener("keydown", (event) => {
@@ -872,7 +888,12 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         }
       }
     </script>
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".Turn" runtime>
+    <script
+      :type={Phoenix.LiveView.ColocatedHook}
+      name=".Turn"
+      runtime
+      nonce={PhoenixKitAgent.Web.CSP.nonce(:script)}
+    >
       {
         mounted() {
           this.turn = ""
@@ -916,7 +937,12 @@ defmodule PhoenixKitAgent.Web.Dock.Panel do
         }
       }
     </script>
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".Waiting" runtime>
+    <script
+      :type={Phoenix.LiveView.ColocatedHook}
+      name=".Waiting"
+      runtime
+      nonce={PhoenixKitAgent.Web.CSP.nonce(:script)}
+    >
       {
         mounted() { this.arm() },
         updated() { this.arm() },

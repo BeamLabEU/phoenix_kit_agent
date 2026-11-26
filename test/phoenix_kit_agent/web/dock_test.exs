@@ -79,7 +79,13 @@ defmodule PhoenixKitAgent.Web.DockTest do
     {:ok, view, _html} =
       ctx.conn
       |> Plug.Test.init_test_session(cookie)
-      |> live_isolated(Dock, session: %{"user_uuid" => user_uuid, "locale" => locale})
+      |> live_isolated(Dock,
+        session:
+          Map.merge(
+            %{"user_uuid" => user_uuid, "locale" => locale},
+            Keyword.get(opts, :session, %{})
+          )
+      )
 
     view
   end
@@ -1608,6 +1614,36 @@ defmodule PhoenixKitAgent.Web.DockTest do
              )
 
       assert has_element?(view, "#pk-agent-feed-scroll > #pk-agent-feed-content #pk-agent-feed")
+    end
+
+    # The hooks are inline scripts: under a host policy like
+    # `script-src 'self' 'nonce-…'` each needs the page's nonce. Core hands it
+    # to a header widget in its session; a core without `PhoenixKitWeb.CSP`
+    # (the pin allows it) hands nothing and the tags stay as they were.
+    test "the hook scripts carry the page's CSP nonce when core hands one over", ctx do
+      view = dock(ctx, session: %{"phoenix_kit_csp_nonces" => %{"script" => "n-123"}})
+
+      scripts =
+        view
+        |> render()
+        |> LazyHTML.from_fragment()
+        |> LazyHTML.query("script[data-phx-runtime-hook]")
+
+      assert Enum.count(scripts) == 5
+      nonces = LazyHTML.attribute(scripts, "nonce")
+
+      if Code.ensure_loaded?(PhoenixKitWeb.CSP) do
+        assert nonces == List.duplicate("n-123", 5)
+      else
+        assert nonces == []
+      end
+    end
+
+    test "without a nonce the hook scripts carry no nonce attribute", ctx do
+      html = ctx |> dock() |> render()
+
+      assert html =~ "data-phx-runtime-hook"
+      refute html =~ "nonce="
     end
 
     test "the hooks keep the open state across navigations and pin the feed after them", ctx do

@@ -152,9 +152,10 @@ defmodule PhoenixKitAgent.Web.Dock do
   has the focus); choosing a chat moves the focus to the panel, "New chat" to
   the input, so the list closes. The markup and the hooks are in
   `PhoenixKitAgent.Web.Dock.Panel`; the hooks are runtime colocated hooks, so
-  the host bundles nothing for them, but they are inline scripts: under a
-  Content-Security-Policy the page needs `script-src 'unsafe-inline'` (they
-  carry no nonce). The text being written stays the browser's
+  the host bundles nothing for them, but they are inline scripts: they carry
+  the host's Content-Security-Policy nonce, which this view restores in its
+  own process (`on_mount PhoenixKitAgent.Web.CSP`; without core's nonce support
+  the page needs `script-src 'unsafe-inline'`). The text being written stays the browser's
   (`phx-update="ignore"`), so no re-render wipes it, and goes to the server
   only with the form (`phx-debounce="blur"`).
 
@@ -175,6 +176,10 @@ defmodule PhoenixKitAgent.Web.Dock do
 
   use Phoenix.LiveView, layout: false, log: false
   use Gettext, backend: PhoenixKitAgent.Gettext
+
+  # A nested LiveView skips the live session's `on_mount`: the page's CSP
+  # nonces come in the widget's session and are restored here.
+  on_mount(PhoenixKitAgent.Web.CSP)
 
   require Logger
 
